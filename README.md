@@ -23,6 +23,8 @@ Belangrijkste variables:
 LOCAL_DATABASE_URL=${{Postgres.DATABASE_URL}}
 LOCAL_JWT_SECRET=replace-with-a-long-random-secret
 LOCAL_TOKEN_TTL_SECONDS=604800
+LOCAL_ADMIN_EMAIL=admin@example.com
+LOCAL_ADMIN_PASSWORD=replace-with-a-strong-password
 
 SHOPIFY_API_VERSION=2026-04
 SHOPIFY_SYNC_DAYS=60
@@ -34,6 +36,10 @@ MOLLIE_INCREMENTAL_OVERLAP_HOURS=72
 MOLLIE_INITIAL_LOOKBACK_DAYS=7
 MOLLIE_FETCH_TIMEOUT_MS=30000
 ```
+
+Zet secrets alleen in Railway variables, nooit in de repo. Op Railway zijn
+`LOCAL_ADMIN_EMAIL` en `LOCAL_ADMIN_PASSWORD` verplicht; lokaal wordt zonder
+deze variables automatisch de dev-login hieronder aangemaakt.
 
 De app gebruikt dezelfde Railway service voor frontend en API. Webhookpaden:
 

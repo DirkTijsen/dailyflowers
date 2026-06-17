@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,9 @@ const appUrl =
   "postgres://postgres:postgres@localhost:5432/daily_flowers_local";
 const reset = process.argv.includes("--reset");
 const existingDb = process.argv.includes("--existing-db") || process.env.RAILWAY_ENVIRONMENT !== undefined;
+const hostedRuntime = process.env.RAILWAY_ENVIRONMENT !== undefined || process.env.NODE_ENV === "production";
+const adminEmail = process.env.LOCAL_ADMIN_EMAIL ?? (hostedRuntime ? "" : "admin@dailyflowers.local");
+const adminPassword = process.env.LOCAL_ADMIN_PASSWORD ?? (hostedRuntime ? "" : "dailyflowers");
 const appDbName = databaseName(appUrl);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -57,10 +61,6 @@ CREATE TABLE IF NOT EXISTS local_auth.users (
   password text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-
-INSERT INTO local_auth.users (email, password)
-VALUES ($$admin@dailyflowers.local$$, $$dailyflowers$$)
-ON CONFLICT (email) DO UPDATE SET password = EXCLUDED.password;
 
 INSERT INTO public.sync_state (channel, last_sweep_status, last_sweep_message, records_processed)
 VALUES
@@ -130,11 +130,41 @@ async function main() {
     await applyMigration(app, "20260616231000_shopify_current_total_actuals.sql");
 
     await app.query(localAuthSql);
+    await seedAdminUser(app);
     process.stdout.write(`Local database ready: ${appUrl}\n`);
-    process.stdout.write("Dev login: admin@dailyflowers.local / dailyflowers\n");
+    if (hostedRuntime) {
+      process.stdout.write(`Admin login seeded for ${adminEmail}\n`);
+    } else {
+      process.stdout.write("Dev login: admin@dailyflowers.local / dailyflowers\n");
+    }
   } finally {
     await app.end();
   }
+}
+
+async function seedAdminUser(client) {
+  if (!adminEmail || !adminPassword) {
+    if (hostedRuntime) {
+      throw new Error("LOCAL_ADMIN_EMAIL en LOCAL_ADMIN_PASSWORD moeten gezet zijn voor Railway/productie.");
+    }
+    return;
+  }
+
+  await client.query(
+    `
+      INSERT INTO local_auth.users (email, password)
+      VALUES ($1, $2)
+      ON CONFLICT (email) DO UPDATE SET password = EXCLUDED.password
+    `,
+    [adminEmail, hashPassword(adminPassword)],
+  );
+}
+
+function hashPassword(password) {
+  const iterations = 100000;
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256").toString("hex");
+  return `pbkdf2_sha256$${iterations}$${salt}$${hash}`;
 }
 
 async function ensureDatabase() {

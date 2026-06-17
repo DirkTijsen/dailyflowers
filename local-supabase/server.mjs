@@ -18,6 +18,7 @@ loadDotEnv(path.resolve(process.cwd(), ".env"));
 
 const port = Number(process.env.PORT ?? process.env.LOCAL_SUPABASE_PORT ?? 54321);
 const host = process.env.HOST ?? process.env.LOCAL_SUPABASE_HOST ?? (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
+const hostedRuntime = process.env.RAILWAY_ENVIRONMENT !== undefined || process.env.NODE_ENV === "production";
 const databaseUrl =
   process.env.LOCAL_DATABASE_URL ??
   "postgres://postgres:postgres@localhost:5432/daily_flowers_local";
@@ -455,9 +456,9 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   console.log(`Daily Flowers app/API: http://${host}:${port}`);
-  console.log(`Postgres: ${databaseUrl}`);
+  console.log(`Postgres: ${redactConnectionString(databaseUrl)}`);
   console.log("Shopify sync: client_credentials + GraphQL Admin API");
-  console.log("Dev login: admin@dailyflowers.local / dailyflowers");
+  if (!hostedRuntime) console.log("Dev login: admin@dailyflowers.local / dailyflowers");
 });
 
 async function handleAuth(req, res, url) {
@@ -932,10 +933,38 @@ function buildConflictSql(columns, conflictColumns, ignoreDuplicates) {
 
 async function findLocalUser(email, password) {
   const result = await pool.query(
-    "SELECT id, email, created_at FROM local_auth.users WHERE lower(email) = lower($1) AND password = $2 LIMIT 1",
-    [email, password],
+    "SELECT id, email, password, created_at FROM local_auth.users WHERE lower(email) = lower($1) LIMIT 1",
+    [email],
   );
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  if (!row || !verifyPassword(password, String(row.password ?? ""))) return null;
+  return { id: row.id, email: row.email, created_at: row.created_at };
+}
+
+function verifyPassword(password, stored) {
+  if (!stored.startsWith("pbkdf2_sha256$")) return stored === password;
+
+  const parts = stored.split("$");
+  if (parts.length !== 4) return false;
+
+  const iterations = Number(parts[1]);
+  const salt = parts[2];
+  const expected = Buffer.from(parts[3], "hex");
+  if (!Number.isFinite(iterations) || !salt || expected.length === 0) return false;
+
+  const actual = crypto.pbkdf2Sync(password, salt, iterations, expected.length, "sha256");
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function redactConnectionString(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.username) parsed.username = "***";
+    if (parsed.password) parsed.password = "***";
+    return parsed.toString();
+  } catch {
+    return "<configured>";
+  }
 }
 
 function makeSession(user) {
