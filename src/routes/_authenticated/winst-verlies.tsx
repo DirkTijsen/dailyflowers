@@ -6,6 +6,7 @@ import { Download, ExternalLink, RefreshCw, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -21,13 +22,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { formatDateNL, formatDateTimeNL, formatEUR } from "@/lib/format";
+import { currentMonth, formatDateNL, formatDateTimeNL, formatEUR } from "@/lib/format";
 import {
   CHANNELS,
   channelLabel,
   downloadTransactionTemplate,
   monthShortLabel,
-  monthsForYearToQuarter,
   monthToQuarterKey,
   parseGlTransactionWorkbook,
   sectionIndex,
@@ -81,6 +81,22 @@ type PlBudgetLine = {
   source_label: string;
   sort_order: number;
 };
+
+type RevenueBudgetRow = {
+  period: string;
+  channel: string;
+  machine_id: string | null;
+  amount: number | string;
+};
+
+type ViewMode = "month" | "range" | "year";
+type PlMetricColumn = "actual" | "budget" | "variance";
+
+const PL_METRIC_COLUMNS: Array<{ value: PlMetricColumn; label: string }> = [
+  { value: "actual", label: "Actueel" },
+  { value: "budget", label: "Budget" },
+  { value: "variance", label: "Verschil" },
+];
 
 type DetailBase = {
   source: "gl" | "sales";
@@ -197,11 +213,30 @@ const db = supabase as unknown as {
 
 function ProfitLossPage() {
   const qc = useQueryClient();
-  const [year, setYear] = useState(String(new Date().getFullYear()));
-  const [toQuarter, setToQuarter] = useState(`Q${Math.floor(new Date().getMonth() / 3) + 1}`);
+  const thisMonth = currentMonth();
+  const thisYear = thisMonth.split("-")[0];
+  const thisMonthNumber = thisMonth.split("-")[1];
+  const [viewMode, setViewMode] = useState<ViewMode>("year");
+  const [year, setYear] = useState(thisYear);
+  const [month, setMonth] = useState(thisMonthNumber);
+  const [fromMonth, setFromMonth] = useState("01");
+  const [toMonth, setToMonth] = useState(thisMonthNumber);
+  const [visibleColumns, setVisibleColumns] = useState<PlMetricColumn[]>([
+    "actual",
+    "budget",
+    "variance",
+  ]);
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [exactSyncing, setExactSyncing] = useState(false);
-  const months = useMemo(() => monthsForYearToQuarter(year, toQuarter), [toQuarter, year]);
+  const months = useMemo(() => {
+    if (viewMode === "month") return [composePeriod(year, month)];
+    if (viewMode === "year") return yearPeriods(year);
+    return periodsBetween(composePeriod(year, fromMonth), composePeriod(year, toMonth));
+  }, [fromMonth, month, toMonth, viewMode, year]);
+  const periodColumns = visibleColumns;
+  const totalColumns = visibleColumns;
+  const totalLabel = aggregateLabel(viewMode, months);
+  const tableColSpan = 2 + months.length * periodColumns.length + totalColumns.length;
 
   const accountsQ = useQuery({
     queryKey: ["gl-accounts"],
@@ -272,6 +307,19 @@ function ProfitLossPage() {
     enabled: months.length > 0,
   });
 
+  const revenueBudgetsQ = useQuery({
+    queryKey: ["wv-revenue-budgets", months],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<RevenueBudgetRow>("budgets")
+        .select("period,channel,machine_id,amount")
+        .in("period", months);
+      if (error) throw error;
+      return (data ?? []) as RevenueBudgetRow[];
+    },
+    enabled: months.length > 0,
+  });
+
   const { rows, reconciliation } = useMemo(
     () =>
       buildProfitLoss({
@@ -280,10 +328,29 @@ function ProfitLossPage() {
         salesRows: salesQ.data ?? [],
         glRevenueSourceRows: glRevenueSourceQ.data ?? [],
         budgetLines: budgetsQ.data ?? [],
+        revenueBudgets: revenueBudgetsQ.data ?? [],
         accounts: accountsQ.data ?? [],
       }),
-    [accountsQ.data, budgetsQ.data, glQ.data, glRevenueSourceQ.data, months, salesQ.data],
+    [
+      accountsQ.data,
+      budgetsQ.data,
+      glQ.data,
+      glRevenueSourceQ.data,
+      months,
+      revenueBudgetsQ.data,
+      salesQ.data,
+    ],
   );
+
+  function toggleColumn(column: PlMetricColumn) {
+    setVisibleColumns((current) => {
+      if (current.includes(column)) {
+        if (current.length === 1) return current;
+        return current.filter((item) => item !== column);
+      }
+      return orderPlMetricColumns([...current, column]);
+    });
+  }
 
   function openDetail(row: PlRow, period: string) {
     const base = row.detailByPeriod?.[period];
@@ -374,7 +441,8 @@ function ProfitLossPage() {
         <div>
           <h1 className="text-2xl font-semibold">W&V</h1>
           <p className="text-sm text-muted-foreground">
-            Maandrapportage met omzet uit eigen verkoopdata en kosten uit het grootboek.
+            Maandrapportage met omzet uit eigen verkoopdata, omzetbudget uit omzet monitoring en
+            kosten uit het grootboek.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -405,44 +473,97 @@ function ProfitLossPage() {
       </div>
 
       <Card>
-        <CardContent className="grid gap-3 pt-6 md:grid-cols-[130px_130px] items-end">
-          <Field label="Jaar">
-            <Select value={year} onValueChange={setYear}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {yearOptions().map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="T/m kwartaal">
-            <Select value={toQuarter} onValueChange={setToQuarter}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[1, 2, 3, 4].map((quarter) => (
-                  <SelectItem key={quarter} value={`Q${quarter}`}>
-                    Q{quarter}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+        <CardContent className="pt-6">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6 items-end">
+            <Field label="View">
+              <Select value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="month">Maand</SelectItem>
+                  <SelectItem value="range">YTD / periode</SelectItem>
+                  <SelectItem value="year">Jaar</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field label="Jaar">
+              <Select value={year} onValueChange={setYear}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {yearOptions().map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+
+            {viewMode === "month" && (
+              <Field label="Periode">
+                <Select value={month} onValueChange={setMonth}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {monthOptions().map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+
+            {viewMode === "range" && (
+              <>
+                <Field label="Vanaf">
+                  <Select value={fromMonth} onValueChange={setFromMonth}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {monthOptions().map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="T/m">
+                  <Select value={toMonth} onValueChange={setToMonth}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {monthOptions().map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </>
+            )}
+
+            <PlColumnToggles columns={visibleColumns} onToggle={toggleColumn} />
+          </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Winst en verlies per maand</CardTitle>
+          <CardTitle className="text-base">{selectionTitle(viewMode, months, year)}</CardTitle>
           <CardDescription>
-            Actuals naast het 2026-budget uit de prognose. Klik op een actual om de onderliggende
-            grootboekregels of verkooptransacties te zien.
+            Actuals naast omzetbudgetten en W&V-kostenbudgetten. Klik op een actual om de
+            onderliggende grootboekregels of verkooptransacties te zien.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -460,7 +581,7 @@ function ProfitLossPage() {
                     <th
                       key={period}
                       className="border-l px-3 py-2 text-center font-medium"
-                      colSpan={3}
+                      colSpan={periodColumns.length}
                     >
                       <span className="block">{monthShortLabel(period)}</span>
                       <span className="block text-[11px] font-normal text-muted-foreground">
@@ -468,15 +589,18 @@ function ProfitLossPage() {
                       </span>
                     </th>
                   ))}
-                  <th className="border-l px-3 py-2 text-center font-medium" colSpan={3}>
-                    YTD
+                  <th
+                    className="border-l px-3 py-2 text-center font-medium"
+                    colSpan={totalColumns.length}
+                  >
+                    {totalLabel}
                   </th>
                 </tr>
                 <tr>
                   {months.map((period) => (
-                    <BudgetHeaderCells key={`${period}-headers`} />
+                    <BudgetHeaderCells key={`${period}-headers`} columns={periodColumns} />
                   ))}
-                  <BudgetHeaderCells />
+                  <BudgetHeaderCells columns={totalColumns} totalLabel={totalLabel} />
                 </tr>
               </thead>
               <tbody>
@@ -505,6 +629,7 @@ function ProfitLossPage() {
                       return (
                         <BudgetAmountCells
                           key={`${row.key}-${period}`}
+                          columns={periodColumns}
                           value={value}
                           budget={budget}
                           budgetOnly={row.budgetOnly}
@@ -515,6 +640,7 @@ function ProfitLossPage() {
                       );
                     })}
                     <BudgetAmountCells
+                      columns={totalColumns}
                       value={row.ytd}
                       budget={row.budgetYtd}
                       budgetOnly={row.budgetOnly}
@@ -526,7 +652,7 @@ function ProfitLossPage() {
                 {rows.length === 0 && (
                   <tr>
                     <td
-                      colSpan={months.length * 3 + 5}
+                      colSpan={tableColSpan}
                       className="px-3 py-8 text-center text-muted-foreground"
                     >
                       Geen W&V-data voor deze selectie.
@@ -614,6 +740,7 @@ function buildProfitLoss({
   salesRows,
   glRevenueSourceRows,
   budgetLines,
+  revenueBudgets,
   accounts,
 }: {
   months: string[];
@@ -621,6 +748,7 @@ function buildProfitLoss({
   salesRows: SalesPeriodRow[];
   glRevenueSourceRows: GlRevenueSourceRow[];
   budgetLines: PlBudgetLine[];
+  revenueBudgets: RevenueBudgetRow[];
   accounts: GlAccount[];
 }) {
   const accountsByCode = new Map(accounts.map((account) => [account.account_code, account]));
@@ -631,7 +759,7 @@ function buildProfitLoss({
   const glRevenueBySource = new Map<string, number>();
   const rows: PlRow[] = [];
   const reconciliation: ReconciliationRow[] = [];
-  const budgetByLine = budgetLinesByKey(budgetLines, months);
+  const revenueBudgetByChannel = revenueBudgetValuesByChannel(revenueBudgets, budgetLines, months);
   const budgetBySection = budgetLinesBySection(budgetLines, months);
   const budgetRowsBySection = budgetOnlyRowsBySection(budgetLines, months);
 
@@ -662,7 +790,7 @@ function buildProfitLoss({
   const revenueTotalDetails: Record<string, DetailBase> = {};
   for (const channel of CHANNELS) {
     const values = blankValues(months);
-    const budgetValues = budgetByLine.get(`revenue-${channel}`) ?? blankValues(months);
+    const budgetValues = revenueBudgetByChannel.get(channel) ?? blankValues(months);
     const detailByPeriod: Record<string, DetailBase> = {};
     for (const period of months) {
       const own = ownRevenue.get(`${period}|${channel}`) ?? 0;
@@ -1358,6 +1486,58 @@ function budgetLinesByKey(budgetLines: PlBudgetLine[], months: string[]) {
   return result;
 }
 
+function revenueBudgetValuesByChannel(
+  revenueBudgets: RevenueBudgetRow[],
+  budgetLines: PlBudgetLine[],
+  months: string[],
+) {
+  const result = new Map<string, Record<string, number>>();
+  const machineBudgetByChannelPeriod = new Map<string, number>();
+  const explicitChannelBudgetPeriods = new Set<string>();
+
+  for (const channel of CHANNELS) {
+    result.set(channel, blankValues(months));
+  }
+
+  for (const budget of revenueBudgets) {
+    if (!CHANNELS.includes(budget.channel as (typeof CHANNELS)[number])) continue;
+    const period = budget.period;
+    if (!months.includes(period)) continue;
+    const amount = Number(budget.amount ?? 0);
+    if (!Number.isFinite(amount)) continue;
+
+    const key = `${budget.channel}|${period}`;
+    if (!budget.machine_id) {
+      explicitChannelBudgetPeriods.add(key);
+      result.get(budget.channel)![period] += amount;
+      continue;
+    }
+
+    machineBudgetByChannelPeriod.set(key, (machineBudgetByChannelPeriod.get(key) ?? 0) + amount);
+  }
+
+  for (const [key, amount] of machineBudgetByChannelPeriod.entries()) {
+    if (explicitChannelBudgetPeriods.has(key)) continue;
+    const [channel, period] = key.split("|");
+    result.get(channel)![period] += amount;
+  }
+
+  const forecastRevenue = budgetLinesByKey(
+    budgetLines.filter((line) => line.kind === "revenue"),
+    months,
+  );
+  for (const channel of CHANNELS) {
+    const values = result.get(channel)!;
+    const fallback = forecastRevenue.get(`revenue-${channel}`);
+    if (!fallback) continue;
+    for (const period of months) {
+      if (Math.abs(values[period] ?? 0) < 0.005) values[period] = fallback[period] ?? 0;
+    }
+  }
+
+  return result;
+}
+
 function budgetLinesBySection(budgetLines: PlBudgetLine[], months: string[]) {
   const result = new Map<string, Record<string, number>>();
   for (const line of budgetLines) {
@@ -1447,17 +1627,61 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function BudgetHeaderCells() {
+function PlColumnToggles({
+  columns,
+  onToggle,
+}: {
+  columns: PlMetricColumn[];
+  onToggle: (column: PlMetricColumn) => void;
+}) {
+  return (
+    <div className="md:col-span-2 xl:col-span-2">
+      <div className="mb-2 text-xs text-muted-foreground">Kolommen</div>
+      <div className="flex flex-wrap gap-2 rounded-md border bg-background p-2">
+        {PL_METRIC_COLUMNS.map((option) => {
+          const checked = columns.includes(option.value);
+          return (
+            <label
+              key={option.value}
+              className="flex min-h-8 items-center gap-2 rounded border bg-muted/20 px-2 text-sm"
+            >
+              <Checkbox
+                checked={checked}
+                disabled={checked && columns.length === 1}
+                onCheckedChange={() => onToggle(option.value)}
+              />
+              <span>{option.label}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BudgetHeaderCells({
+  columns,
+  totalLabel,
+}: {
+  columns: PlMetricColumn[];
+  totalLabel?: string;
+}) {
   return (
     <>
-      <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
-      <th className="px-3 py-2 text-right font-medium">Budget</th>
-      <th className="px-3 py-2 text-right font-medium">Verschil</th>
+      {columns.map((column, index) => (
+        <th
+          key={column}
+          className={`${index === 0 ? "border-l" : ""} px-3 py-2 text-right font-medium`}
+        >
+          {totalLabel ? totalPlMetricLabel(column, totalLabel) : plMetricLabel(column)}
+        </th>
+      ))}
     </>
   );
 }
 
 function BudgetAmountCells({
+  columns,
   value,
   budget,
   budgetOnly = false,
@@ -1465,6 +1689,7 @@ function BudgetAmountCells({
   strong = false,
   onClick,
 }: {
+  columns: PlMetricColumn[];
   value: number;
   budget?: number;
   budgetOnly?: boolean;
@@ -1476,20 +1701,30 @@ function BudgetAmountCells({
   const variance = hasBudget && !budgetOnly ? value - Number(budget) : undefined;
   return (
     <>
-      <BudgetValueCell
-        value={budgetOnly ? undefined : value}
-        valueFormat={valueFormat}
-        strong={strong}
-        onClick={budgetOnly ? undefined : onClick}
-        className="border-l"
-      />
-      <BudgetValueCell value={hasBudget ? Number(budget) : undefined} valueFormat={valueFormat} />
-      <BudgetValueCell
-        value={variance}
-        valueFormat={valueFormat}
-        strong={strong}
-        muted={!hasBudget}
-      />
+      {columns.map((column, index) => {
+        const isActual = column === "actual";
+        const metricValue =
+          column === "actual"
+            ? budgetOnly
+              ? undefined
+              : value
+            : column === "budget"
+              ? hasBudget
+                ? Number(budget)
+                : undefined
+              : variance;
+        return (
+          <BudgetValueCell
+            key={column}
+            value={metricValue}
+            valueFormat={valueFormat}
+            strong={strong}
+            muted={(column === "budget" || column === "variance") && !hasBudget}
+            onClick={isActual && !budgetOnly ? onClick : undefined}
+            className={index === 0 ? "border-l" : ""}
+          />
+        );
+      })}
     </>
   );
 }
@@ -1578,6 +1813,79 @@ function formatPercentage(value: number) {
   return `${value.toLocaleString("nl-NL", { maximumFractionDigits: 2 })}%`;
 }
 
+function composePeriod(year: string, month: string) {
+  return `${year}-${month}`;
+}
+
+function periodsBetween(from: string, to: string) {
+  const [fy, fm] = from.split("-").map(Number);
+  const [ty, tm] = to.split("-").map(Number);
+  const start = new Date(fy, fm - 1, 1);
+  const end = new Date(ty, tm - 1, 1);
+  if (start > end) return periodsBetween(to, from);
+  const periods: string[] = [];
+  const d = new Date(start);
+  while (d <= end) {
+    periods.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() + 1);
+  }
+  return periods;
+}
+
+function yearPeriods(year: string) {
+  return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
+}
+
+function monthOptions() {
+  return Array.from({ length: 12 }, (_, index) => {
+    const value = String(index + 1).padStart(2, "0");
+    return {
+      value,
+      label: new Date(2026, index, 1).toLocaleDateString("nl-NL", { month: "long" }),
+    };
+  });
+}
+
+function selectionTitle(viewMode: ViewMode, periods: string[], year: string) {
+  if (viewMode === "year") return `Winst en verlies - jaar ${year}`;
+  if (periods.length === 1) return `Winst en verlies - ${monthLabel(periods[0])}`;
+  return `Winst en verlies - ${monthLabel(periods[0])} t/m ${monthLabel(periods[periods.length - 1])}`;
+}
+
+function aggregateLabel(viewMode: ViewMode, periods: string[]) {
+  if (viewMode === "year") return "Jaar totaal";
+  if (periods.length <= 1) return "Totaal";
+  return periods[0]?.endsWith("-01") ? "YTD totaal" : "Periode totaal";
+}
+
+function plMetricLabel(column: PlMetricColumn) {
+  switch (column) {
+    case "actual":
+      return "Actueel";
+    case "budget":
+      return "Budget";
+    case "variance":
+      return "Verschil";
+  }
+}
+
+function totalPlMetricLabel(column: PlMetricColumn, totalLabel: string) {
+  const suffix = totalLabel === "YTD totaal" ? " YTD" : totalLabel === "Jaar totaal" ? " jaar" : "";
+  switch (column) {
+    case "actual":
+      return `Actueel${suffix}`;
+    case "budget":
+      return `Budget${suffix}`;
+    case "variance":
+      return `Verschil${suffix}`;
+  }
+}
+
+function orderPlMetricColumns(columns: PlMetricColumn[]) {
+  const order = new Map(PL_METRIC_COLUMNS.map((column, index) => [column.value, index]));
+  return [...columns].sort((a, b) => (order.get(a) ?? 999) - (order.get(b) ?? 999));
+}
+
 function EmptyDetails() {
   return (
     <div className="py-8 text-center text-sm text-muted-foreground">
@@ -1588,7 +1896,7 @@ function EmptyDetails() {
 
 function yearOptions() {
   const current = new Date().getFullYear();
-  return Array.from({ length: 7 }, (_, index) => String(current + 1 - index));
+  return Array.from({ length: 7 }, (_, index) => String(current + 2 - index));
 }
 
 function monthRange(period: string) {

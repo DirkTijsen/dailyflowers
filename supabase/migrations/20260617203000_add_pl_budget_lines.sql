@@ -268,6 +268,46 @@ VALUES
 ('2026-11', 2026, 'general_admin', 'budget-webshop-overhead', 'Webshop - Overhead allocatie', 'cost', 12915.00, 'Prognose DF 2026 pk.xlsx', 'Webshop', 'Overhead (1/3)', 630),
 ('2026-12', 2026, 'general_admin', 'budget-webshop-overhead', 'Webshop - Overhead allocatie', 'cost', 12915.00, 'Prognose DF 2026 pk.xlsx', 'Webshop', 'Overhead (1/3)', 630);
 
+INSERT INTO public.budgets (channel, machine_id, period, amount)
+VALUES
+('bold_afs', NULL, '2026-01', 72577.02),
+('bold_afs', NULL, '2026-02', 102814.15),
+('bold_afs', NULL, '2026-03', 89805.80),
+('bold_afs', NULL, '2026-04', 114699.97),
+('bold_afs', NULL, '2026-05', 134655.30),
+('bold_afs', NULL, '2026-06', 138694.96),
+('bold_afs', NULL, '2026-07', 142855.81),
+('bold_afs', NULL, '2026-08', 147141.48),
+('bold_afs', NULL, '2026-09', 151555.73),
+('bold_afs', NULL, '2026-10', 156102.40),
+('bold_afs', NULL, '2026-11', 160785.47),
+('bold_afs', NULL, '2026-12', 165609.03),
+('shopify_winkel', NULL, '2026-01', 55826.23),
+('shopify_winkel', NULL, '2026-02', 100766.83),
+('shopify_winkel', NULL, '2026-03', 70895.15),
+('shopify_winkel', NULL, '2026-04', 84462.63),
+('shopify_winkel', NULL, '2026-05', 124606.26),
+('shopify_winkel', NULL, '2026-06', 87528.16),
+('shopify_winkel', NULL, '2026-07', 80183.05),
+('shopify_winkel', NULL, '2026-08', 80613.79),
+('shopify_winkel', NULL, '2026-09', 88851.63),
+('shopify_winkel', NULL, '2026-10', 96636.16),
+('shopify_winkel', NULL, '2026-11', 90524.21),
+('shopify_winkel', NULL, '2026-12', 102581.37),
+('shopify_webshop', NULL, '2026-01', 45000.00),
+('shopify_webshop', NULL, '2026-02', 97469.11),
+('shopify_webshop', NULL, '2026-03', 56447.87),
+('shopify_webshop', NULL, '2026-04', 60000.00),
+('shopify_webshop', NULL, '2026-05', 110000.00),
+('shopify_webshop', NULL, '2026-06', 80000.00),
+('shopify_webshop', NULL, '2026-07', 80000.00),
+('shopify_webshop', NULL, '2026-08', 90000.00),
+('shopify_webshop', NULL, '2026-09', 100000.00),
+('shopify_webshop', NULL, '2026-10', 110000.00),
+('shopify_webshop', NULL, '2026-11', 120000.00),
+('shopify_webshop', NULL, '2026-12', 130000.00)
+ON CONFLICT (channel, period) WHERE machine_id IS NULL DO NOTHING;
+
 COMMENT ON TABLE public.pl_budget_lines IS
   'W&V budget lines by period, imported from forecast workbooks such as Prognose DF 2026.';
 

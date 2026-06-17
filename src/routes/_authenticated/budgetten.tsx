@@ -3,7 +3,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useMemo, useState, type ChangeEvent } from "react";
@@ -89,7 +95,11 @@ function BudgetsPage() {
   const [fromMonth, setFromMonth] = useState("01");
   const [toMonth, setToMonth] = useState(thisMonthNumber);
   const [detailLevel, setDetailLevel] = useState<DetailLevel>("both");
-  const [visibleColumns, setVisibleColumns] = useState<MetricColumn[]>(["actual"]);
+  const [visibleColumns, setVisibleColumns] = useState<MetricColumn[]>([
+    "actual",
+    "budget",
+    "variance",
+  ]);
 
   const selectedPeriods = useMemo(() => {
     if (viewMode === "month") return [composePeriod(year, month)];
@@ -142,7 +152,9 @@ function BudgetsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("vw_monthly_machine" as never)
-        .select("period,channel,machine_id,display_name,afs_number,tx_count,gross_total,net_total,vat_total")
+        .select(
+          "period,channel,machine_id,display_name,afs_number,tx_count,gross_total,net_total,vat_total",
+        )
         .in("period", selectedPeriods);
       if (error) throw error;
       return (data ?? []) as ActualRow[];
@@ -168,7 +180,9 @@ function BudgetsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("vw_monthly_machine" as never)
-        .select("period,channel,machine_id,display_name,afs_number,tx_count,gross_total,net_total,vat_total")
+        .select(
+          "period,channel,machine_id,display_name,afs_number,tx_count,gross_total,net_total,vat_total",
+        )
         .in("period", lyPeriods);
       if (error) throw error;
       return (data ?? []) as ActualRow[];
@@ -238,7 +252,11 @@ function BudgetsPage() {
       }
 
       for (const row of rows) {
-        let del = supabase.from("budgets").delete().eq("channel", row.channel).eq("period", row.period);
+        let del = supabase
+          .from("budgets")
+          .delete()
+          .eq("channel", row.channel)
+          .eq("period", row.period);
         del = row.machine_id ? del.eq("machine_id", row.machine_id) : del.is("machine_id", null);
         const deleteResult = await del;
         if (deleteResult.error) throw deleteResult.error;
@@ -316,7 +334,8 @@ function BudgetsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Omzet monitoring</h1>
           <p className="text-sm text-muted-foreground">
-            Upload Excel-budgetten en vergelijk Actuals ex btw, Budget ex btw, Delta en LY per maand, YTD of jaar.
+            Voer omzetbudgetten ex btw in en vergelijk actuals, budget, delta en LY per maand, YTD
+            of jaar.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 items-end">
@@ -427,7 +446,10 @@ function BudgetsPage() {
 
             <div>
               <label className="text-xs text-muted-foreground">Detailniveau</label>
-              <Select value={detailLevel} onValueChange={(value) => setDetailLevel(value as DetailLevel)}>
+              <Select
+                value={detailLevel}
+                onValueChange={(value) => setDetailLevel(value as DetailLevel)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -462,15 +484,24 @@ function BudgetsPage() {
           title="Act <> LY"
           value={needsLy ? formatEUR(deltaLy) : "-"}
           tone={!needsLy || Math.abs(deltaLy) <= 0.01 ? "neutral" : deltaLy >= 0 ? "good" : "bad"}
-          detail={!needsLy ? "Kolom uit" : deltaLyPct === null ? "Geen LY" : `${formatSigned(deltaLyPct)}%`}
+          detail={
+            !needsLy
+              ? "Kolom uit"
+              : deltaLyPct === null
+                ? "Geen LY"
+                : `${formatSigned(deltaLyPct)}%`
+          }
         />
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{selectionTitle(viewMode, selectedPeriods, year)}</CardTitle>
+          <CardTitle className="text-base">
+            {selectionTitle(viewMode, selectedPeriods, year)}
+          </CardTitle>
           <CardDescription>
-            Budgetten zijn ex btw. Regels met <code>afs_number</code> rollen onder Bold/AFS in als AFS-regel.
+            Omzetbudgetten zijn ex btw. Regels met <code>afs_number</code> rollen onder Bold/AFS in
+            als AFS-regel.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -478,28 +509,47 @@ function BudgetsPage() {
             <table className="w-full min-w-[980px] text-sm">
               <thead className="bg-muted/50">
                 <tr className="text-left">
-                  <th className="px-3 py-2 font-medium" rowSpan={2}>Type</th>
-                  <th className="px-3 py-2 font-medium" rowSpan={2}>Kanaal</th>
-                  <th className="px-3 py-2 font-medium min-w-[240px]" rowSpan={2}>Naam</th>
+                  <th className="px-3 py-2 font-medium" rowSpan={2}>
+                    Type
+                  </th>
+                  <th className="px-3 py-2 font-medium" rowSpan={2}>
+                    Kanaal
+                  </th>
+                  <th className="px-3 py-2 font-medium min-w-[240px]" rowSpan={2}>
+                    Naam
+                  </th>
                   {selectedPeriods.map((p) => (
-                    <th key={p} className="px-3 py-2 font-medium text-center border-l" colSpan={periodColumns.length}>
+                    <th
+                      key={p}
+                      className="px-3 py-2 font-medium text-center border-l"
+                      colSpan={periodColumns.length}
+                    >
                       {shortMonthLabel(p)}
                     </th>
                   ))}
-                  <th className="px-3 py-2 font-medium text-center border-l" colSpan={totalColumns.length}>
+                  <th
+                    className="px-3 py-2 font-medium text-center border-l"
+                    colSpan={totalColumns.length}
+                  >
                     {totalLabel}
                   </th>
                 </tr>
                 <tr className="text-left">
                   {selectedPeriods.map((p) =>
                     periodColumns.map((column) => (
-                      <th key={`${p}-${column}`} className="px-3 py-2 font-medium text-right first:border-l">
+                      <th
+                        key={`${p}-${column}`}
+                        className="px-3 py-2 font-medium text-right first:border-l"
+                      >
                         {metricLabel(column)}
                       </th>
                     )),
                   )}
                   {totalColumns.map((column) => (
-                    <th key={`total-${column}`} className="px-3 py-2 font-medium text-right first:border-l">
+                    <th
+                      key={`total-${column}`}
+                      className="px-3 py-2 font-medium text-right first:border-l"
+                    >
                       {totalMetricLabel(column, totalLabel)}
                     </th>
                   ))}
@@ -508,7 +558,10 @@ function BudgetsPage() {
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={tableColSpan} className="px-3 py-6 text-center text-muted-foreground">
+                    <td
+                      colSpan={tableColSpan}
+                      className="px-3 py-6 text-center text-muted-foreground"
+                    >
                       Geen actuals of budgetten voor deze selectie.
                     </td>
                   </tr>
@@ -516,7 +569,11 @@ function BudgetsPage() {
                 {rows.map((row) => (
                   <tr
                     key={row.key}
-                    className={row.level === 0 ? "border-t hover:bg-muted/30" : "border-t bg-muted/10 hover:bg-muted/30"}
+                    className={
+                      row.level === 0
+                        ? "border-t hover:bg-muted/30"
+                        : "border-t bg-muted/10 hover:bg-muted/30"
+                    }
                   >
                     <td className="px-3 py-2">
                       <Badge variant={row.level === 0 ? "outline" : "secondary"}>
@@ -527,7 +584,9 @@ function BudgetsPage() {
                     <td className={row.level === 0 ? "px-3 py-2 font-medium" : "px-3 py-2 pl-8"}>
                       <div>{row.label}</div>
                       {row.afsNumber && (
-                        <div className="text-xs text-muted-foreground tabular-nums">AFS {row.afsNumber}</div>
+                        <div className="text-xs text-muted-foreground tabular-nums">
+                          AFS {row.afsNumber}
+                        </div>
                       )}
                     </td>
                     {selectedPeriods.map((p) =>
@@ -669,7 +728,9 @@ function buildAnalysisRows({
         afsNumber,
         label,
         level: machineId ? 1 : 0,
-        periodValues: Object.fromEntries(periods.map((p) => [p, { actual: 0, budget: 0, lyActual: 0 }])),
+        periodValues: Object.fromEntries(
+          periods.map((p) => [p, { actual: 0, budget: 0, lyActual: 0 }]),
+        ),
         actual: 0,
         budget: 0,
         lyActual: 0,
@@ -689,8 +750,11 @@ function buildAnalysisRows({
     if (!budget.machine_id) {
       explicitChannelBudgetPeriods.add(`${budget.channel}|${budget.period}`);
       if (showChannel) {
-        ensure(budget.channel, null, budget.channel === "bold_afs" ? "Totaal Bold/AFS" : "Totaal kanaal")
-          .periodValues[budget.period].budget += amount;
+        ensure(
+          budget.channel,
+          null,
+          budget.channel === "bold_afs" ? "Totaal Bold/AFS" : "Totaal kanaal",
+        ).periodValues[budget.period].budget += amount;
       }
       continue;
     }
@@ -703,9 +767,12 @@ function buildAnalysisRows({
 
     if (showMachine) {
       const label = budget.machines?.display_name || "Onbekende AFS";
-      ensure(budget.channel, budget.machine_id, label, budget.machines?.afs_number ?? null).periodValues[
-        budget.period
-      ].budget += amount;
+      ensure(
+        budget.channel,
+        budget.machine_id,
+        label,
+        budget.machines?.afs_number ?? null,
+      ).periodValues[budget.period].budget += amount;
     }
   }
 
@@ -718,13 +785,19 @@ function buildAnalysisRows({
     }
 
     for (const actual of channelActuals) {
-      ensure(actual.channel, null, actual.channel === "bold_afs" ? "Totaal Bold/AFS" : "Totaal kanaal")
-        .periodValues[actual.period].actual += Number(actual.net_total ?? actual.gross_total ?? 0);
+      ensure(
+        actual.channel,
+        null,
+        actual.channel === "bold_afs" ? "Totaal Bold/AFS" : "Totaal kanaal",
+      ).periodValues[actual.period].actual += Number(actual.net_total ?? actual.gross_total ?? 0);
     }
     for (const actual of lyChannelActuals) {
       const period = previousYearToCurrentPeriod(actual.period);
-      ensure(actual.channel, null, actual.channel === "bold_afs" ? "Totaal Bold/AFS" : "Totaal kanaal")
-        .periodValues[period].lyActual += Number(actual.net_total ?? actual.gross_total ?? 0);
+      ensure(
+        actual.channel,
+        null,
+        actual.channel === "bold_afs" ? "Totaal Bold/AFS" : "Totaal kanaal",
+      ).periodValues[period].lyActual += Number(actual.net_total ?? actual.gross_total ?? 0);
     }
   }
 
@@ -776,7 +849,9 @@ async function parseBudgetWorkbook(file: File, machines: Machine[]) {
   if (!sheet) throw new Error("Geen werkblad gevonden");
 
   const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-  const machineByAfs = new Map(machines.map((machine) => [machine.afs_number.toLowerCase(), machine]));
+  const machineByAfs = new Map(
+    machines.map((machine) => [machine.afs_number.toLowerCase(), machine]),
+  );
   const machineByMachineId = new Map(
     machines
       .filter((machine) => machine.machine_id)
@@ -814,7 +889,8 @@ async function parseBudgetWorkbook(file: File, machines: Machine[]) {
       const machine =
         (afs ? machineByAfs.get(afs.toLowerCase()) : undefined) ??
         (machineCode ? machineByMachineId.get(machineCode.toLowerCase()) : undefined);
-      if (!machine) throw new Error(`Rij ${index + 2}: machine niet gevonden (${afs || machineCode})`);
+      if (!machine)
+        throw new Error(`Rij ${index + 2}: machine niet gevonden (${afs || machineCode})`);
       machine_id = machine.id;
     }
 
@@ -826,7 +902,10 @@ async function parseBudgetWorkbook(file: File, machines: Machine[]) {
 
 function normalizeKeys(row: Record<string, unknown>) {
   return Object.fromEntries(
-    Object.entries(row).map(([key, value]) => [key.trim().toLowerCase().replace(/\s+/g, "_"), value]),
+    Object.entries(row).map(([key, value]) => [
+      key.trim().toLowerCase().replace(/\s+/g, "_"),
+      value,
+    ]),
   );
 }
 
@@ -989,7 +1068,9 @@ function totalMetricValue(row: AnalysisRow, column: MetricColumn) {
 }
 
 function hasAnyValue(row: AnalysisRow) {
-  return Math.abs(row.actual) > 0.01 || Math.abs(row.budget) > 0.01 || Math.abs(row.lyActual) > 0.01;
+  return (
+    Math.abs(row.actual) > 0.01 || Math.abs(row.budget) > 0.01 || Math.abs(row.lyActual) > 0.01
+  );
 }
 
 function channelIndex(channel: string) {
@@ -1008,7 +1089,9 @@ function shortMonthLabel(period: string) {
 function moneyDeltaClass(value: number, strong = false) {
   const base = `px-3 py-2 text-right tabular-nums ${strong ? "font-semibold" : ""}`;
   if (Math.abs(value) < 0.01) return `${base} text-muted-foreground`;
-  return value >= 0 ? `${base} text-emerald-700 font-medium` : `${base} text-destructive font-medium`;
+  return value >= 0
+    ? `${base} text-emerald-700 font-medium`
+    : `${base} text-destructive font-medium`;
 }
 
 function formatSigned(value: number) {
