@@ -67,6 +67,7 @@ INSERT INTO public.sync_state (channel, last_sweep_status, last_sweep_message, r
 VALUES
   ('shopify_webshop', NULL, NULL, NULL),
   ('shopify_winkel', NULL, NULL, NULL),
+  ('shopify_payments', NULL, NULL, NULL),
   ('bold_afs', NULL, NULL, NULL)
 ON CONFLICT (channel) DO NOTHING;
 `;
@@ -137,6 +138,7 @@ async function main() {
     await applyMigration(app, "20260617140000_add_afs_invoice_delivery.sql");
     await applyMigration(app, "20260617170000_add_afs_invoice_email_queue.sql");
     await applyMigration(app, "20260617110000_add_exact_sync_state.sql");
+    await applyMigration(app, "20260617183000_add_shopify_payments_reconciliation.sql");
 
     await app.query(localAuthSql);
     await seedAdminUser(app);

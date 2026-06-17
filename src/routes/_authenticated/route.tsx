@@ -33,6 +33,7 @@ import {
   BarChart3,
   Users,
   HandCoins,
+  WalletCards,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -58,6 +59,7 @@ const beheerNav = [
   { to: "/transacties", label: "Verkooptransacties", icon: ListOrdered },
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
   { to: "/mollie-transacties", label: "Mollie transacties", icon: CreditCard },
+  { to: "/shopify-betalingen", label: "Shopify betalingen", icon: WalletCards },
   { to: "/exact-transacties", label: "Exact transacties", icon: FileText },
   { to: "/bold-afs-aansluiting", label: "Bold <> Mollie aansluiting", icon: Scale },
   { to: "/grootboek", label: "Grootboek", icon: BookOpen },

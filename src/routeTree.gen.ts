@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedWinstVerliesRouteImport } from './routes/_authenticated/winst-verlies'
 import { Route as AuthenticatedTransactiesRouteImport } from './routes/_authenticated/transacties'
+import { Route as AuthenticatedShopifyBetalingenRouteImport } from './routes/_authenticated/shopify-betalingen'
 import { Route as AuthenticatedMollieTransactiesRouteImport } from './routes/_authenticated/mollie-transacties'
 import { Route as AuthenticatedInstellingenRouteImport } from './routes/_authenticated/instellingen'
 import { Route as AuthenticatedImportCsvRouteImport } from './routes/_authenticated/import-csv'
@@ -51,6 +52,12 @@ const AuthenticatedTransactiesRoute =
   AuthenticatedTransactiesRouteImport.update({
     id: '/transacties',
     path: '/transacties',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedShopifyBetalingenRoute =
+  AuthenticatedShopifyBetalingenRouteImport.update({
+    id: '/shopify-betalingen',
+    path: '/shopify-betalingen',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedMollieTransactiesRoute =
@@ -133,6 +140,7 @@ export interface FileRoutesByFullPath {
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
+  '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/transacties': typeof AuthenticatedTransactiesRouteWithChildren
   '/winst-verlies': typeof AuthenticatedWinstVerliesRoute
   '/transacties/$id': typeof AuthenticatedTransactiesIdRoute
@@ -151,6 +159,7 @@ export interface FileRoutesByTo {
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
+  '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/transacties': typeof AuthenticatedTransactiesRouteWithChildren
   '/winst-verlies': typeof AuthenticatedWinstVerliesRoute
   '/transacties/$id': typeof AuthenticatedTransactiesIdRoute
@@ -171,6 +180,7 @@ export interface FileRoutesById {
   '/_authenticated/import-csv': typeof AuthenticatedImportCsvRoute
   '/_authenticated/instellingen': typeof AuthenticatedInstellingenRoute
   '/_authenticated/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
+  '/_authenticated/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/_authenticated/transacties': typeof AuthenticatedTransactiesRouteWithChildren
   '/_authenticated/winst-verlies': typeof AuthenticatedWinstVerliesRoute
   '/_authenticated/transacties/$id': typeof AuthenticatedTransactiesIdRoute
@@ -191,6 +201,7 @@ export interface FileRouteTypes {
     | '/import-csv'
     | '/instellingen'
     | '/mollie-transacties'
+    | '/shopify-betalingen'
     | '/transacties'
     | '/winst-verlies'
     | '/transacties/$id'
@@ -209,6 +220,7 @@ export interface FileRouteTypes {
     | '/import-csv'
     | '/instellingen'
     | '/mollie-transacties'
+    | '/shopify-betalingen'
     | '/transacties'
     | '/winst-verlies'
     | '/transacties/$id'
@@ -228,6 +240,7 @@ export interface FileRouteTypes {
     | '/_authenticated/import-csv'
     | '/_authenticated/instellingen'
     | '/_authenticated/mollie-transacties'
+    | '/_authenticated/shopify-betalingen'
     | '/_authenticated/transacties'
     | '/_authenticated/winst-verlies'
     | '/_authenticated/transacties/$id'
@@ -274,6 +287,13 @@ declare module '@tanstack/react-router' {
       path: '/transacties'
       fullPath: '/transacties'
       preLoaderRoute: typeof AuthenticatedTransactiesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/shopify-betalingen': {
+      id: '/_authenticated/shopify-betalingen'
+      path: '/shopify-betalingen'
+      fullPath: '/shopify-betalingen'
+      preLoaderRoute: typeof AuthenticatedShopifyBetalingenRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/mollie-transacties': {
@@ -389,6 +409,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedImportCsvRoute: typeof AuthenticatedImportCsvRoute
   AuthenticatedInstellingenRoute: typeof AuthenticatedInstellingenRoute
   AuthenticatedMollieTransactiesRoute: typeof AuthenticatedMollieTransactiesRoute
+  AuthenticatedShopifyBetalingenRoute: typeof AuthenticatedShopifyBetalingenRoute
   AuthenticatedTransactiesRoute: typeof AuthenticatedTransactiesRouteWithChildren
   AuthenticatedWinstVerliesRoute: typeof AuthenticatedWinstVerliesRoute
 }
@@ -405,6 +426,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedImportCsvRoute: AuthenticatedImportCsvRoute,
   AuthenticatedInstellingenRoute: AuthenticatedInstellingenRoute,
   AuthenticatedMollieTransactiesRoute: AuthenticatedMollieTransactiesRoute,
+  AuthenticatedShopifyBetalingenRoute: AuthenticatedShopifyBetalingenRoute,
   AuthenticatedTransactiesRoute: AuthenticatedTransactiesRouteWithChildren,
   AuthenticatedWinstVerliesRoute: AuthenticatedWinstVerliesRoute,
 }

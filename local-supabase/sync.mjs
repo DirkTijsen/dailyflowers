@@ -6,6 +6,9 @@ const SHOPIFY_INITIAL_LOOKBACK_DAYS = Number(
 const SHOPIFY_INCREMENTAL_OVERLAP_HOURS = Number(
   process.env.SHOPIFY_INCREMENTAL_OVERLAP_HOURS ?? 24,
 );
+const SHOPIFY_PAYMENTS_INCREMENTAL_OVERLAP_HOURS = Number(
+  process.env.SHOPIFY_PAYMENTS_INCREMENTAL_OVERLAP_HOURS ?? 168,
+);
 const SHOPIFY_SYNC_FROM = process.env.SHOPIFY_SYNC_FROM ?? null;
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-04";
 const MOLLIE_SYNC_FROM = process.env.MOLLIE_SYNC_FROM ?? "2026-01-01T00:00:00Z";
@@ -102,6 +105,50 @@ const mollieTransactionColumns = [
   "raw_payload",
 ];
 
+const shopifyPaymentPayoutColumns = [
+  "connection_id",
+  "shop_domain",
+  "payout_id",
+  "status",
+  "payout_date",
+  "currency",
+  "amount",
+  "charges_gross_amount",
+  "charges_fee_amount",
+  "refunds_gross_amount",
+  "refunds_fee_amount",
+  "adjustments_gross_amount",
+  "adjustments_fee_amount",
+  "reserved_funds_gross_amount",
+  "reserved_funds_fee_amount",
+  "retried_payouts_gross_amount",
+  "retried_payouts_fee_amount",
+  "external_trace_id",
+  "raw_payload",
+  "synced_at",
+];
+
+const shopifyPaymentBalanceTransactionColumns = [
+  "connection_id",
+  "shop_domain",
+  "balance_transaction_id",
+  "payout_id",
+  "type",
+  "test",
+  "payout_status",
+  "currency",
+  "amount",
+  "fee",
+  "net",
+  "source_id",
+  "source_type",
+  "source_order_id",
+  "source_order_transaction_id",
+  "processed_at",
+  "raw_payload",
+  "synced_at",
+];
+
 const exactGlTransactionColumns = [
   "source",
   "external_id",
@@ -122,6 +169,7 @@ export async function markSweepRunning(pool) {
   await Promise.all([
     recordSweep(pool, "shopify_webshop", "running", "Sweep gestart...", 0),
     recordSweep(pool, "shopify_winkel", "running", "Sweep gestart...", 0),
+    recordSweep(pool, "shopify_payments", "running", "Shopify Payments sync gestart...", 0),
     recordSweep(pool, "bold_afs", "running", "Sweep gestart...", 0),
     recordSweep(pool, "exact_gl", "running", "Exact sync gestart...", 0),
   ]);
@@ -135,6 +183,10 @@ export async function runSweep(pool) {
 
 export async function runShopifySweepFrom(pool, sinceIso, options = {}) {
   await sweepShopify(pool, { ...options, sinceIso });
+}
+
+export async function runShopifyPaymentsSweepFrom(pool, sinceIso = null, options = {}) {
+  return sweepShopifyPayments(pool, { ...options, sinceIso, throwOnError: options.throwOnError ?? true });
 }
 
 export async function processShopifyWebhook(pool, rawBody, signature) {
@@ -162,31 +214,52 @@ async function sweepShopify(pool, options = {}) {
       `,
     );
 
-    let total = 0;
-    const errors = [];
+    let orderTotal = 0;
+    let paymentTotal = 0;
+    const orderErrors = [];
+    const paymentErrors = [];
 
     for (const conn of result.rows) {
       try {
         const sinceIso = options.sinceIso ?? determineShopifySince(conn);
-        total += await sweepShopifyConnection(pool, conn, sinceIso, options);
+        orderTotal += await sweepShopifyConnection(pool, conn, sinceIso, options);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        errors.push(`${conn.label}: ${message}`);
+        orderErrors.push(`${conn.label}: ${message}`);
         console.error("shopify conn fail", conn.label, message);
+      }
+
+      try {
+        const paymentSinceIso =
+          options.paymentsSinceIso ?? options.sinceIso ?? (await determineShopifyPaymentsSince(pool));
+        const result = await sweepShopifyPaymentsConnection(pool, conn, paymentSinceIso);
+        paymentTotal += result.payouts + result.balanceTransactions;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        paymentErrors.push(`${conn.label}: ${message}`);
+        console.error("shopify payments conn fail", conn.label, message);
       }
     }
 
-    const status = errors.length > 0 ? "error" : "ok";
-    const message =
-      errors.length > 0
-        ? errors.join(" | ")
+    const orderStatus = orderErrors.length > 0 ? "error" : "ok";
+    const orderMessage =
+      orderErrors.length > 0
+        ? orderErrors.join(" | ")
         : `Sweep voltooid (${result.rows.length} koppeling(en))`;
-    await recordSweep(pool, "shopify_webshop", status, message, total);
-    await recordSweep(pool, "shopify_winkel", status, message, total);
+    await recordSweep(pool, "shopify_webshop", orderStatus, orderMessage, orderTotal);
+    await recordSweep(pool, "shopify_winkel", orderStatus, orderMessage, orderTotal);
+
+    const paymentStatus = paymentErrors.length > 0 ? "error" : "ok";
+    const paymentMessage =
+      paymentErrors.length > 0
+        ? paymentErrors.join(" | ")
+        : `Shopify Payments voltooid (${result.rows.length} koppeling(en))`;
+    await recordSweep(pool, "shopify_payments", paymentStatus, paymentMessage, paymentTotal);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await recordSweep(pool, "shopify_webshop", "error", message, 0);
     await recordSweep(pool, "shopify_winkel", "error", message, 0);
+    await recordSweep(pool, "shopify_payments", "error", message, 0);
   }
 }
 
@@ -196,6 +269,27 @@ function determineShopifySince(conn) {
   const lastSynced = conn.last_synced_at ? new Date(conn.last_synced_at).getTime() : NaN;
   const since = Number.isFinite(lastSynced)
     ? lastSynced - SHOPIFY_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
+    : Date.now() - SHOPIFY_INITIAL_LOOKBACK_DAYS * 24 * 3600 * 1000;
+
+  return new Date(Math.max(since, safeLowerBound)).toISOString();
+}
+
+async function determineShopifyPaymentsSince(pool) {
+  const lowerBound = SHOPIFY_SYNC_FROM ? new Date(SHOPIFY_SYNC_FROM).getTime() : 0;
+  const safeLowerBound = Number.isFinite(lowerBound) ? lowerBound : 0;
+  const result = await pool.query(
+    `
+      SELECT last_sweep_at
+      FROM public.sync_state
+      WHERE channel = 'shopify_payments'
+        AND last_sweep_status = 'ok'
+        AND last_sweep_at IS NOT NULL
+      LIMIT 1
+    `,
+  );
+  const lastOk = result.rows[0]?.last_sweep_at;
+  const since = lastOk
+    ? new Date(lastOk).getTime() - SHOPIFY_PAYMENTS_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
     : Date.now() - SHOPIFY_INITIAL_LOOKBACK_DAYS * 24 * 3600 * 1000;
 
   return new Date(Math.max(since, safeLowerBound)).toISOString();
@@ -232,6 +326,82 @@ async function sweepShopifyConnection(pool, conn, sinceIso, options = {}) {
     conn.id,
   ]);
   return count;
+}
+
+async function sweepShopifyPayments(pool, options = {}) {
+  try {
+    const result = await pool.query(
+      `
+        SELECT id, shop_domain, client_id, access_token, label
+        FROM public.shopify_connections
+        WHERE active = true
+        ORDER BY created_at
+      `,
+    );
+    const sinceIso = options.sinceIso ?? (await determineShopifyPaymentsSince(pool));
+    let totalPayouts = 0;
+    let totalTransactions = 0;
+    const errors = [];
+
+    await recordSweep(pool, "shopify_payments", "running", `Shopify Payments sync vanaf ${sinceIso}`, 0);
+
+    for (const conn of result.rows) {
+      try {
+        const counts = await sweepShopifyPaymentsConnection(pool, conn, sinceIso);
+        totalPayouts += counts.payouts;
+        totalTransactions += counts.balanceTransactions;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${conn.label}: ${message}`);
+        console.error("shopify payments conn fail", conn.label, message);
+      }
+    }
+
+    if (errors.length > 0) {
+      const message = errors.join(" | ");
+      await recordSweep(pool, "shopify_payments", "error", message, totalPayouts + totalTransactions);
+      if (options.throwOnError) throw new Error(message);
+    } else {
+      await recordSweep(
+        pool,
+        "shopify_payments",
+        "ok",
+        `Shopify Payments voltooid: ${totalPayouts} payouts, ${totalTransactions} balance transactions`,
+        totalPayouts + totalTransactions,
+      );
+    }
+
+    return totalPayouts + totalTransactions;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordSweep(pool, "shopify_payments", "error", message, 0);
+    if (options.throwOnError) throw error;
+    return 0;
+  }
+}
+
+async function sweepShopifyPaymentsConnection(pool, conn, sinceIso) {
+  const domain = normalizeShopDomain(conn.shop_domain);
+  if (!/^[a-z0-9-]+\.myshopify\.com$/.test(domain)) {
+    throw new Error(`Ongeldig shop-domein "${conn.shop_domain}". Verwacht: <winkel>.myshopify.com`);
+  }
+
+  const accessToken = await getShopifyAccessToken(domain, conn);
+  const payouts = await fetchShopifyPayouts(domain, accessToken, sinceIso);
+  let balanceTransactionCount = 0;
+
+  for (const payout of payouts) {
+    await upsertShopifyPayout(pool, conn, domain, payout);
+    const balanceTransactions = await fetchShopifyBalanceTransactionsForPayout(
+      domain,
+      accessToken,
+      payout.id,
+    );
+    balanceTransactionCount += balanceTransactions.length;
+    await upsertShopifyBalanceTransactions(pool, conn, domain, balanceTransactions);
+  }
+
+  return { payouts: payouts.length, balanceTransactions: balanceTransactionCount };
 }
 
 async function getShopifyAccessToken(domain, conn) {
@@ -421,6 +591,133 @@ async function fetchShopifyOrdersPage(domain, accessToken, sinceIso, cursor) {
   }
 
   return payload.data;
+}
+
+async function fetchShopifyPayouts(domain, accessToken, sinceIso) {
+  const dateMin = toIsoDate(sinceIso);
+  const url = new URL(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/shopify_payments/payouts.json`);
+  url.searchParams.set("limit", "250");
+  if (dateMin) url.searchParams.set("date_min", dateMin);
+  return fetchShopifyRestPages(url.toString(), accessToken, "payouts");
+}
+
+async function fetchShopifyBalanceTransactionsForPayout(domain, accessToken, payoutId) {
+  const url = new URL(
+    `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/shopify_payments/balance/transactions.json`,
+  );
+  url.searchParams.set("limit", "250");
+  url.searchParams.set("payout_id", String(payoutId));
+  return fetchShopifyRestPages(url.toString(), accessToken, "transactions");
+}
+
+async function fetchShopifyRestPages(initialUrl, accessToken, collectionKey) {
+  let url = initialUrl;
+  const rows = [];
+
+  while (url) {
+    const response = await fetchWithRetry(
+      url,
+      {
+        headers: {
+          Accept: "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      },
+      3,
+      30000,
+    );
+
+    if (!response.ok) {
+      throw new Error(`Shopify REST ${response.status}: ${shorten(await response.text())}`);
+    }
+
+    const payload = await response.json();
+    const pageRows = Array.isArray(payload?.[collectionKey]) ? payload[collectionKey] : [];
+    rows.push(...pageRows);
+    url = nextLink(response.headers.get("link"));
+  }
+
+  return rows;
+}
+
+function nextLink(linkHeader) {
+  const links = String(linkHeader ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  for (const link of links) {
+    if (!/rel="?next"?/i.test(link)) continue;
+    const match = /<([^>]+)>/.exec(link);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+async function upsertShopifyPayout(pool, conn, domain, payout) {
+  const summary = payout.summary ?? {};
+  await upsertRows(
+    pool,
+    "public.shopify_payment_payouts",
+    shopifyPaymentPayoutColumns,
+    [
+      {
+        connection_id: conn.id,
+        shop_domain: domain,
+        payout_id: cleanText(payout.id),
+        status: cleanText(payout.status) || null,
+        payout_date: toIsoDate(payout.date ?? payout.issued_at ?? payout.issuedAt),
+        currency: cleanText(payout.currency) || null,
+        amount: nullableMoney(payout.amount) ?? 0,
+        charges_gross_amount: nullableMoney(summary.charges_gross_amount) ?? 0,
+        charges_fee_amount: nullableMoney(summary.charges_fee_amount) ?? 0,
+        refunds_gross_amount: nullableMoney(summary.refunds_gross_amount) ?? 0,
+        refunds_fee_amount: nullableMoney(summary.refunds_fee_amount) ?? 0,
+        adjustments_gross_amount: nullableMoney(summary.adjustments_gross_amount) ?? 0,
+        adjustments_fee_amount: nullableMoney(summary.adjustments_fee_amount) ?? 0,
+        reserved_funds_gross_amount: nullableMoney(summary.reserved_funds_gross_amount) ?? 0,
+        reserved_funds_fee_amount: nullableMoney(summary.reserved_funds_fee_amount) ?? 0,
+        retried_payouts_gross_amount: nullableMoney(summary.retried_payouts_gross_amount) ?? 0,
+        retried_payouts_fee_amount: nullableMoney(summary.retried_payouts_fee_amount) ?? 0,
+        external_trace_id: cleanText(payout.external_trace_id ?? payout.externalTraceId) || null,
+        raw_payload: payout,
+        synced_at: new Date().toISOString(),
+      },
+    ],
+    ["shop_domain", "payout_id"],
+  );
+}
+
+async function upsertShopifyBalanceTransactions(pool, conn, domain, transactions) {
+  const rows = transactions
+    .map((tx) => ({
+      connection_id: conn.id,
+      shop_domain: domain,
+      balance_transaction_id: cleanText(tx.id),
+      payout_id: cleanText(tx.payout_id) || null,
+      type: cleanText(tx.type) || null,
+      test: typeof tx.test === "boolean" ? tx.test : null,
+      payout_status: cleanText(tx.payout_status) || null,
+      currency: cleanText(tx.currency) || null,
+      amount: nullableMoney(tx.amount) ?? 0,
+      fee: nullableMoney(tx.fee) ?? 0,
+      net: nullableMoney(tx.net) ?? 0,
+      source_id: cleanText(tx.source_id) || null,
+      source_type: cleanText(tx.source_type) || null,
+      source_order_id: cleanText(tx.source_order_id) || null,
+      source_order_transaction_id: cleanText(tx.source_order_transaction_id) || null,
+      processed_at: tx.processed_at ?? null,
+      raw_payload: tx,
+      synced_at: new Date().toISOString(),
+    }))
+    .filter((row) => row.balance_transaction_id);
+
+  await upsertRows(
+    pool,
+    "public.shopify_payment_balance_transactions",
+    shopifyPaymentBalanceTransactionColumns,
+    rows,
+    ["shop_domain", "balance_transaction_id"],
+  );
 }
 
 function graphqlOrderToRestLike(order) {
