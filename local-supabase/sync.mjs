@@ -68,6 +68,11 @@ const shopifyOrderSummaryColumns = [
   "source_name",
   "channel",
   "financial_status",
+  "customer_id",
+  "customer_name",
+  "customer_email",
+  "customer_phone",
+  "customer_company",
   "processed_at",
   "created_at_shopify",
   "updated_at_shopify",
@@ -906,6 +911,23 @@ async function fetchShopifyOrdersPage(domain, accessToken, sinceIso, cursor) {
           displayFinancialStatus
           taxesIncluded
           statusPageUrl
+          email
+          customer {
+            id
+            displayName
+            email
+            phone
+          }
+          billingAddress {
+            name
+            company
+            phone
+          }
+          shippingAddress {
+            name
+            company
+            phone
+          }
           paymentGatewayNames
           transactions(first: 100) {
             id
@@ -1219,6 +1241,11 @@ function graphqlOrderToRestLike(order) {
     financial_status: mapGraphqlFinancialStatus(order.displayFinancialStatus),
     taxes_included: order.taxesIncluded,
     order_status_url: order.statusPageUrl,
+    customer_id: gidTail(order.customer?.id),
+    customer_name: cleanText(order.customer?.displayName ?? order.billingAddress?.name ?? order.shippingAddress?.name) || null,
+    customer_email: cleanText(order.customer?.email ?? order.email) || null,
+    customer_phone: cleanText(order.customer?.phone ?? order.billingAddress?.phone ?? order.shippingAddress?.phone) || null,
+    customer_company: cleanText(order.billingAddress?.company ?? order.shippingAddress?.company) || null,
     payment_gateway_names: order.paymentGatewayNames ?? [],
     transactions: (order.transactions ?? []).map((tx) => ({
       id: gidTail(tx.id),
@@ -2026,6 +2053,11 @@ export async function processShopifyOrder(pool, order, options = {}) {
         source_name: order.source_name ?? null,
         channel,
         financial_status: status,
+        customer_id: cleanText(order.customer_id) || null,
+        customer_name: cleanText(order.customer_name) || null,
+        customer_email: cleanText(order.customer_email) || null,
+        customer_phone: cleanText(order.customer_phone) || null,
+        customer_company: cleanText(order.customer_company) || null,
         processed_at: paidAt,
         created_at_shopify: order.created_at ?? null,
         updated_at_shopify: order.updated_at ?? null,
@@ -2050,6 +2082,10 @@ export async function processShopifyOrder(pool, order, options = {}) {
           name: order.name ?? null,
           source_name: order.source_name ?? null,
           financial_status: order.financial_status ?? null,
+          customer_id: order.customer_id ?? null,
+          customer_name: order.customer_name ?? null,
+          customer_email: order.customer_email ?? null,
+          customer_company: order.customer_company ?? null,
           tax_rates: taxRates,
           line_count: lines.length,
         },
