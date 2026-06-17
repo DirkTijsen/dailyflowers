@@ -16,8 +16,8 @@ const appUrl =
   process.env.LOCAL_DATABASE_URL ??
   "postgres://postgres:postgres@localhost:5432/daily_flowers_local";
 const reset = process.argv.includes("--reset");
-const existingDb = process.argv.includes("--existing-db") || process.env.RAILWAY_ENVIRONMENT !== undefined;
-const hostedRuntime = process.env.RAILWAY_ENVIRONMENT !== undefined || process.env.NODE_ENV === "production";
+const hostedRuntime = isHostedRuntime();
+const existingDb = process.argv.includes("--existing-db") || hostedRuntime;
 const adminEmail = process.env.LOCAL_ADMIN_EMAIL ?? (hostedRuntime ? "" : "admin@dailyflowers.local");
 const adminPassword = process.env.LOCAL_ADMIN_PASSWORD ?? (hostedRuntime ? "" : "dailyflowers");
 const appDbName = databaseName(appUrl);
@@ -165,6 +165,16 @@ function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256").toString("hex");
   return `pbkdf2_sha256$${iterations}$${salt}$${hash}`;
+}
+
+function isHostedRuntime() {
+  return Boolean(
+    process.env.RAILWAY_ENVIRONMENT_NAME ||
+      process.env.RAILWAY_ENVIRONMENT_ID ||
+      process.env.RAILWAY_PROJECT_ID ||
+      process.env.RAILWAY_SERVICE_ID ||
+      process.env.NODE_ENV === "production",
+  );
 }
 
 async function ensureDatabase() {

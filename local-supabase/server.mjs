@@ -18,7 +18,7 @@ loadDotEnv(path.resolve(process.cwd(), ".env"));
 
 const port = Number(process.env.PORT ?? process.env.LOCAL_SUPABASE_PORT ?? 54321);
 const host = process.env.HOST ?? process.env.LOCAL_SUPABASE_HOST ?? (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
-const hostedRuntime = process.env.RAILWAY_ENVIRONMENT !== undefined || process.env.NODE_ENV === "production";
+const hostedRuntime = isHostedRuntime();
 const databaseUrl =
   process.env.LOCAL_DATABASE_URL ??
   "postgres://postgres:postgres@localhost:5432/daily_flowers_local";
@@ -965,6 +965,16 @@ function redactConnectionString(value) {
   } catch {
     return "<configured>";
   }
+}
+
+function isHostedRuntime() {
+  return Boolean(
+    process.env.RAILWAY_ENVIRONMENT_NAME ||
+      process.env.RAILWAY_ENVIRONMENT_ID ||
+      process.env.RAILWAY_PROJECT_ID ||
+      process.env.RAILWAY_SERVICE_ID ||
+      process.env.NODE_ENV === "production",
+  );
 }
 
 function makeSession(user) {
