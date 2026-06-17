@@ -184,6 +184,13 @@ const resources = {
       "email_to",
       "email_subject",
       "email_last_error",
+      "email_status",
+      "queued_at",
+      "sending_started_at",
+      "email_body",
+      "email_provider",
+      "email_provider_message_id",
+      "email_attempts",
       "created_at",
       "updated_at",
     ],
@@ -836,18 +843,37 @@ async function handleAfsRentalInvoiceFunction(req, res) {
   const action = String(body?.action ?? "");
   const invoiceId = String(body?.invoice_id ?? "");
 
+  if (action === "queue_period") {
+    const period = String(body?.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      sendJson(res, 400, { message: "Periode moet het formaat YYYY-MM hebben" });
+      return;
+    }
+
+    const result = await queueAfsRentalInvoices({ period });
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (action === "process_queue") {
+    const limit = Math.min(Math.max(Number(body?.limit ?? 50), 1), 100);
+    const result = await processAfsRentalInvoiceQueue({ limit });
+    sendJson(res, 200, result);
+    return;
+  }
+
   if (!invoiceId) {
     sendJson(res, 400, { message: "invoice_id is verplicht" });
     return;
   }
 
-  const context = await loadAfsRentalInvoiceContext(invoiceId);
-  if (!context) {
-    sendJson(res, 404, { message: "Factuur niet gevonden" });
-    return;
-  }
-
   if (action === "download_pdf") {
+    const context = await loadAfsRentalInvoiceContext(invoiceId);
+    if (!context) {
+      sendJson(res, 404, { message: "Factuur niet gevonden" });
+      return;
+    }
+
     const pdf = buildAfsInvoicePdf(context);
     await markAfsInvoiceDocumentGenerated(invoiceId);
     sendJson(res, 200, {
@@ -859,6 +885,12 @@ async function handleAfsRentalInvoiceFunction(req, res) {
   }
 
   if (action === "download_ubl") {
+    const context = await loadAfsRentalInvoiceContext(invoiceId);
+    if (!context) {
+      sendJson(res, 404, { message: "Factuur niet gevonden" });
+      return;
+    }
+
     const ubl = buildAfsInvoiceUbl(context);
     await markAfsInvoiceDocumentGenerated(invoiceId);
     sendJson(res, 200, {
@@ -869,47 +901,9 @@ async function handleAfsRentalInvoiceFunction(req, res) {
     return;
   }
 
-  if (action === "send_email") {
-    const to = String(body?.to ?? context.customer.email ?? context.landlord.email ?? "").trim();
-    const subject =
-      String(body?.subject ?? "").trim() ||
-      `Factuur ${context.invoice.invoice_number} - ${periodLabel(context.invoice.period)}`;
-    const message = String(body?.message ?? "").trim();
-
-    if (!to) {
-      sendJson(res, 400, { message: "Ontvanger e-mailadres ontbreekt" });
-      return;
-    }
-
-    try {
-      const result = await sendAfsRentalInvoiceEmail(context, { to, subject, message });
-      await pool.query(
-        `
-          UPDATE public.afs_rental_invoices
-          SET status = 'sent',
-              sent_at = now(),
-              email_to = $2,
-              email_subject = $3,
-              email_last_error = NULL
-          WHERE id = $1
-        `,
-        [invoiceId, to, subject],
-      );
-      sendJson(res, 200, { ok: true, provider_id: result.id ?? null, to, subject });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      await pool.query(
-        `
-          UPDATE public.afs_rental_invoices
-          SET email_to = $2,
-              email_subject = $3,
-              email_last_error = $4
-          WHERE id = $1
-        `,
-        [invoiceId, to, subject, errorMessage],
-      );
-      sendJson(res, 400, { message: errorMessage });
-    }
+  if (action === "queue_email") {
+    const result = await queueAfsRentalInvoices({ invoiceIds: [invoiceId] });
+    sendJson(res, 200, result);
     return;
   }
 
@@ -1033,6 +1027,187 @@ async function deleteRows(req, res, url, resource) {
   sendJson(res, 200, result.rows);
 }
 
+async function queueAfsRentalInvoices({ period = null, invoiceIds = null }) {
+  const values = [];
+  let where = "i.status <> 'canceled' AND COALESCE(i.email_status, 'not_queued') <> 'sent'";
+  if (period) {
+    values.push(period);
+    where += ` AND i.period = $${values.length}`;
+  }
+  if (invoiceIds) {
+    values.push(invoiceIds);
+    where += ` AND i.id = ANY($${values.length}::uuid[])`;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT
+        i.id,
+        i.period,
+        i.invoice_number,
+        l.email AS landlord_email,
+        l.name AS landlord_name,
+        l.invoice_name AS landlord_invoice_name
+      FROM public.afs_rental_invoices i
+      LEFT JOIN public.afs_landlords l ON l.id = i.landlord_id
+      WHERE ${where}
+      ORDER BY i.invoice_date, i.invoice_number
+    `,
+    values,
+  );
+
+  let queued = 0;
+  let failed = 0;
+  const errors = [];
+
+  for (const invoice of result.rows) {
+    const to = String(invoice.landlord_email ?? "").trim();
+    const supplierName = invoice.landlord_invoice_name || invoice.landlord_name || "verhuurder";
+    const subject = `Factuur ${invoice.invoice_number} - ${periodLabel(invoice.period)}`;
+    const body = defaultInvoiceEmailBody({
+      invoiceNumber: invoice.invoice_number,
+      period: invoice.period,
+      supplierName,
+    });
+
+    if (!to) {
+      failed += 1;
+      const message = "Geen e-mailadres bij verhuurder";
+      errors.push(`${invoice.invoice_number}: ${message}`);
+      await pool.query(
+        `
+          UPDATE public.afs_rental_invoices
+          SET email_status = 'failed',
+              email_last_error = $2,
+              email_provider = 'gmail',
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [invoice.id, message],
+      );
+      continue;
+    }
+
+    await pool.query(
+      `
+        UPDATE public.afs_rental_invoices
+        SET email_status = 'queued',
+            queued_at = now(),
+            sending_started_at = NULL,
+            email_to = $2,
+            email_subject = $3,
+            email_body = $4,
+            email_provider = 'gmail',
+            email_provider_message_id = NULL,
+            email_last_error = NULL,
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [invoice.id, to, subject, body],
+    );
+    queued += 1;
+  }
+
+  return {
+    ok: true,
+    found: result.rows.length,
+    queued,
+    failed,
+    errors,
+  };
+}
+
+async function processAfsRentalInvoiceQueue({ limit }) {
+  const result = await pool.query(
+    `
+      SELECT id
+      FROM public.afs_rental_invoices
+      WHERE email_status = 'queued'
+      ORDER BY queued_at NULLS FIRST, invoice_date, invoice_number
+      LIMIT $1
+    `,
+    [limit],
+  );
+
+  let sent = 0;
+  let failed = 0;
+  const errors = [];
+
+  for (const row of result.rows) {
+    const claimed = await pool.query(
+      `
+        UPDATE public.afs_rental_invoices
+        SET email_status = 'sending',
+            sending_started_at = now(),
+            email_attempts = email_attempts + 1,
+            email_last_error = NULL,
+            updated_at = now()
+        WHERE id = $1
+          AND email_status = 'queued'
+        RETURNING id
+      `,
+      [row.id],
+    );
+    if (claimed.rowCount !== 1) continue;
+
+    const context = await loadAfsRentalInvoiceContext(row.id);
+    if (!context) {
+      failed += 1;
+      continue;
+    }
+
+    const to = context.invoice.email_to || context.landlord.email;
+    const subject =
+      context.invoice.email_subject ||
+      `Factuur ${context.invoice.invoice_number} - ${periodLabel(context.invoice.period)}`;
+    const message = context.invoice.email_body || defaultInvoiceEmailBody(context);
+
+    try {
+      const providerResult = await sendAfsRentalInvoiceEmail(context, { to, subject, message });
+      await pool.query(
+        `
+          UPDATE public.afs_rental_invoices
+          SET status = 'sent',
+              email_status = 'sent',
+              sent_at = now(),
+              email_to = $2,
+              email_subject = $3,
+              email_body = $4,
+              email_provider = 'gmail',
+              email_provider_message_id = $5,
+              email_last_error = NULL,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [row.id, to, subject, message, providerResult.id ?? null],
+      );
+      sent += 1;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await pool.query(
+        `
+          UPDATE public.afs_rental_invoices
+          SET email_status = 'failed',
+              email_last_error = $2,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [row.id, errorMessage],
+      );
+      errors.push(`${context.invoice.invoice_number}: ${errorMessage}`);
+      failed += 1;
+    }
+  }
+
+  return {
+    ok: failed === 0,
+    found: result.rows.length,
+    sent,
+    failed,
+    errors,
+  };
+}
+
 async function loadAfsRentalInvoiceContext(invoiceId) {
   const result = await pool.query(
     `
@@ -1080,6 +1255,9 @@ async function loadAfsRentalInvoiceContext(invoiceId) {
       vat_amount: moneyNumber(row.vat_amount),
       total_gross: moneyNumber(row.total_gross),
       notes: row.notes,
+      email_to: row.email_to ?? "",
+      email_subject: row.email_subject ?? "",
+      email_body: row.email_body ?? "",
     },
     machine: {
       display_name: row.machine_display_name ?? "Onbekende AFS-machine",
@@ -1116,56 +1294,86 @@ async function markAfsInvoiceDocumentGenerated(invoiceId) {
 
 function buildAfsInvoicePdf(context) {
   const { invoice, landlord, customer, machine } = context;
+  const supplierName = landlord.invoice_name || landlord.name;
+  const variableBase = Math.max(0, invoice.turnover_net - invoice.turnover_threshold_net);
   const lines = [
-    { text: "FACTUUR", size: 18, x: 50, y: 790 },
-    { text: `Factuurnummer: ${invoice.invoice_number}`, size: 10, x: 360, y: 790 },
-    { text: `Factuurdatum: ${formatIsoDate(invoice.invoice_date)}`, size: 10, x: 360, y: 775 },
-    { text: `Vervaldatum: ${formatIsoDate(invoice.due_date)}`, size: 10, x: 360, y: 760 },
-    { text: "Van", size: 12, x: 50, y: 735 },
-    { text: landlord.invoice_name || landlord.name, size: 10, x: 50, y: 720 },
-    ...addressPdfLines(landlord, 50, 705),
-    { text: landlord.vat_number ? `Btw: ${landlord.vat_number}` : "", size: 10, x: 50, y: 660 },
-    { text: landlord.kvk_number ? `KvK: ${landlord.kvk_number}` : "", size: 10, x: 50, y: 645 },
-    { text: landlord.iban ? `IBAN: ${landlord.iban}` : "", size: 10, x: 50, y: 630 },
-    { text: "Aan", size: 12, x: 330, y: 735 },
-    { text: customer.name, size: 10, x: 330, y: 720 },
-    ...addressPdfLines(customer, 330, 705),
-    { text: customer.vat_number ? `Btw: ${customer.vat_number}` : "", size: 10, x: 330, y: 660 },
-    { text: customer.kvk_number ? `KvK: ${customer.kvk_number}` : "", size: 10, x: 330, y: 645 },
-    { text: `Periode: ${periodLabel(invoice.period)}`, size: 11, x: 50, y: 585 },
-    { text: `Machine: ${machine.display_name}`, size: 11, x: 50, y: 570 },
+    { type: "rect", x: 0, y: 806, w: 595, h: 36, color: [23, 23, 23] },
+    { type: "rect", x: 50, y: 781, w: 495, h: 7, color: [222, 165, 164] },
+    { text: "DAILY FLOWERS", size: 17, x: 50, y: 758, font: "bold" },
+    { text: "Always the right moment", size: 8, x: 50, y: 742, color: [105, 105, 105] },
+    { text: "FACTUUR", size: 25, x: 390, y: 756, font: "bold" },
+    { text: `Nr. ${invoice.invoice_number}`, size: 10, x: 391, y: 734 },
+    { type: "rect", x: 50, y: 656, w: 220, h: 54, color: [248, 244, 244] },
+    { type: "rect", x: 310, y: 656, w: 235, h: 54, color: [248, 244, 244] },
+    { text: "VAN", size: 8, x: 64, y: 694, font: "bold", color: [105, 105, 105] },
+    { text: supplierName, size: 10, x: 64, y: 678, font: "bold" },
+    ...addressPdfLines(landlord, 64, 664, 11),
+    { text: "AAN", size: 8, x: 324, y: 694, font: "bold", color: [105, 105, 105] },
+    { text: customer.name, size: 10, x: 324, y: 678, font: "bold" },
+    ...addressPdfLines(customer, 324, 664, 11),
+    { text: "Factuurdatum", size: 8, x: 50, y: 610, color: [105, 105, 105] },
+    { text: formatIsoDate(invoice.invoice_date), size: 10, x: 50, y: 594, font: "bold" },
+    { text: "Vervaldatum", size: 8, x: 165, y: 610, color: [105, 105, 105] },
+    { text: formatIsoDate(invoice.due_date), size: 10, x: 165, y: 594, font: "bold" },
+    { text: "Periode", size: 8, x: 280, y: 610, color: [105, 105, 105] },
+    { text: periodLabel(invoice.period), size: 10, x: 280, y: 594, font: "bold" },
+    { text: "Machine", size: 8, x: 410, y: 610, color: [105, 105, 105] },
+    { text: machine.display_name, size: 10, x: 410, y: 594, font: "bold" },
     {
-      text: `AFS: ${machine.afs_number || "-"}${machine.machine_id ? ` / ID ${machine.machine_id}` : ""}`,
-      size: 10,
-      x: 50,
-      y: 555,
+      text: `AFS ${machine.afs_number || "-"}${machine.machine_id ? ` / ${machine.machine_id}` : ""}`,
+      size: 8,
+      x: 410,
+      y: 580,
+      color: [105, 105, 105],
     },
-    { text: "Omschrijving", size: 10, x: 50, y: 520 },
-    { text: "Bedrag", size: 10, x: 475, y: 520 },
-    { text: "Vaste huur AFS-machine", size: 10, x: 50, y: 500 },
-    { text: formatMoney(invoice.fixed_fee_net), size: 10, x: 460, y: 500 },
+    { type: "rect", x: 50, y: 538, w: 495, h: 28, color: [23, 23, 23] },
+    { text: "Omschrijving", size: 9, x: 64, y: 548, font: "bold", color: [255, 255, 255] },
+    { text: "Bedrag ex btw", size: 9, x: 455, y: 548, font: "bold", color: [255, 255, 255] },
+    { text: "Vaste huur AFS-machine", size: 10, x: 64, y: 514 },
+    { text: formatMoney(invoice.fixed_fee_net), size: 10, x: 455, y: 514 },
+    { type: "line", x1: 50, y1: 497, x2: 545, y2: 497, color: [230, 230, 230] },
     {
-      text: `Variabele huur ${formatPercent(invoice.turnover_rate_percent)} over ${formatMoney(Math.max(0, invoice.turnover_net - invoice.turnover_threshold_net))}`,
+      text: `Variabele huur ${formatPercent(invoice.turnover_rate_percent)} over ${formatMoney(variableBase)}`,
       size: 10,
-      x: 50,
-      y: 485,
+      x: 64,
+      y: 476,
     },
-    { text: formatMoney(invoice.variable_fee_net), size: 10, x: 460, y: 485 },
-    { text: `Omzetbasis ex btw: ${formatMoney(invoice.turnover_net)}`, size: 9, x: 50, y: 470 },
+    { text: formatMoney(invoice.variable_fee_net), size: 10, x: 455, y: 476 },
     {
-      text: `Drempel ex btw: ${formatMoney(invoice.turnover_threshold_net)}`,
+      text: `Omzetbasis ex btw ${formatMoney(invoice.turnover_net)}`,
+      size: 8,
+      x: 64,
+      y: 459,
+      color: [105, 105, 105],
+    },
+    {
+      text: `Drempel ex btw ${formatMoney(invoice.turnover_threshold_net)}`,
+      size: 8,
+      x: 64,
+      y: 446,
+      color: [105, 105, 105],
+    },
+    { type: "rect", x: 340, y: 337, w: 205, h: 86, color: [248, 244, 244] },
+    { text: "Subtotaal ex btw", size: 10, x: 355, y: 400 },
+    { text: formatMoney(invoice.subtotal_net), size: 10, x: 455, y: 400 },
+    { text: `Btw ${formatPercent(invoice.vat_rate)}`, size: 10, x: 355, y: 380 },
+    { text: formatMoney(invoice.vat_amount), size: 10, x: 455, y: 380 },
+    { type: "line", x1: 355, y1: 364, x2: 530, y2: 364, color: [222, 165, 164] },
+    { text: "Totaal incl btw", size: 12, x: 355, y: 345, font: "bold" },
+    { text: formatMoney(invoice.total_gross), size: 12, x: 455, y: 345, font: "bold" },
+    { text: supplierMeta(landlord), size: 8, x: 50, y: 150, color: [105, 105, 105] },
+    { text: customerMeta(customer), size: 8, x: 50, y: 136, color: [105, 105, 105] },
+    { type: "line", x1: 50, y1: 116, x2: 545, y2: 116, color: [222, 165, 164] },
+    {
+      text: "dailyflowers.nl",
       size: 9,
       x: 50,
-      y: 458,
+      y: 96,
+      font: "bold",
+      color: [23, 23, 23],
     },
-    { text: "Subtotaal ex btw", size: 10, x: 330, y: 425 },
-    { text: formatMoney(invoice.subtotal_net), size: 10, x: 460, y: 425 },
-    { text: `Btw ${formatPercent(invoice.vat_rate)}`, size: 10, x: 330, y: 410 },
-    { text: formatMoney(invoice.vat_amount), size: 10, x: 460, y: 410 },
-    { text: "Totaal incl btw", size: 12, x: 330, y: 390 },
-    { text: formatMoney(invoice.total_gross), size: 12, x: 460, y: 390 },
-    { text: invoice.notes ? `Notitie: ${invoice.notes}` : "", size: 9, x: 50, y: 350 },
-  ].filter((line) => line.text);
+    { text: invoice.notes ? `Notitie: ${invoice.notes}` : "", size: 8, x: 50, y: 250 },
+  ].filter((line) => line.type || line.text);
 
   return createPdf(lines);
 }
@@ -1228,40 +1436,42 @@ ${lines.map((line) => ublInvoiceLine(line, invoice.vat_rate)).join("\n")}
 }
 
 async function sendAfsRentalInvoiceEmail(context, { to, subject, message }) {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.AFS_INVOICE_FROM_EMAIL;
-  if (!apiKey) throw new Error("RESEND_API_KEY ontbreekt in de Railway environment variables");
-  if (!from)
-    throw new Error("AFS_INVOICE_FROM_EMAIL ontbreekt in de Railway environment variables");
+  const from = process.env.GMAIL_FROM_EMAIL ?? process.env.AFS_INVOICE_FROM_EMAIL;
+  if (!from) throw new Error("GMAIL_FROM_EMAIL ontbreekt in de Railway environment variables");
+  if (!to) throw new Error("Ontvanger e-mailadres ontbreekt");
 
   const pdf = buildAfsInvoicePdf(context);
   const ubl = buildAfsInvoiceUbl(context);
   const invoiceNumber = context.invoice.invoice_number;
   const html = invoiceEmailHtml(context, message);
+  const raw = buildGmailRawMessage({
+    from,
+    to,
+    replyTo: process.env.AFS_INVOICE_REPLY_TO_EMAIL ?? from,
+    subject,
+    html,
+    attachments: [
+      {
+        filename: `${safeFileName(invoiceNumber)}.pdf`,
+        contentType: "application/pdf",
+        content: pdf,
+      },
+      {
+        filename: `${safeFileName(invoiceNumber)}.xml`,
+        contentType: "application/xml",
+        content: Buffer.from(ubl, "utf8"),
+      },
+    ],
+  });
+  const accessToken = await getGmailAccessToken();
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      from,
-      to: [to],
-      reply_to: context.landlord.email || undefined,
-      subject,
-      html,
-      attachments: [
-        {
-          filename: `${safeFileName(invoiceNumber)}.pdf`,
-          content: pdf.toString("base64"),
-        },
-        {
-          filename: `${safeFileName(invoiceNumber)}.xml`,
-          content: Buffer.from(ubl, "utf8").toString("base64"),
-        },
-      ],
-    }),
+    body: JSON.stringify({ raw }),
   });
 
   const responseText = await response.text();
@@ -1273,10 +1483,88 @@ async function sendAfsRentalInvoiceEmail(context, { to, subject, message }) {
   }
 
   if (!response.ok) {
-    throw new Error(responseJson?.message ?? `Resend fout ${response.status}`);
+    const message = responseJson?.error?.message ?? responseJson?.message ?? responseText;
+    throw new Error(message || `Gmail fout ${response.status}`);
   }
 
   return responseJson;
+}
+
+async function getGmailAccessToken() {
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  if (!clientId) throw new Error("GMAIL_CLIENT_ID ontbreekt in de Railway environment variables");
+  if (!clientSecret)
+    throw new Error("GMAIL_CLIENT_SECRET ontbreekt in de Railway environment variables");
+  if (!refreshToken)
+    throw new Error("GMAIL_REFRESH_TOKEN ontbreekt in de Railway environment variables");
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  const responseJson = await response.json().catch(() => ({}));
+  if (!response.ok || !responseJson.access_token) {
+    throw new Error(
+      responseJson.error_description ?? responseJson.error ?? "Gmail token ophalen mislukt",
+    );
+  }
+  return responseJson.access_token;
+}
+
+function buildGmailRawMessage({ from, to, replyTo, subject, html, attachments }) {
+  const boundary = `dailyflowers-${crypto.randomUUID()}`;
+  const lines = [
+    `From: ${mimeHeader(from)}`,
+    `To: ${mimeHeader(to)}`,
+    `Reply-To: ${mimeHeader(replyTo)}`,
+    `Subject: ${mimeHeader(subject)}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+    "",
+    chunkBase64(Buffer.from(html, "utf8").toString("base64")),
+  ];
+
+  for (const attachment of attachments) {
+    lines.push(
+      `--${boundary}`,
+      `Content-Type: ${attachment.contentType}; name="${attachment.filename}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${attachment.filename}"`,
+      "",
+      chunkBase64(attachment.content.toString("base64")),
+    );
+  }
+
+  lines.push(`--${boundary}--`, "");
+  return base64Url(Buffer.from(lines.join("\r\n"), "utf8"));
+}
+
+function mimeHeader(value) {
+  const text = String(value ?? "");
+  if (/^[\x20-\x7E]*$/.test(text)) return text;
+  return `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
+}
+
+function base64Url(buffer) {
+  return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function chunkBase64(value) {
+  return String(value)
+    .replace(/.{1,76}/g, "$&\r\n")
+    .trim();
 }
 
 function invoiceCustomerConfig() {
@@ -1296,21 +1584,38 @@ function invoiceCustomerConfig() {
 
 function invoiceEmailHtml(context, customMessage) {
   const { invoice, landlord, machine } = context;
-  const intro =
-    customMessage ||
-    `Bijgevoegd vind je factuur ${invoice.invoice_number} voor de AFS-huur van ${machine.display_name}.`;
+  const intro = customMessage || defaultInvoiceEmailBody(context);
+  const paragraphs = intro
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
   return `
-    <div style="font-family: Arial, sans-serif; font-size: 14px; color: #222;">
-      <p>${htmlEscape(intro)}</p>
-      <table cellpadding="4" cellspacing="0" style="border-collapse: collapse;">
-        <tr><td><strong>Factuur</strong></td><td>${htmlEscape(invoice.invoice_number)}</td></tr>
-        <tr><td><strong>Periode</strong></td><td>${htmlEscape(periodLabel(invoice.period))}</td></tr>
-        <tr><td><strong>Verhuurder</strong></td><td>${htmlEscape(landlord.invoice_name || landlord.name)}</td></tr>
-        <tr><td><strong>Totaal incl. btw</strong></td><td>${htmlEscape(formatMoney(invoice.total_gross))}</td></tr>
-      </table>
-      <p>De PDF-factuur en UBL zijn als bijlage toegevoegd.</p>
+    <div style="margin:0; padding:28px; background:#ffffff; font-family: Arial, Helvetica, sans-serif; color:#171717;">
+      <div style="max-width:620px;">
+        <div style="font-size:20px; font-weight:700; letter-spacing:.08em; margin-bottom:22px;">DAILY FLOWERS</div>
+        ${paragraphs.map((paragraph) => `<p style="font-size:14px; line-height:1.55; margin:0 0 14px;">${htmlEscape(paragraph).replace(/\n/g, "<br>")}</p>`).join("")}
+        <table cellpadding="0" cellspacing="0" style="margin-top:22px; border-collapse:collapse; width:100%; font-size:13px;">
+          <tr><td style="padding:9px 0; border-top:1px solid #ead1d1; color:#666;">Factuur</td><td style="padding:9px 0; border-top:1px solid #ead1d1; text-align:right;">${htmlEscape(invoice.invoice_number)}</td></tr>
+          <tr><td style="padding:9px 0; border-top:1px solid #eee; color:#666;">Periode</td><td style="padding:9px 0; border-top:1px solid #eee; text-align:right;">${htmlEscape(periodLabel(invoice.period))}</td></tr>
+          <tr><td style="padding:9px 0; border-top:1px solid #eee; color:#666;">Verhuurder</td><td style="padding:9px 0; border-top:1px solid #eee; text-align:right;">${htmlEscape(landlord.invoice_name || landlord.name)}</td></tr>
+          <tr><td style="padding:11px 0; border-top:1px solid #171717; font-weight:700;">Totaal incl. btw</td><td style="padding:11px 0; border-top:1px solid #171717; text-align:right; font-weight:700;">${htmlEscape(formatMoney(invoice.total_gross))}</td></tr>
+        </table>
+        <p style="font-size:12px; line-height:1.5; color:#666; margin-top:22px;">De PDF-factuur en UBL zijn als bijlage toegevoegd.</p>
+      </div>
     </div>
   `;
+}
+
+function defaultInvoiceEmailBody(context) {
+  const invoiceNumber = context.invoice?.invoice_number ?? context.invoiceNumber ?? "";
+  const period = context.invoice?.period ?? context.period ?? "";
+  const machineName = context.machine?.display_name ? ` voor ${context.machine.display_name}` : "";
+  return `Beste,
+
+Bijgevoegd vind je factuur ${invoiceNumber} voor de AFS-huur${machineName} over ${periodLabel(period)}.
+
+Met vriendelijke groet,
+Daily Flowers`;
 }
 
 function ublParty(party) {
@@ -1368,21 +1673,15 @@ function ublInvoiceLine(line, vatRate) {
 }
 
 function createPdf(lines) {
-  const content = lines
-    .map((line) => {
-      const size = Number(line.size ?? 10);
-      const x = Number(line.x ?? 50);
-      const y = Number(line.y ?? 750);
-      return `BT /F1 ${size} Tf ${x} ${y} Td (${pdfEscape(line.text)}) Tj ET`;
-    })
-    .join("\n");
+  const content = lines.map(renderPdfCommand).join("\n");
   const stream = `${content}\n`;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 5 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     `<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}endstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
   ];
 
   let pdf = "%PDF-1.4\n";
@@ -1401,13 +1700,57 @@ function createPdf(lines) {
   return Buffer.from(pdf, "latin1");
 }
 
-function addressPdfLines(party, x, startY) {
+function renderPdfCommand(command) {
+  if (command.type === "rect") {
+    const [r, g, b] = rgb(command.color);
+    return `${r} ${g} ${b} rg ${command.x} ${command.y} ${command.w} ${command.h} re f`;
+  }
+  if (command.type === "line") {
+    const [r, g, b] = rgb(command.color);
+    return `${r} ${g} ${b} RG 0.7 w ${command.x1} ${command.y1} m ${command.x2} ${command.y2} l S`;
+  }
+
+  const size = Number(command.size ?? 10);
+  const x = Number(command.x ?? 50);
+  const y = Number(command.y ?? 750);
+  const [r, g, b] = rgb(command.color);
+  const font = command.font === "bold" ? "F2" : "F1";
+  return `${r} ${g} ${b} rg BT /${font} ${size} Tf ${x} ${y} Td (${pdfEscape(command.text)}) Tj ET`;
+}
+
+function rgb(value) {
+  const [r, g, b] = value ?? [23, 23, 23];
+  return [r / 255, g / 255, b / 255].map((part) => Number(part.toFixed(4)));
+}
+
+function addressPdfLines(party, x, startY, gap = 15) {
   const lines = [
     party.address_line1,
     [party.postal_code, party.city].filter(Boolean).join(" "),
     party.country && party.country !== "NL" ? party.country : "",
   ].filter(Boolean);
-  return lines.map((text, index) => ({ text, size: 10, x, y: startY - index * 15 }));
+  return lines.map((text, index) => ({ text, size: 8, x, y: startY - index * gap }));
+}
+
+function supplierMeta(landlord) {
+  return [
+    landlord.iban ? `IBAN ${landlord.iban}` : "",
+    landlord.vat_number ? `Btw ${landlord.vat_number}` : "",
+    landlord.kvk_number ? `KvK ${landlord.kvk_number}` : "",
+  ]
+    .filter(Boolean)
+    .join("   ");
+}
+
+function customerMeta(customer) {
+  return [
+    customer.address_line1,
+    [customer.postal_code, customer.city].filter(Boolean).join(" "),
+    customer.vat_number ? `Btw ${customer.vat_number}` : "",
+    customer.kvk_number ? `KvK ${customer.kvk_number}` : "",
+  ]
+    .filter(Boolean)
+    .join("   ");
 }
 
 function pdfEscape(value) {

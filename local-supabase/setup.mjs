@@ -135,6 +135,7 @@ async function main() {
       "20260617120000_add_afs_rental_invoicing.sql",
     );
     await applyMigration(app, "20260617140000_add_afs_invoice_delivery.sql");
+    await applyMigration(app, "20260617170000_add_afs_invoice_email_queue.sql");
     await applyMigration(app, "20260617110000_add_exact_sync_state.sql");
 
     await app.query(localAuthSql);

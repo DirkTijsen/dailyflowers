@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import {
   Building2,
   Calculator,
+  CheckSquare,
   Download,
   FileText,
   FilePlus2,
@@ -34,6 +35,7 @@ import {
   Plus,
   ReceiptText,
   Save,
+  Send,
   type LucideIcon,
 } from "lucide-react";
 import { currentMonth, formatDateNL, formatDateTimeNL, formatEUR, monthLabel } from "@/lib/format";
@@ -126,6 +128,13 @@ type RentalInvoice = {
   email_to: string | null;
   email_subject: string | null;
   email_last_error: string | null;
+  email_status: EmailStatus;
+  queued_at: string | null;
+  sending_started_at: string | null;
+  email_body: string | null;
+  email_provider: string | null;
+  email_provider_message_id: string | null;
+  email_attempts: number | null;
   machines?: Pick<Machine, "id" | "display_name" | "afs_number" | "machine_id"> | null;
   afs_landlords?: LandlordInvoiceDetails | null;
 };
@@ -160,12 +169,18 @@ type CandidateRow = {
 };
 
 type InvoiceStatus = "draft" | "sent" | "paid" | "canceled";
+type EmailStatus = "not_queued" | "queued" | "sending" | "sent" | "failed";
 type InvoiceArtifactAction = "download_pdf" | "download_ubl";
 type InvoiceFunctionPayload = {
   filename?: string;
   content_type?: string;
   base64?: string;
   message?: string;
+  found?: number;
+  queued?: number;
+  sent?: number;
+  failed?: number;
+  errors?: string[];
 };
 
 type DbError = { message: string };
@@ -205,6 +220,25 @@ const invoiceStatusVariants: Record<
   canceled: "destructive",
 };
 
+const emailStatusLabels: Record<EmailStatus, string> = {
+  not_queued: "Niet in queue",
+  queued: "In queue",
+  sending: "Bezig",
+  sent: "Gmail verzonden",
+  failed: "Gmail fout",
+};
+
+const emailStatusVariants: Record<
+  EmailStatus,
+  "default" | "secondary" | "outline" | "destructive"
+> = {
+  not_queued: "outline",
+  queued: "secondary",
+  sending: "secondary",
+  sent: "default",
+  failed: "destructive",
+};
+
 function AfsRentPage() {
   const qc = useQueryClient();
   const [initialYear, initialMonth] = currentMonth().split("-");
@@ -234,12 +268,8 @@ function AfsRentPage() {
     notes: string;
   } | null>(null);
   const [invoiceActionId, setInvoiceActionId] = useState<string | null>(null);
-  const [sendDraft, setSendDraft] = useState<{
-    invoice: RentalInvoice;
-    to: string;
-    subject: string;
-    message: string;
-  } | null>(null);
+  const [bulkAction, setBulkAction] = useState<string | null>(null);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
 
   const machinesQ = useQuery({
     queryKey: ["machines-all"],
@@ -361,6 +391,27 @@ function AfsRentPage() {
   const periodInvoices = (invoicesQ.data ?? []).filter(
     (invoice) => invoice.period === period && invoice.status !== "canceled",
   );
+  const selectableCandidates = useMemo(
+    () =>
+      candidates.filter(
+        (row) =>
+          row.machine.active && row.agreement && row.landlord && row.calculation && !row.invoice,
+      ),
+    [candidates],
+  );
+  const selectableCandidateIds = useMemo(
+    () => selectableCandidates.map((row) => row.machine.id),
+    [selectableCandidates],
+  );
+  const selectableCandidateKey = selectableCandidateIds.join("|");
+  const selectedCandidates = selectableCandidates.filter((row) =>
+    selectedCandidateIds.has(row.machine.id),
+  );
+  const allSelectableSelected =
+    selectableCandidateIds.length > 0 &&
+    selectableCandidateIds.every((id) => selectedCandidateIds.has(id));
+  const someSelectableSelected =
+    !allSelectableSelected && selectableCandidateIds.some((id) => selectedCandidateIds.has(id));
   const totals = candidates.reduce(
     (sum, row) => {
       if (!row.calculation) return sum;
@@ -376,6 +427,10 @@ function AfsRentPage() {
     (sum, invoice) => sum + Number(invoice.subtotal_net ?? 0),
     0,
   );
+
+  useEffect(() => {
+    setSelectedCandidateIds(new Set(selectableCandidateIds));
+  }, [period, selectableCandidateIds, selectableCandidateKey]);
 
   async function addLandlord() {
     const name = landlordForm.name.trim();
@@ -492,7 +547,7 @@ function AfsRentPage() {
       invoice_number: suggestInvoiceNumber(candidate, period, invoicesQ.data ?? []),
       invoice_date: invoiceDate,
       due_date: addDaysIso(invoiceDate, 14),
-      status: "sent",
+      status: "draft",
       notes: candidate.agreement.invoice_reference ?? "",
     });
   }
@@ -544,10 +599,72 @@ function AfsRentPage() {
     else qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
   }
 
-  function landlordForInvoice(invoice: RentalInvoice) {
-    return (
-      invoice.afs_landlords ?? (invoice.landlord_id ? landlordsById.get(invoice.landlord_id) : null)
+  function toggleCandidateSelection(machineId: string, checked: boolean) {
+    setSelectedCandidateIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(machineId);
+      else next.delete(machineId);
+      return next;
+    });
+  }
+
+  function toggleAllCandidates(checked: boolean) {
+    setSelectedCandidateIds(checked ? new Set(selectableCandidateIds) : new Set());
+  }
+
+  async function createSelectedInvoices() {
+    if (selectedCandidates.length === 0) {
+      toast.error("Selecteer minimaal een factuurconcept");
+      return;
+    }
+
+    const invoiceDate = todayIso();
+    const dueDate = addDaysIso(invoiceDate, 14);
+    const usedInvoiceNumbers = new Set(
+      (invoicesQ.data ?? []).map((invoice) => invoice.invoice_number),
     );
+    const rows = selectedCandidates.map((candidate) => {
+      const calculation = candidate.calculation!;
+      const invoiceNumber = suggestInvoiceNumber(
+        candidate,
+        period,
+        invoicesQ.data ?? [],
+        usedInvoiceNumbers,
+      );
+      usedInvoiceNumbers.add(invoiceNumber);
+      return {
+        period,
+        machine_id: candidate.machine.id,
+        agreement_id: candidate.agreement!.id,
+        landlord_id: candidate.agreement!.landlord_id,
+        invoice_number: invoiceNumber,
+        invoice_date: invoiceDate,
+        due_date: dueDate,
+        turnover_net: calculation.turnoverNet,
+        fixed_fee_net: calculation.fixedFeeNet,
+        turnover_rate_percent: calculation.ratePercent,
+        turnover_threshold_net: calculation.thresholdNet,
+        variable_fee_net: calculation.variableFeeNet,
+        subtotal_net: calculation.subtotalNet,
+        vat_rate: calculation.vatRate,
+        vat_amount: calculation.vatAmount,
+        total_gross: calculation.totalGross,
+        status: "draft",
+        notes: emptyToNull(candidate.agreement!.invoice_reference ?? ""),
+      };
+    });
+
+    setBulkAction("create_invoices");
+    const { error } = await db.from<unknown>("afs_rental_invoices").insert(rows);
+    setBulkAction(null);
+
+    if (error) {
+      toast.error("Facturen aanmaken mislukt", { description: error.message });
+      return;
+    }
+
+    toast.success(`${rows.length} factuur${rows.length === 1 ? "" : "en"} aangemaakt`);
+    qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
   }
 
   async function downloadInvoiceArtifact(invoice: RentalInvoice, action: InvoiceArtifactAction) {
@@ -572,54 +689,63 @@ function AfsRentPage() {
     }
   }
 
-  function openSendDialog(invoice: RentalInvoice) {
-    const landlord = landlordForInvoice(invoice);
-    setSendDraft({
-      invoice,
-      to: invoice.email_to ?? landlord?.email ?? "",
-      subject:
-        invoice.email_subject ??
-        `Factuur ${invoice.invoice_number} - ${monthLabel(invoice.period)}`,
-      message: `Beste,\n\nBijgevoegd vind je factuur ${invoice.invoice_number} voor ${monthLabel(
-        invoice.period,
-      )}.\n\nMet vriendelijke groet,\nDaily Flowers`,
-    });
-  }
-
-  async function sendInvoiceEmail() {
-    if (!sendDraft) return;
-    const to = sendDraft.to.trim();
-    if (!to) {
-      toast.error("Ontvanger e-mailadres is verplicht");
-      return;
-    }
-
-    const actionKey = `${sendDraft.invoice.id}:send_email`;
-    setInvoiceActionId(actionKey);
+  async function queuePeriodInvoices() {
+    setBulkAction("queue_period");
     try {
       const { data, error } = await supabase.functions.invoke<InvoiceFunctionPayload>(
         "afs-rental-invoice",
         {
           body: {
-            action: "send_email",
-            invoice_id: sendDraft.invoice.id,
-            to,
-            subject: sendDraft.subject.trim(),
-            message: sendDraft.message.trim(),
+            action: "queue_period",
+            period,
           },
         },
       );
       if (error) throw error;
       if (data?.message) throw new Error(data.message);
 
-      toast.success("Factuur verzonden");
-      setSendDraft(null);
+      toast.success(`${data?.queued ?? 0} factuur${data?.queued === 1 ? "" : "en"} in Gmail-queue`);
+      if (data?.failed) {
+        toast.error(`${data.failed} factuur${data.failed === 1 ? "" : "en"} niet in queue`, {
+          description: data.errors?.slice(0, 2).join("\n"),
+        });
+      }
       qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
     } catch (error) {
-      toast.error("Factuur verzenden mislukt", { description: errorMessage(error) });
-      qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
+      toast.error("Queue vullen mislukt", { description: errorMessage(error) });
     } finally {
-      setInvoiceActionId(null);
+      setBulkAction(null);
+    }
+  }
+
+  async function processEmailQueue() {
+    setBulkAction("process_queue");
+    try {
+      const { data, error } = await supabase.functions.invoke<InvoiceFunctionPayload>(
+        "afs-rental-invoice",
+        {
+          body: {
+            action: "process_queue",
+            limit: 100,
+          },
+        },
+      );
+      if (error) throw error;
+      if (data?.message) throw new Error(data.message);
+
+      toast.success(
+        `${data?.sent ?? 0} factuur${data?.sent === 1 ? "" : "en"} verzonden via Gmail`,
+      );
+      if (data?.failed) {
+        toast.error(`${data.failed} Gmail fout${data.failed === 1 ? "" : "en"}`, {
+          description: data.errors?.slice(0, 2).join("\n"),
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
+    } catch (error) {
+      toast.error("Gmail queue verzenden mislukt", { description: errorMessage(error) });
+    } finally {
+      setBulkAction(null);
     }
   }
 
@@ -700,17 +826,41 @@ function AfsRentPage() {
 
         <TabsContent value="factureren">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Maandfacturen voor {monthLabel(period)}</CardTitle>
-              <CardDescription>
-                De omzetbasis komt uit Bold/AFS actuals ex btw voor dezelfde machine en periode.
-              </CardDescription>
+            <CardHeader className="flex flex-row items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">
+                  Factuurconcepten voor {monthLabel(period)}
+                </CardTitle>
+                <CardDescription>
+                  Vink de conceptregels aan die je wilt goedkeuren en aanmaken.
+                </CardDescription>
+              </div>
+              <Button
+                onClick={createSelectedInvoices}
+                disabled={selectedCandidates.length === 0 || bulkAction === "create_invoices"}
+              >
+                <CheckSquare className="h-4 w-4 mr-1" />
+                {selectedCandidates.length} aanmaken
+              </Button>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1180px] text-sm">
+                <table className="w-full min-w-[1220px] text-sm">
                   <thead className="bg-muted/50">
                     <tr className="text-left">
+                      <th className="px-3 py-2 font-medium w-[44px]">
+                        <Checkbox
+                          checked={
+                            allSelectableSelected
+                              ? true
+                              : someSelectableSelected
+                                ? "indeterminate"
+                                : false
+                          }
+                          onCheckedChange={(checked) => toggleAllCandidates(Boolean(checked))}
+                          aria-label="Alle factureerbare concepten selecteren"
+                        />
+                      </th>
                       <th className="px-3 py-2 font-medium">Machine</th>
                       <th className="px-3 py-2 font-medium">Verhuurder</th>
                       <th className="px-3 py-2 font-medium text-right">Omzet ex</th>
@@ -725,112 +875,128 @@ function AfsRentPage() {
                   <tbody>
                     {(machinesQ.isLoading || agreementsQ.isLoading || actualsQ.isLoading) && (
                       <tr>
-                        <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
                           Laden...
                         </td>
                       </tr>
                     )}
                     {candidates.length === 0 && !machinesQ.isLoading && (
                       <tr>
-                        <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
                           Geen AFS-machines gevonden.
                         </td>
                       </tr>
                     )}
-                    {candidates.map((row) => (
-                      <tr key={row.machine.id} className="border-t hover:bg-muted/30">
-                        <td className="px-3 py-2 min-w-[220px]">
-                          <div className="font-medium">{row.machine.display_name}</div>
-                          <div className="mt-1 text-xs text-muted-foreground tabular-nums">
-                            AFS {row.machine.afs_number}
-                            {row.machine.machine_id ? ` - ID ${row.machine.machine_id}` : ""}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 min-w-[190px]">
-                          {row.landlord ? (
-                            <>
-                              <div>{row.landlord.invoice_name || row.landlord.name}</div>
-                              {row.landlord.email && (
+                    {candidates.map((row) => {
+                      const selectable = selectableCandidateIds.includes(row.machine.id);
+                      return (
+                        <tr key={row.machine.id} className="border-t hover:bg-muted/30">
+                          <td className="px-3 py-2 align-top">
+                            <Checkbox
+                              checked={selectedCandidateIds.has(row.machine.id)}
+                              disabled={!selectable}
+                              onCheckedChange={(checked) =>
+                                toggleCandidateSelection(row.machine.id, Boolean(checked))
+                              }
+                              aria-label={`${row.machine.display_name} selecteren`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 min-w-[220px]">
+                            <div className="font-medium">{row.machine.display_name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground tabular-nums">
+                              AFS {row.machine.afs_number}
+                              {row.machine.machine_id ? ` - ID ${row.machine.machine_id}` : ""}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 min-w-[190px]">
+                            {row.landlord ? (
+                              <>
+                                <div>{row.landlord.invoice_name || row.landlord.name}</div>
+                                {row.landlord.email && (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {row.landlord.email}
+                                  </div>
+                                )}
+                                {landlordAddressLine(row.landlord) && (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {landlordAddressLine(row.landlord)}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <Badge variant="outline">Geen afspraak</Badge>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            <div>{formatEUR(row.calculation?.turnoverNet ?? 0)}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {row.txCount} transacties
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {formatEUR(row.calculation?.fixedFeeNet ?? null)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {row.calculation ? (
+                              <>
+                                <div>{formatEUR(row.calculation.variableFeeNet)}</div>
                                 <div className="mt-1 text-xs text-muted-foreground">
-                                  {row.landlord.email}
+                                  {formatPercent(row.calculation.ratePercent)} over{" "}
+                                  {formatEUR(row.calculation.variableBaseNet)}
                                 </div>
-                              )}
-                              {landlordAddressLine(row.landlord) && (
+                              </>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums font-medium">
+                            {formatEUR(row.calculation?.subtotalNet ?? null)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {row.calculation ? (
+                              <>
+                                <div>{formatEUR(row.calculation.totalGross)}</div>
                                 <div className="mt-1 text-xs text-muted-foreground">
-                                  {landlordAddressLine(row.landlord)}
+                                  btw {formatPercent(row.calculation.vatRate)}
                                 </div>
-                              )}
-                            </>
-                          ) : (
-                            <Badge variant="outline">Geen afspraak</Badge>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          <div>{formatEUR(row.calculation?.turnoverNet ?? 0)}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {row.txCount} transacties
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {formatEUR(row.calculation?.fixedFeeNet ?? null)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.calculation ? (
-                            <>
-                              <div>{formatEUR(row.calculation.variableFeeNet)}</div>
-                              <div className="mt-1 text-xs text-muted-foreground">
-                                {formatPercent(row.calculation.ratePercent)} over{" "}
-                                {formatEUR(row.calculation.variableBaseNet)}
-                              </div>
-                            </>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums font-medium">
-                          {formatEUR(row.calculation?.subtotalNet ?? null)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.calculation ? (
-                            <>
-                              <div>{formatEUR(row.calculation.totalGross)}</div>
-                              <div className="mt-1 text-xs text-muted-foreground">
-                                btw {formatPercent(row.calculation.vatRate)}
-                              </div>
-                            </>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td className="px-3 py-2 min-w-[150px]">
-                          {row.invoice ? (
-                            <>
-                              <div className="font-mono text-xs">{row.invoice.invoice_number}</div>
-                              <Badge
-                                variant={invoiceStatusVariants[row.invoice.status]}
-                                className="mt-1"
-                              >
-                                {invoiceStatusLabels[row.invoice.status]}
-                              </Badge>
-                            </>
-                          ) : row.agreement ? (
-                            <Badge variant="secondary">Nog niet vastgelegd</Badge>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <Button
-                            size="sm"
-                            disabled={!row.agreement || Boolean(row.invoice)}
-                            onClick={() => openInvoiceDialog(row)}
-                          >
-                            <ReceiptText className="h-4 w-4 mr-1" />
-                            Vastleggen
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
+                              </>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="px-3 py-2 min-w-[150px]">
+                            {row.invoice ? (
+                              <>
+                                <div className="font-mono text-xs">
+                                  {row.invoice.invoice_number}
+                                </div>
+                                <Badge
+                                  variant={invoiceStatusVariants[row.invoice.status]}
+                                  className="mt-1"
+                                >
+                                  {invoiceStatusLabels[row.invoice.status]}
+                                </Badge>
+                              </>
+                            ) : row.agreement ? (
+                              <Badge variant="secondary">Nog niet vastgelegd</Badge>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <Button
+                              size="sm"
+                              disabled={!row.agreement || Boolean(row.invoice)}
+                              onClick={() => openInvoiceDialog(row)}
+                              variant="outline"
+                            >
+                              <ReceiptText className="h-4 w-4 mr-1" />
+                              Apart
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1215,15 +1381,31 @@ function AfsRentPage() {
 
         <TabsContent value="historie">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Factuurhistorie {year}</CardTitle>
-              <CardDescription>
-                Vastgelegde huurfacturen met factuurnummer, periode en status.
-              </CardDescription>
+            <CardHeader className="flex flex-row items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">Factuurhistorie {year}</CardTitle>
+                <CardDescription>
+                  Zet de maandfacturen in de Gmail-queue en verwerk de queue in batch.
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={queuePeriodInvoices}
+                  disabled={bulkAction === "queue_period"}
+                >
+                  <Mail className="h-4 w-4 mr-1" />
+                  Maand in queue
+                </Button>
+                <Button onClick={processEmailQueue} disabled={bulkAction === "process_queue"}>
+                  <Send className="h-4 w-4 mr-1" />
+                  Verzend queue
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1080px] text-sm">
+                <table className="w-full min-w-[1240px] text-sm">
                   <thead className="bg-muted/50">
                     <tr className="text-left">
                       <th className="px-3 py-2 font-medium">Factuur</th>
@@ -1235,20 +1417,21 @@ function AfsRentPage() {
                       <th className="px-3 py-2 font-medium text-right">Variabel ex</th>
                       <th className="px-3 py-2 font-medium text-right">Totaal incl</th>
                       <th className="px-3 py-2 font-medium">Status</th>
-                      <th className="px-3 py-2 font-medium">Documenten</th>
+                      <th className="px-3 py-2 font-medium">Gmail</th>
+                      <th className="px-3 py-2 font-medium">PDF/UBL</th>
                     </tr>
                   </thead>
                   <tbody>
                     {invoicesQ.isLoading && (
                       <tr>
-                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">
                           Laden...
                         </td>
                       </tr>
                     )}
                     {(invoicesQ.data ?? []).length === 0 && !invoicesQ.isLoading && (
                       <tr>
-                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">
                           Geen facturen vastgelegd voor dit jaar.
                         </td>
                       </tr>
@@ -1324,6 +1507,28 @@ function AfsRentPage() {
                                 Mail {formatDateTimeNL(invoice.sent_at)}
                               </div>
                             )}
+                          </td>
+                          <td className="px-3 py-2 min-w-[190px]">
+                            <Badge
+                              variant={emailStatusVariants[invoice.email_status ?? "not_queued"]}
+                            >
+                              {emailStatusLabels[invoice.email_status ?? "not_queued"]}
+                            </Badge>
+                            {invoice.queued_at && invoice.email_status !== "sent" && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                Queue {formatDateTimeNL(invoice.queued_at)}
+                              </div>
+                            )}
+                            {invoice.email_provider_message_id && (
+                              <div className="mt-1 max-w-[180px] truncate text-xs text-muted-foreground">
+                                Gmail ID {invoice.email_provider_message_id}
+                              </div>
+                            )}
+                            {invoice.email_attempts ? (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                Pogingen {invoice.email_attempts}
+                              </div>
+                            ) : null}
                             {invoice.email_last_error && (
                               <div className="mt-1 max-w-[220px] text-xs text-destructive">
                                 {invoice.email_last_error}
@@ -1349,15 +1554,6 @@ function AfsRentPage() {
                                 onClick={() => downloadInvoiceArtifact(invoice, "download_ubl")}
                               >
                                 <Download className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                title="Mail versturen"
-                                disabled={invoiceActionId === `${invoice.id}:send_email`}
-                                onClick={() => openSendDialog(invoice)}
-                              >
-                                <Mail className="h-4 w-4" />
                               </Button>
                             </div>
                           </td>
@@ -1526,78 +1722,6 @@ function AfsRentPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <Dialog open={Boolean(sendDraft)} onOpenChange={(open) => !open && setSendDraft(null)}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Factuur mailen</DialogTitle>
-            <DialogDescription>
-              PDF en UBL worden opnieuw aangemaakt en als bijlage meegestuurd.
-            </DialogDescription>
-          </DialogHeader>
-          {sendDraft && (
-            <div className="space-y-3">
-              <div className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm md:grid-cols-2">
-                <div>
-                  <div className="text-xs text-muted-foreground">Factuur</div>
-                  <div className="font-mono text-xs">{sendDraft.invoice.invoice_number}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Periode</div>
-                  <div>{monthLabel(sendDraft.invoice.period)}</div>
-                </div>
-              </div>
-              <Field label="Ontvanger">
-                <Input
-                  type="email"
-                  value={sendDraft.to}
-                  onChange={(event) =>
-                    setSendDraft((current) =>
-                      current ? { ...current, to: event.target.value } : current,
-                    )
-                  }
-                  placeholder="facturen@..."
-                />
-              </Field>
-              <Field label="Onderwerp">
-                <Input
-                  value={sendDraft.subject}
-                  onChange={(event) =>
-                    setSendDraft((current) =>
-                      current ? { ...current, subject: event.target.value } : current,
-                    )
-                  }
-                />
-              </Field>
-              <Field label="Bericht">
-                <Textarea
-                  value={sendDraft.message}
-                  onChange={(event) =>
-                    setSendDraft((current) =>
-                      current ? { ...current, message: event.target.value } : current,
-                    )
-                  }
-                  rows={6}
-                />
-              </Field>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSendDraft(null)}>
-              Annuleren
-            </Button>
-            <Button
-              onClick={sendInvoiceEmail}
-              disabled={Boolean(
-                sendDraft && invoiceActionId === `${sendDraft.invoice.id}:send_email`,
-              )}
-            >
-              <Mail className="h-4 w-4 mr-1" />
-              Versturen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -1749,10 +1873,15 @@ function periodsOverlap(startA: string, endA: string | null, startB: string, end
   return startA <= normalizedEndB && startB <= normalizedEndA;
 }
 
-function suggestInvoiceNumber(candidate: CandidateRow, period: string, invoices: RentalInvoice[]) {
+function suggestInvoiceNumber(
+  candidate: CandidateRow,
+  period: string,
+  invoices: RentalInvoice[],
+  extraUsed: Set<string> = new Set(),
+) {
   const afs = candidate.machine.afs_number.replace(/[^a-zA-Z0-9]/g, "");
   const base = `AFS-${period.replace("-", "")}-${afs || candidate.machine.id.slice(0, 6)}`;
-  const used = new Set(invoices.map((invoice) => invoice.invoice_number));
+  const used = new Set([...invoices.map((invoice) => invoice.invoice_number), ...extraUsed]);
   let value = base;
   let counter = 2;
   while (used.has(value)) {
