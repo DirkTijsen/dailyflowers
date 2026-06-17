@@ -3,6 +3,10 @@
   "private": true,
   "sideEffects": false,
   "type": "module",
+  "engines": {
+    "node": "22.x",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "vite dev --host 127.0.0.1",
     "local:api": "node local-supabase/server.mjs",
