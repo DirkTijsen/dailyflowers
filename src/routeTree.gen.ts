@@ -23,6 +23,7 @@ import { Route as AuthenticatedDashboardRouteImport } from './routes/_authentica
 import { Route as AuthenticatedBudgettenRouteImport } from './routes/_authenticated/budgetten'
 import { Route as AuthenticatedBtwExportRouteImport } from './routes/_authenticated/btw-export'
 import { Route as AuthenticatedBoldAfsAansluitingRouteImport } from './routes/_authenticated/bold-afs-aansluiting'
+import { Route as AuthenticatedAfsHuurRouteImport } from './routes/_authenticated/afs-huur'
 import { Route as AuthenticatedTransactiesIdRouteImport } from './routes/_authenticated/transacties.$id'
 
 const AuthRoute = AuthRouteImport.update({
@@ -99,6 +100,11 @@ const AuthenticatedBoldAfsAansluitingRoute =
     path: '/bold-afs-aansluiting',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedAfsHuurRoute = AuthenticatedAfsHuurRouteImport.update({
+  id: '/afs-huur',
+  path: '/afs-huur',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedTransactiesIdRoute =
   AuthenticatedTransactiesIdRouteImport.update({
     id: '/$id',
@@ -109,6 +115,7 @@ const AuthenticatedTransactiesIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/afs-huur': typeof AuthenticatedAfsHuurRoute
   '/bold-afs-aansluiting': typeof AuthenticatedBoldAfsAansluitingRoute
   '/btw-export': typeof AuthenticatedBtwExportRoute
   '/budgetten': typeof AuthenticatedBudgettenRoute
@@ -125,6 +132,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/afs-huur': typeof AuthenticatedAfsHuurRoute
   '/bold-afs-aansluiting': typeof AuthenticatedBoldAfsAansluitingRoute
   '/btw-export': typeof AuthenticatedBtwExportRoute
   '/budgetten': typeof AuthenticatedBudgettenRoute
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/afs-huur': typeof AuthenticatedAfsHuurRoute
   '/_authenticated/bold-afs-aansluiting': typeof AuthenticatedBoldAfsAansluitingRoute
   '/_authenticated/btw-export': typeof AuthenticatedBtwExportRoute
   '/_authenticated/budgetten': typeof AuthenticatedBudgettenRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/afs-huur'
     | '/bold-afs-aansluiting'
     | '/btw-export'
     | '/budgetten'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth'
+    | '/afs-huur'
     | '/bold-afs-aansluiting'
     | '/btw-export'
     | '/budgetten'
@@ -194,6 +205,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/afs-huur'
     | '/_authenticated/bold-afs-aansluiting'
     | '/_authenticated/btw-export'
     | '/_authenticated/budgetten'
@@ -314,6 +326,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedBoldAfsAansluitingRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/afs-huur': {
+      id: '/_authenticated/afs-huur'
+      path: '/afs-huur'
+      fullPath: '/afs-huur'
+      preLoaderRoute: typeof AuthenticatedAfsHuurRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/transacties/$id': {
       id: '/_authenticated/transacties/$id'
       path: '/$id'
@@ -339,6 +358,7 @@ const AuthenticatedTransactiesRouteWithChildren =
   )
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedAfsHuurRoute: typeof AuthenticatedAfsHuurRoute
   AuthenticatedBoldAfsAansluitingRoute: typeof AuthenticatedBoldAfsAansluitingRoute
   AuthenticatedBtwExportRoute: typeof AuthenticatedBtwExportRoute
   AuthenticatedBudgettenRoute: typeof AuthenticatedBudgettenRoute
@@ -353,6 +373,7 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedAfsHuurRoute: AuthenticatedAfsHuurRoute,
   AuthenticatedBoldAfsAansluitingRoute: AuthenticatedBoldAfsAansluitingRoute,
   AuthenticatedBtwExportRoute: AuthenticatedBtwExportRoute,
   AuthenticatedBudgettenRoute: AuthenticatedBudgettenRoute,

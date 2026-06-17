@@ -18,7 +18,20 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
-  LayoutDashboard, ListOrdered, Target, FileSpreadsheet, Settings, LogOut, Flower2, Upload, CreditCard, Scale, BookOpen, BarChart3, Users,
+  LayoutDashboard,
+  ListOrdered,
+  Target,
+  FileSpreadsheet,
+  Settings,
+  LogOut,
+  Flower2,
+  Upload,
+  CreditCard,
+  Scale,
+  BookOpen,
+  BarChart3,
+  Users,
+  HandCoins,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -42,6 +55,7 @@ const nav = [
 
 const beheerNav = [
   { to: "/transacties", label: "Verkooptransacties", icon: ListOrdered },
+  { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
   { to: "/mollie-transacties", label: "Mollie transacties", icon: CreditCard },
   { to: "/bold-afs-aansluiting", label: "Bold <> Mollie aansluiting", icon: Scale },
   { to: "/grootboek", label: "Grootboek", icon: BookOpen },
@@ -64,14 +78,15 @@ function AuthedLayout() {
 
   useEffect(() => {
     supabase
-      .from("vw_gl_yearly_status" as any)
+      .from("vw_gl_yearly_status" as never)
       .select("updated_through_date")
       .not("updated_through_date", "is", null)
       .order("updated_through_date", { ascending: false })
       .limit(1)
       .maybeSingle()
       .then(({ data }) => {
-        const value = (data as { updated_through_date?: string | null } | null)?.updated_through_date ?? null;
+        const value =
+          (data as { updated_through_date?: string | null } | null)?.updated_through_date ?? null;
         setUpdatedThroughDate(value);
       })
       .catch(() => setUpdatedThroughDate(null));
@@ -105,7 +120,9 @@ function AuthedLayout() {
                     <SidebarMenuButton asChild>
                       <Link
                         to={item.to}
-                        activeProps={{ className: "bg-sidebar-accent text-sidebar-accent-foreground" }}
+                        activeProps={{
+                          className: "bg-sidebar-accent text-sidebar-accent-foreground",
+                        }}
                       >
                         <item.icon className="h-4 w-4" />
                         <span>{item.label}</span>
@@ -125,7 +142,9 @@ function AuthedLayout() {
                     <SidebarMenuButton asChild>
                       <Link
                         to={item.to}
-                        activeProps={{ className: "bg-sidebar-accent text-sidebar-accent-foreground" }}
+                        activeProps={{
+                          className: "bg-sidebar-accent text-sidebar-accent-foreground",
+                        }}
                       >
                         <item.icon className="h-4 w-4" />
                         <span>{item.label}</span>

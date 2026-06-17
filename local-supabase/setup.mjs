@@ -128,6 +128,11 @@ async function main() {
     await applyMigration(app, "20260616225000_shopify_invoice_actuals_include_pending.sql");
     await applyMigration(app, "20260616230000_add_gl_revenue_source_monthly.sql");
     await applyMigration(app, "20260616231000_shopify_current_total_actuals.sql");
+    await applyMigrationIfMissing(
+      app,
+      "public.afs_rental_invoices",
+      "20260617120000_add_afs_rental_invoicing.sql",
+    );
 
     await app.query(localAuthSql);
     await seedAdminUser(app);
