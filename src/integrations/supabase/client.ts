@@ -6,9 +6,15 @@ function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : undefined;
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || browserOrigin;
+  const SUPABASE_URL = firstRealUrl(
+    import.meta.env.VITE_SUPABASE_URL,
+    typeof process !== 'undefined' ? process.env.SUPABASE_URL : undefined,
+    browserOrigin,
+  );
   const SUPABASE_PUBLISHABLE_KEY =
-    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || 'local-anon-key';
+    realEnvValue(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) ||
+    realEnvValue(typeof process !== 'undefined' ? process.env.SUPABASE_PUBLISHABLE_KEY : undefined) ||
+    'local-anon-key';
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [
@@ -27,6 +33,20 @@ function createSupabaseClient() {
       autoRefreshToken: true,
     }
   });
+}
+
+function firstRealUrl(...values: Array<string | undefined>) {
+  return values.map(realEnvValue).find((value) => value && !isPlaceholderUrl(value));
+}
+
+function realEnvValue(value: string | undefined) {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null') return undefined;
+  return trimmed;
+}
+
+function isPlaceholderUrl(value: string) {
+  return value.includes('your-api-host.example.com') || value.includes('example.com');
 }
 
 let _supabase: ReturnType<typeof createSupabaseClient> | undefined;

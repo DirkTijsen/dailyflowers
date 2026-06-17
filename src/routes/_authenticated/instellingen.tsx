@@ -14,6 +14,9 @@ export const Route = createFileRoute("/_authenticated/instellingen")({
   component: SettingsPage,
 });
 
+const apiBaseUrl =
+  typeof window !== "undefined" ? window.location.origin : import.meta.env.VITE_SUPABASE_URL || "";
+
 function SettingsPage() {
   const qc = useQueryClient();
   const machinesQ = useQuery({
@@ -720,17 +723,17 @@ function SettingsPage() {
         <CardContent className="space-y-3 text-sm font-mono break-all">
           <div>
             <div className="text-xs text-muted-foreground font-sans">Shopify webhook</div>
-            {import.meta.env.VITE_SUPABASE_URL}/functions/v1/shopify-webhook
+            {apiBaseUrl}/functions/v1/shopify-webhook
           </div>
           <div>
             <div className="text-xs text-muted-foreground font-sans">Mollie webhook</div>
-            {import.meta.env.VITE_SUPABASE_URL}/functions/v1/mollie-webhook
+            {apiBaseUrl}/functions/v1/mollie-webhook
           </div>
           <div>
             <div className="text-xs text-muted-foreground font-sans">
               Daily sweep (handmatig of via cron)
             </div>
-            {import.meta.env.VITE_SUPABASE_URL}/functions/v1/daily-sweep
+            {apiBaseUrl}/functions/v1/daily-sweep
           </div>
         </CardContent>
       </Card>
