@@ -133,6 +133,7 @@ async function main() {
       "public.afs_rental_invoices",
       "20260617120000_add_afs_rental_invoicing.sql",
     );
+    await applyMigration(app, "20260617110000_add_exact_sync_state.sql");
 
     await app.query(localAuthSql);
     await seedAdminUser(app);

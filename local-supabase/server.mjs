@@ -10,6 +10,7 @@ import {
   markSweepRunning,
   processMollieWebhook,
   processShopifyWebhook,
+  runExactSweepFrom,
   runSweep,
 } from "./sync.mjs";
 
@@ -758,6 +759,20 @@ async function handleFunction(req, res, url) {
       status: "started",
       local: true,
       message: "Sweep draait op de achtergrond. Status verschijnt onderaan het dashboard.",
+    });
+    return;
+  }
+
+  if (name === "exact-sync") {
+    const since = url.searchParams.get("since");
+    const until = url.searchParams.get("until");
+    runExactSweepFrom(pool, since, { untilIso: until }).catch((error) =>
+      console.error("local exact-sync failed", error),
+    );
+    sendJson(res, 202, {
+      status: "started",
+      local: true,
+      message: "Exact sync draait op de achtergrond. Status verschijnt onderaan het dashboard.",
     });
     return;
   }

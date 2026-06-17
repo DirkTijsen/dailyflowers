@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Download, Upload } from "lucide-react";
+import { Download, ExternalLink, RefreshCw, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -160,6 +160,7 @@ function ProfitLossPage() {
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [toQuarter, setToQuarter] = useState(`Q${Math.floor(new Date().getMonth() / 3) + 1}`);
   const [detail, setDetail] = useState<DetailSelection | null>(null);
+  const [exactSyncing, setExactSyncing] = useState(false);
   const months = useMemo(() => monthsForYearToQuarter(year, toQuarter), [toQuarter, year]);
 
   const accountsQ = useQuery({
@@ -282,6 +283,27 @@ function ProfitLossPage() {
     }
   }
 
+  async function syncExact() {
+    setExactSyncing(true);
+    try {
+      const { error } = await supabase.functions.invoke("exact-sync");
+      if (error) throw error;
+      toast.success("Exact sync gestart", {
+        description: "De grootboekregels worden op de achtergrond opgehaald.",
+      });
+      qc.invalidateQueries({ queryKey: ["sync_state"] });
+      qc.invalidateQueries({ queryKey: ["gl-accounts"] });
+      qc.invalidateQueries({ queryKey: ["wv-gl-monthly"] });
+      qc.invalidateQueries({ queryKey: ["wv-gl-revenue-source-monthly"] });
+    } catch (error) {
+      toast.error("Exact sync starten mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setExactSyncing(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -292,6 +314,10 @@ function ProfitLossPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={syncExact} disabled={exactSyncing}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${exactSyncing ? "animate-spin" : ""}`} />
+            Exact sync
+          </Button>
           <Button variant="outline" onClick={() => downloadTransactionTemplate(accountsQ.data ?? [])}>
             <Download className="mr-2 h-4 w-4" />
             Transactie-template
@@ -742,12 +768,13 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
 function GlDetailTable({ rows }: { rows: GlDetailRow[] }) {
   if (rows.length === 0) return <EmptyDetails />;
   return (
-    <table className="w-full min-w-[880px] text-sm">
+    <table className="w-full min-w-[940px] text-sm">
       <thead className="sticky top-0 bg-background text-left shadow-sm">
         <tr>
           <th className="px-3 py-2 font-medium">Datum</th>
           <th className="px-3 py-2 font-medium">Rekening</th>
           <th className="px-3 py-2 font-medium">Boekstuk</th>
+          <th className="px-3 py-2 font-medium">Exact</th>
           <th className="px-3 py-2 font-medium">Relatie</th>
           <th className="px-3 py-2 font-medium">Omschrijving</th>
           <th className="px-3 py-2 text-right font-medium">Bedrag</th>
@@ -756,18 +783,32 @@ function GlDetailTable({ rows }: { rows: GlDetailRow[] }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
-          <tr key={row.id} className="border-t align-top">
-            <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formatGlDate(row)}</td>
-            <td className="whitespace-nowrap px-3 py-2">{row.account_code ?? "-"}</td>
-            <td className="whitespace-nowrap px-3 py-2">{row.document_number || "-"}</td>
-            <td className="px-3 py-2">{row.relation_name || "-"}</td>
-            <td className="px-3 py-2">{row.description || "-"}</td>
-            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.amount)}</td>
-            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.debit_amount)}</td>
-            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.credit_amount)}</td>
-          </tr>
-        ))}
+        {rows.map((row) => {
+          const documentUrl = exactDocumentUrl(row);
+          return (
+            <tr key={row.id} className="border-t align-top">
+              <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formatGlDate(row)}</td>
+              <td className="whitespace-nowrap px-3 py-2">{row.account_code ?? "-"}</td>
+              <td className="whitespace-nowrap px-3 py-2">{row.document_number || "-"}</td>
+              <td className="whitespace-nowrap px-3 py-1">
+                {documentUrl ? (
+                  <Button asChild variant="ghost" size="icon" className="h-7 w-7" title="Open Exact-document">
+                    <a href={documentUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  </Button>
+                ) : (
+                  "-"
+                )}
+              </td>
+              <td className="px-3 py-2">{row.relation_name || "-"}</td>
+              <td className="px-3 py-2">{row.description || "-"}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.amount)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.debit_amount)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.credit_amount)}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -858,6 +899,17 @@ function glEntryNumber(row: GlDetailRow) {
   const raw = payloadValue(row.raw_payload, ["entrynumber", "entry_number", "EntryNumber", "Boekstuk"]);
   const value = String(raw ?? "").trim();
   return value || null;
+}
+
+function exactDocumentUrl(row: GlDetailRow) {
+  const rawUrl = payloadValue(row.raw_payload, ["exact_document_url", "ExactDocumentUrl", "document_url", "DocumentUrl"]);
+  const url = String(rawUrl ?? "").trim();
+  if (/^https?:\/\//i.test(url)) return url;
+
+  const rawDocumentId = payloadValue(row.raw_payload, ["exact_document_id", "Document", "document"]);
+  const documentId = String(rawDocumentId ?? "").trim();
+  if (!documentId) return null;
+  return `https://start.exactonline.nl/docs/DocView.aspx?DocumentID=${encodeURIComponent(documentId)}`;
 }
 
 function isMollieClearingGlRow(row: GlDetailRow) {
