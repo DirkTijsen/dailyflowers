@@ -52,6 +52,8 @@ CREATE POLICY "shopify_order_transactions_all_auth"
   USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
 
 DROP VIEW IF EXISTS public.vw_shopify_order_payment_issues;
+DROP VIEW IF EXISTS public.vw_shopify_open_by_customer;
+DROP VIEW IF EXISTS public.vw_shopify_open_customer_orders;
 DROP VIEW IF EXISTS public.vw_shopify_order_payment_coverage_monthly;
 DROP VIEW IF EXISTS public.vw_shopify_order_payment_coverage;
 
