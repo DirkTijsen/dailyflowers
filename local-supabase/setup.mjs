@@ -144,6 +144,7 @@ async function main() {
     await applyMigration(app, "20260617190000_add_shopify_payment_csv_import.sql");
     await applyMigration(app, "20260617193000_add_shopify_cash_reconciliation.sql");
     await applyMigration(app, "20260617203000_add_shopify_cash_api_sync.sql");
+    await applyMigration(app, "20260617210000_add_shopify_order_payment_coverage.sql");
     await applyMigration(app, "20260617203000_add_pl_budget_lines.sql");
 
     await app.query(localAuthSql);

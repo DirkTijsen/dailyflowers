@@ -214,6 +214,24 @@ const shopifyCashSessionTransactionColumns = [
   "synced_at",
 ];
 
+const shopifyOrderTransactionColumns = [
+  "connection_id",
+  "shop_domain",
+  "order_id",
+  "order_name",
+  "shopify_transaction_id",
+  "kind",
+  "status",
+  "gateway",
+  "formatted_gateway",
+  "processed_at",
+  "amount",
+  "currency",
+  "payment_id",
+  "raw_payload",
+  "synced_at",
+];
+
 const exactGlTransactionColumns = [
   "source",
   "external_id",
@@ -249,6 +267,10 @@ export async function runSweep(pool) {
 
 export async function runShopifySweepFrom(pool, sinceIso, options = {}) {
   await sweepShopify(pool, { ...options, sinceIso });
+}
+
+export async function runShopifySweep(pool, options = {}) {
+  return sweepShopify(pool, options);
 }
 
 export async function runShopifyPaymentsSweepFrom(pool, sinceIso = null, options = {}) {
@@ -430,7 +452,11 @@ async function sweepShopifyConnection(pool, conn, sinceIso, options = {}) {
 
     for (const order of orders) {
       try {
-        await processShopifyOrder(pool, graphqlOrderToRestLike(order), options);
+        await processShopifyOrder(pool, graphqlOrderToRestLike(order), {
+          ...options,
+          connectionId: conn.id,
+          shopDomain: domain,
+        });
         count += 1;
       } catch (error) {
         console.error("shopify order fail", order.id, error);
@@ -880,6 +906,22 @@ async function fetchShopifyOrdersPage(domain, accessToken, sinceIso, cursor) {
           displayFinancialStatus
           taxesIncluded
           statusPageUrl
+          paymentGatewayNames
+          transactions(first: 100) {
+            id
+            kind
+            status
+            gateway
+            formattedGateway
+            processedAt
+            amountSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+            paymentId
+          }
           subtotalPriceSet {
             shopMoney {
               amount
@@ -1128,6 +1170,42 @@ async function upsertShopifyBalanceTransactions(pool, conn, domain, transactions
   );
 }
 
+async function upsertShopifyOrderTransactions(pool, order, options = {}) {
+  const shopDomain = cleanText(options.shopDomain);
+  const orderId = cleanText(order.id);
+  if (!shopDomain || !orderId || !Array.isArray(order.transactions) || order.transactions.length === 0) {
+    return;
+  }
+
+  const rows = order.transactions
+    .map((tx) => ({
+      connection_id: options.connectionId ?? null,
+      shop_domain: shopDomain,
+      order_id: orderId,
+      order_name: order.name ?? null,
+      shopify_transaction_id: cleanText(tx.id) || null,
+      kind: cleanText(tx.kind) || null,
+      status: cleanText(tx.status) || null,
+      gateway: cleanText(tx.gateway) || null,
+      formatted_gateway: cleanText(tx.formatted_gateway) || null,
+      processed_at: tx.processed_at ?? null,
+      amount: nullableMoney(tx.amount) ?? 0,
+      currency: cleanText(tx.currency) || null,
+      payment_id: cleanText(tx.payment_id) || null,
+      raw_payload: tx,
+      synced_at: new Date().toISOString(),
+    }))
+    .filter((row) => row.shopify_transaction_id);
+
+  await upsertRows(
+    pool,
+    "public.shopify_order_transactions",
+    shopifyOrderTransactionColumns,
+    rows,
+    ["shop_domain", "shopify_transaction_id"],
+  );
+}
+
 function graphqlOrderToRestLike(order) {
   return {
     id: order.legacyResourceId ?? gidTail(order.id),
@@ -1141,6 +1219,18 @@ function graphqlOrderToRestLike(order) {
     financial_status: mapGraphqlFinancialStatus(order.displayFinancialStatus),
     taxes_included: order.taxesIncluded,
     order_status_url: order.statusPageUrl,
+    payment_gateway_names: order.paymentGatewayNames ?? [],
+    transactions: (order.transactions ?? []).map((tx) => ({
+      id: gidTail(tx.id),
+      kind: tx.kind,
+      status: tx.status,
+      gateway: tx.gateway,
+      formatted_gateway: tx.formattedGateway,
+      processed_at: tx.processedAt,
+      amount: moneyAmount(tx.amountSet),
+      currency: moneyCurrency(tx.amountSet),
+      payment_id: tx.paymentId,
+    })),
     subtotal_price: moneyAmount(order.subtotalPriceSet),
     current_subtotal_price: moneyAmount(order.currentSubtotalPriceSet),
     total_discounts: moneyAmount(order.totalDiscountsSet),
@@ -1967,6 +2057,8 @@ export async function processShopifyOrder(pool, order, options = {}) {
     ],
     ["external_id"],
   );
+
+  await upsertShopifyOrderTransactions(pool, order, options);
 }
 
 function summarizeOrderTaxRates(lines) {

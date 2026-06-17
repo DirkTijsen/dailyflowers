@@ -14,6 +14,7 @@ import {
   runShopifyCashSweepFrom,
   runExactSweepFrom,
   runShopifyPaymentsSweepFrom,
+  runShopifySweep,
   runSweep,
 } from "./sync.mjs";
 
@@ -395,6 +396,30 @@ const resources = {
     ],
     writable: true,
   },
+  shopify_order_transactions: {
+    table: "public.shopify_order_transactions",
+    columns: [
+      "id",
+      "connection_id",
+      "shop_domain",
+      "order_id",
+      "order_name",
+      "shopify_transaction_id",
+      "kind",
+      "status",
+      "gateway",
+      "formatted_gateway",
+      "processed_at",
+      "amount",
+      "currency",
+      "payment_id",
+      "raw_payload",
+      "synced_at",
+      "created_at",
+      "updated_at",
+    ],
+    writable: true,
+  },
   mollie_settings: {
     table: "public.mollie_settings",
     columns: ["id", "api_key", "active", "created_at", "updated_at"],
@@ -634,6 +659,71 @@ const resources = {
       "exact_document_number",
       "exact_description",
       "note",
+    ],
+    writable: false,
+  },
+  vw_shopify_order_payment_coverage: {
+    table: "public.vw_shopify_order_payment_coverage",
+    columns: [
+      "order_summary_id",
+      "external_id",
+      "order_name",
+      "order_number",
+      "channel",
+      "source_name",
+      "financial_status",
+      "processed_at",
+      "period",
+      "order_amount",
+      "paid_amount",
+      "shopify_payments_amount",
+      "cash_amount",
+      "other_payment_amount",
+      "payment_difference",
+      "transaction_count",
+      "payment_gateways",
+      "last_payment_at",
+      "payment_coverage_status",
+    ],
+    writable: false,
+  },
+  vw_shopify_order_payment_coverage_monthly: {
+    table: "public.vw_shopify_order_payment_coverage_monthly",
+    columns: [
+      "period",
+      "channel",
+      "order_count",
+      "paid_order_count",
+      "open_order_count",
+      "order_amount",
+      "paid_amount",
+      "shopify_payments_amount",
+      "cash_amount",
+      "other_payment_amount",
+      "payment_difference",
+      "no_transaction_count",
+      "underpaid_count",
+      "overpaid_count",
+      "amount_covered_status_open_count",
+    ],
+    writable: false,
+  },
+  vw_shopify_order_payment_issues: {
+    table: "public.vw_shopify_order_payment_issues",
+    columns: [
+      "issue_type",
+      "period",
+      "occurred_at",
+      "order_amount",
+      "paid_amount",
+      "payment_difference",
+      "order_name",
+      "order_number",
+      "channel",
+      "financial_status",
+      "payment_gateways",
+      "transaction_count",
+      "last_payment_at",
     ],
     writable: false,
   },
@@ -1154,6 +1244,38 @@ async function handleFunction(req, res, url) {
       status: "started",
       local: true,
       message: "Sweep draait op de achtergrond. Status verschijnt onderaan het dashboard.",
+    });
+    return;
+  }
+
+  if (name === "shopify-order-payments-sync") {
+    const since = url.searchParams.get("since");
+    await pool.query(
+      `
+        INSERT INTO public.sync_state (channel, last_sweep_at, last_sweep_status, last_sweep_message, records_processed, updated_at)
+        SELECT channel, now(), 'running', message, 0, now()
+        FROM (
+          VALUES
+            ('shopify_webshop', 'Shopify orders sync gestart...'),
+            ('shopify_winkel', 'Shopify orders sync gestart...'),
+            ('shopify_payments', 'Shopify Payments sync gestart...'),
+            ('shopify_cash', 'Shopify kassasessies sync gestart...')
+        ) AS incoming(channel, message)
+        ON CONFLICT (channel) DO UPDATE SET
+          last_sweep_at = EXCLUDED.last_sweep_at,
+          last_sweep_status = EXCLUDED.last_sweep_status,
+          last_sweep_message = EXCLUDED.last_sweep_message,
+          records_processed = EXCLUDED.records_processed,
+          updated_at = now()
+      `,
+    );
+    runShopifySweep(pool, since ? { sinceIso: since } : {}).catch((error) =>
+      console.error("local shopify-order-payments-sync failed", error),
+    );
+    sendJson(res, 202, {
+      status: "started",
+      local: true,
+      message: "Shopify orders en betalingen sync draaien op de achtergrond.",
     });
     return;
   }

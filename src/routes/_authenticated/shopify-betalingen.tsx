@@ -113,6 +113,40 @@ type IssueRow = {
   note: string | null;
 };
 
+type OrderCoverageMonthlyRow = {
+  period: string;
+  channel: string;
+  order_count: number;
+  paid_order_count: number;
+  open_order_count: number;
+  order_amount: number | string;
+  paid_amount: number | string;
+  shopify_payments_amount: number | string;
+  cash_amount: number | string;
+  other_payment_amount: number | string;
+  payment_difference: number | string;
+  no_transaction_count: number;
+  underpaid_count: number;
+  overpaid_count: number;
+  amount_covered_status_open_count: number;
+};
+
+type OrderPaymentIssueRow = {
+  issue_type: string;
+  period: string | null;
+  occurred_at: string | null;
+  order_amount: number | string;
+  paid_amount: number | string;
+  payment_difference: number | string;
+  order_name: string | null;
+  order_number: string | null;
+  channel: string | null;
+  financial_status: string | null;
+  payment_gateways: string | null;
+  transaction_count: number;
+  last_payment_at: string | null;
+};
+
 function ShopifyPaymentsPage() {
   const qc = useQueryClient();
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -209,6 +243,40 @@ function ShopifyPaymentsPage() {
     },
   });
 
+  const orderCoverageMonthlyQ = useQuery({
+    queryKey: ["shopify-order-payment-coverage-monthly", year, month],
+    queryFn: async () => {
+      let q = (supabase as any)
+        .from("vw_shopify_order_payment_coverage_monthly")
+        .select("*")
+        .gte("period", periodStart)
+        .lte("period", periodEnd)
+        .order("period", { ascending: true })
+        .order("channel", { ascending: true });
+      if (selectedPeriod) q = q.eq("period", selectedPeriod);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data ?? []) as OrderCoverageMonthlyRow[];
+    },
+  });
+
+  const orderPaymentIssuesQ = useQuery({
+    queryKey: ["shopify-order-payment-issues", year, month],
+    queryFn: async () => {
+      let q = (supabase as any)
+        .from("vw_shopify_order_payment_issues")
+        .select("*")
+        .gte("period", periodStart)
+        .lte("period", periodEnd)
+        .order("occurred_at", { ascending: false, nullsFirst: false })
+        .limit(150);
+      if (selectedPeriod) q = q.eq("period", selectedPeriod);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data ?? []) as OrderPaymentIssueRow[];
+    },
+  });
+
   const totals = useMemo(() => {
     const rows = monthlyQ.data ?? [];
     return rows.reduce(
@@ -224,12 +292,27 @@ function ShopifyPaymentsPage() {
     );
   }, [monthlyQ.data]);
 
+  const orderCoverageTotals = useMemo(() => {
+    const rows = orderCoverageMonthlyQ.data ?? [];
+    return rows.reduce(
+      (acc, row) => ({
+        orders: acc.orders + Number(row.order_count ?? 0),
+        paidOrders: acc.paidOrders + Number(row.paid_order_count ?? 0),
+        openOrders: acc.openOrders + Number(row.open_order_count ?? 0),
+        orderAmount: acc.orderAmount + Number(row.order_amount ?? 0),
+        paidAmount: acc.paidAmount + Number(row.paid_amount ?? 0),
+        difference: acc.difference + Number(row.payment_difference ?? 0),
+      }),
+      { orders: 0, paidOrders: 0, openOrders: 0, orderAmount: 0, paidAmount: 0, difference: 0 },
+    );
+  }, [orderCoverageMonthlyQ.data]);
+
   async function syncPayments() {
     setSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("shopify-payments-sync");
+      const { data, error } = await supabase.functions.invoke("shopify-order-payments-sync");
       if (error) throw error;
-      toast.success("Shopify Payments sync gestart", {
+      toast.success("Shopify orders en betalingen sync gestart", {
         description: (data as { message?: string } | null)?.message,
       });
       qc.invalidateQueries({ queryKey: ["sync_state"] });
@@ -237,8 +320,10 @@ function ShopifyPaymentsPage() {
       qc.invalidateQueries({ queryKey: ["shopify-payout-reconciliation"] });
       qc.invalidateQueries({ queryKey: ["shopify-payment-trace"] });
       qc.invalidateQueries({ queryKey: ["shopify-payment-issues"] });
+      qc.invalidateQueries({ queryKey: ["shopify-order-payment-coverage-monthly"] });
+      qc.invalidateQueries({ queryKey: ["shopify-order-payment-issues"] });
     } catch (error) {
-      toast.error("Shopify Payments sync mislukt", {
+      toast.error("Shopify orders en betalingen sync mislukt", {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -257,7 +342,7 @@ function ShopifyPaymentsPage() {
         </div>
         <Button variant="outline" onClick={syncPayments} disabled={syncing}>
           <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-          Shopify Payments sync
+          Shopify sync
         </Button>
       </div>
 
@@ -306,6 +391,117 @@ function ShopifyPaymentsPage() {
                 })}
               </SelectContent>
             </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <SummaryCard title="Shopify orders" value={String(orderCoverageTotals.orders)} />
+        <SummaryCard title="Betaald rondgelopen" value={String(orderCoverageTotals.paidOrders)} />
+        <SummaryCard title="Open orders" value={String(orderCoverageTotals.openOrders)} tone={orderCoverageTotals.openOrders} />
+        <SummaryCard title="Verschil order <> betaald" value={formatEUR(orderCoverageTotals.difference)} tone={orderCoverageTotals.difference} />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Betaalcontrole alle Shopify orders</CardTitle>
+          <CardDescription>
+            Orderbedrag vergeleken met succesvolle Shopify ordertransacties: Shopify Payments, contant en overige gateways.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1120px] text-sm">
+              <thead className="bg-muted/50 text-left">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Maand</th>
+                  <th className="px-3 py-2 font-medium">Kanaal</th>
+                  <th className="px-3 py-2 text-right font-medium">Orders</th>
+                  <th className="px-3 py-2 text-right font-medium">Betaald</th>
+                  <th className="px-3 py-2 text-right font-medium">Open</th>
+                  <th className="px-3 py-2 text-right font-medium">Orderbedrag</th>
+                  <th className="px-3 py-2 text-right font-medium">Gedekt</th>
+                  <th className="px-3 py-2 text-right font-medium">Shopify Payments</th>
+                  <th className="px-3 py-2 text-right font-medium">Contant</th>
+                  <th className="px-3 py-2 text-right font-medium">Overig</th>
+                  <th className="px-3 py-2 text-right font-medium">Verschil</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orderCoverageMonthlyQ.isLoading && <EmptyRow colSpan={11} text="Laden..." />}
+                {!orderCoverageMonthlyQ.isLoading && (orderCoverageMonthlyQ.data ?? []).length === 0 && (
+                  <EmptyRow colSpan={11} text="Geen Shopify ordertransacties gevonden. Start de Shopify Payments sync." />
+                )}
+                {(orderCoverageMonthlyQ.data ?? []).map((row) => (
+                  <tr key={`${row.period}-${row.channel}`} className="border-t hover:bg-muted/30">
+                    <td className="whitespace-nowrap px-3 py-2">{monthLabel(row.period)}</td>
+                    <td className="px-3 py-2">{channelLabels[row.channel] ?? row.channel}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{row.order_count}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{row.paid_order_count}</td>
+                    <td className={diffClass(row.open_order_count)}>{row.open_order_count}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.order_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.paid_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.shopify_payments_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.cash_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.other_payment_amount)}</td>
+                    <td className={diffClass(row.payment_difference)}>{formatEUR(row.payment_difference)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Open Shopify order-betaalpunten</CardTitle>
+          <CardDescription>Orders waarvan bedrag, betaalstatus of ordertransacties nog niet helemaal rondlopen.</CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1040px] text-sm">
+              <thead className="bg-muted/50 text-left">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Moment</th>
+                  <th className="px-3 py-2 font-medium">Order</th>
+                  <th className="px-3 py-2 font-medium">Kanaal</th>
+                  <th className="px-3 py-2 font-medium">Gateways</th>
+                  <th className="px-3 py-2 text-right font-medium">Orderbedrag</th>
+                  <th className="px-3 py-2 text-right font-medium">Betaald</th>
+                  <th className="px-3 py-2 text-right font-medium">Verschil</th>
+                  <th className="px-3 py-2 font-medium">Shopify status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orderPaymentIssuesQ.isLoading && <EmptyRow colSpan={9} text="Laden..." />}
+                {!orderPaymentIssuesQ.isLoading && (orderPaymentIssuesQ.data ?? []).length === 0 && (
+                  <EmptyRow colSpan={9} text="Geen open Shopify order-betaalpunten." />
+                )}
+                {(orderPaymentIssuesQ.data ?? []).map((row, index) => (
+                  <tr key={`${row.issue_type}-${row.order_number ?? index}`} className="border-t align-top hover:bg-muted/30">
+                    <td className="px-3 py-2">
+                      <TraceBadge status={row.issue_type} />
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">{formatDateTimeNL(row.occurred_at)}</td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{row.order_name ?? "-"}</div>
+                      <div className="text-xs text-muted-foreground">{row.transaction_count} transactie(s)</div>
+                    </td>
+                    <td className="px-3 py-2">{row.channel ? channelLabels[row.channel] ?? row.channel : "-"}</td>
+                    <td className="px-3 py-2">{row.payment_gateways ?? "-"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.order_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.paid_amount)}</td>
+                    <td className={diffClass(row.payment_difference)}>{formatEUR(row.payment_difference)}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline">{row.financial_status ?? "-"}</Badge>
+                      <div className="mt-1 text-xs text-muted-foreground">{formatDateTimeNL(row.last_payment_at)}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </CardContent>
       </Card>
@@ -643,8 +839,14 @@ function TraceBadge({ status }: { status: string }) {
     payout_missing: "Payout mist",
     exact_missing: "Exact mist",
     order_missing_payment: "Payment mist",
+    paid: "Betaald",
+    no_transactions: "Geen betaling",
+    unpaid: "Onbetaald",
+    underpaid: "Onderbetaald",
+    overpaid: "Overbetaald",
+    amount_covered_status_open: "Bedrag OK, status open",
   };
-  const ok = status === "ok" || status === "payout_movement";
+  const ok = status === "ok" || status === "payout_movement" || status === "paid";
   return <Badge variant={ok ? "secondary" : "destructive"}>{label[status] ?? status}</Badge>;
 }
 
