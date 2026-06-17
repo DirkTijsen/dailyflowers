@@ -1179,6 +1179,41 @@ async function handleAfsRentalInvoiceFunction(req, res) {
   const action = String(body?.action ?? "");
   const invoiceId = String(body?.invoice_id ?? "");
 
+  if (action === "gmail_status") {
+    sendJson(res, 200, await gmailConnectionStatus());
+    return;
+  }
+
+  if (action === "gmail_auth_url") {
+    const redirectUri = normalizeGmailRedirectUri(body?.redirect_uri);
+    const state = crypto.randomBytes(18).toString("hex");
+    sendJson(res, 200, {
+      auth_url: buildGmailAuthUrl({ redirectUri, state }),
+      state,
+      redirect_uri: redirectUri,
+    });
+    return;
+  }
+
+  if (action === "gmail_exchange_code") {
+    const code = String(body?.code ?? "").trim();
+    const redirectUri = normalizeGmailRedirectUri(body?.redirect_uri);
+    if (!code) {
+      sendJson(res, 400, { message: "OAuth code ontbreekt" });
+      return;
+    }
+
+    const status = await exchangeGmailAuthorizationCode({ code, redirectUri });
+    sendJson(res, 200, status);
+    return;
+  }
+
+  if (action === "gmail_disconnect") {
+    await disconnectGmail();
+    sendJson(res, 200, await gmailConnectionStatus());
+    return;
+  }
+
   if (action === "queue_period") {
     const period = String(body?.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(period)) {
@@ -1772,7 +1807,9 @@ ${lines.map((line) => ublInvoiceLine(line, invoice.vat_rate)).join("\n")}
 }
 
 async function sendAfsRentalInvoiceEmail(context, { to, subject, message }) {
-  const from = process.env.GMAIL_FROM_EMAIL ?? process.env.AFS_INVOICE_FROM_EMAIL;
+  const settings = await loadAfsMailSettings();
+  const from =
+    process.env.GMAIL_FROM_EMAIL ?? settings.from_email ?? process.env.AFS_INVOICE_FROM_EMAIL;
   if (!from) throw new Error("GMAIL_FROM_EMAIL ontbreekt in de Railway environment variables");
   if (!to) throw new Error("Ontvanger e-mailadres ontbreekt");
 
@@ -1829,12 +1866,12 @@ async function sendAfsRentalInvoiceEmail(context, { to, subject, message }) {
 async function getGmailAccessToken() {
   const clientId = process.env.GMAIL_CLIENT_ID;
   const clientSecret = process.env.GMAIL_CLIENT_SECRET;
-  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  const settings = await loadAfsMailSettings();
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN ?? settings.gmail_refresh_token;
   if (!clientId) throw new Error("GMAIL_CLIENT_ID ontbreekt in de Railway environment variables");
   if (!clientSecret)
     throw new Error("GMAIL_CLIENT_SECRET ontbreekt in de Railway environment variables");
-  if (!refreshToken)
-    throw new Error("GMAIL_REFRESH_TOKEN ontbreekt in de Railway environment variables");
+  if (!refreshToken) throw new Error("Gmail is nog niet gekoppeld op de AFS facturatie pagina");
 
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -1901,6 +1938,147 @@ function chunkBase64(value) {
   return String(value)
     .replace(/.{1,76}/g, "$&\r\n")
     .trim();
+}
+
+function buildGmailAuthUrl({ redirectUri, state }) {
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  if (!clientId) throw new Error("GMAIL_CLIENT_ID ontbreekt in de Railway environment variables");
+
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "https://www.googleapis.com/auth/gmail.send");
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent");
+  url.searchParams.set("include_granted_scopes", "true");
+  url.searchParams.set("state", state);
+  return url.toString();
+}
+
+async function exchangeGmailAuthorizationCode({ code, redirectUri }) {
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  if (!clientId) throw new Error("GMAIL_CLIENT_ID ontbreekt in de Railway environment variables");
+  if (!clientSecret)
+    throw new Error("GMAIL_CLIENT_SECRET ontbreekt in de Railway environment variables");
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+    }),
+  });
+  const responseJson = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      responseJson.error_description ?? responseJson.error ?? "Gmail OAuth koppeling mislukt",
+    );
+  }
+
+  const existing = await loadAfsMailSettings();
+  const refreshToken = responseJson.refresh_token ?? existing.gmail_refresh_token;
+  if (!refreshToken) {
+    throw new Error(
+      "Google gaf geen refresh token terug. Klik opnieuw op koppelen en geef expliciet toestemming.",
+    );
+  }
+
+  const connectedEmail = responseJson.access_token
+    ? await fetchGmailProfileEmail(responseJson.access_token).catch(() => "")
+    : "";
+  const fromEmail =
+    process.env.GMAIL_FROM_EMAIL ??
+    (connectedEmail ? `Daily Flowers <${connectedEmail}>` : (existing.from_email ?? ""));
+
+  await pool.query(
+    `
+      INSERT INTO public.afs_invoice_mail_settings (
+        id, provider, gmail_refresh_token, from_email, connected_email,
+        connected_at, disconnected_at, last_error
+      )
+      VALUES ('gmail', 'gmail', $1, $2, $3, now(), NULL, NULL)
+      ON CONFLICT (id) DO UPDATE SET
+        gmail_refresh_token = EXCLUDED.gmail_refresh_token,
+        from_email = EXCLUDED.from_email,
+        connected_email = EXCLUDED.connected_email,
+        connected_at = now(),
+        disconnected_at = NULL,
+        last_error = NULL
+    `,
+    [refreshToken, fromEmail || null, connectedEmail || null],
+  );
+
+  return gmailConnectionStatus();
+}
+
+async function fetchGmailProfileEmail(accessToken) {
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const responseJson = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(responseJson.error?.message ?? "Gmail profiel ophalen mislukt");
+  return responseJson.emailAddress ?? "";
+}
+
+async function gmailConnectionStatus() {
+  const settings = await loadAfsMailSettings();
+  const envConnected = Boolean(process.env.GMAIL_REFRESH_TOKEN);
+  const dbConnected = Boolean(settings.gmail_refresh_token);
+  return {
+    connected: envConnected || dbConnected,
+    source: envConnected ? "env" : dbConnected ? "database" : null,
+    from_email: process.env.GMAIL_FROM_EMAIL ?? settings.from_email ?? "",
+    connected_email: settings.connected_email ?? "",
+    connected_at: settings.connected_at ?? null,
+    disconnected_at: settings.disconnected_at ?? null,
+    last_error: settings.last_error ?? null,
+    client_configured: Boolean(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET),
+  };
+}
+
+async function disconnectGmail() {
+  await pool.query(
+    `
+      INSERT INTO public.afs_invoice_mail_settings (
+        id, provider, gmail_refresh_token, connected_at, disconnected_at
+      )
+      VALUES ('gmail', 'gmail', NULL, NULL, now())
+      ON CONFLICT (id) DO UPDATE SET
+        gmail_refresh_token = NULL,
+        connected_at = NULL,
+        disconnected_at = now(),
+        last_error = NULL
+    `,
+  );
+}
+
+async function loadAfsMailSettings() {
+  const result = await pool.query(
+    `
+      SELECT gmail_refresh_token, from_email, connected_email, connected_at,
+             disconnected_at, last_error
+      FROM public.afs_invoice_mail_settings
+      WHERE id = 'gmail'
+      LIMIT 1
+    `,
+  );
+  return result.rows[0] ?? {};
+}
+
+function normalizeGmailRedirectUri(value) {
+  const uri = String(value ?? process.env.GMAIL_REDIRECT_URI ?? "").trim();
+  if (!uri) throw new Error("Gmail callback URL ontbreekt");
+  const parsed = new URL(uri);
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("Gmail callback URL moet http(s) zijn");
+  }
+  return parsed.toString();
 }
 
 function invoiceCustomerConfig() {

@@ -36,6 +36,7 @@ import {
   ReceiptText,
   Save,
   Send,
+  Unplug,
   type LucideIcon,
 } from "lucide-react";
 import { currentMonth, formatDateNL, formatDateTimeNL, formatEUR, monthLabel } from "@/lib/format";
@@ -176,11 +177,25 @@ type InvoiceFunctionPayload = {
   content_type?: string;
   base64?: string;
   message?: string;
+  auth_url?: string;
+  state?: string;
   found?: number;
   queued?: number;
   sent?: number;
   failed?: number;
   errors?: string[];
+};
+
+type GmailConnectionStatus = {
+  connected: boolean;
+  source: "env" | "database" | null;
+  from_email: string;
+  connected_email: string;
+  connected_at: string | null;
+  disconnected_at: string | null;
+  last_error: string | null;
+  client_configured: boolean;
+  message?: string;
 };
 
 type DbError = { message: string };
@@ -341,6 +356,19 @@ function AfsRentPage() {
     },
   });
 
+  const gmailStatusQ = useQuery({
+    queryKey: ["afs-gmail-status"],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke<GmailConnectionStatus>(
+        "afs-rental-invoice",
+        { body: { action: "gmail_status" } },
+      );
+      if (error) throw error;
+      if (data?.message) throw new Error(data.message);
+      return data as GmailConnectionStatus;
+    },
+  });
+
   const landlordsById = useMemo(
     () => new Map((landlordsQ.data ?? []).map((landlord) => [landlord.id, landlord])),
     [landlordsQ.data],
@@ -431,6 +459,26 @@ function AfsRentPage() {
   useEffect(() => {
     setSelectedCandidateIds(new Set(selectableCandidateIds));
   }, [period, selectableCandidateIds, selectableCandidateKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    if (!code) return;
+
+    const expectedState = sessionStorage.getItem("afs-gmail-oauth-state");
+    if (!state || state !== expectedState) {
+      toast.error("Gmail koppeling geweigerd", { description: "OAuth state klopt niet." });
+      return;
+    }
+
+    sessionStorage.removeItem("afs-gmail-oauth-state");
+    window.history.replaceState(null, "", window.location.pathname);
+    exchangeGmailCode(code);
+    // Google returns the OAuth code once on page load; re-running this effect would retry exchange.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function addLandlord() {
     const name = landlordForm.name.trim();
@@ -744,6 +792,78 @@ function AfsRentPage() {
       qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
     } catch (error) {
       toast.error("Gmail queue verzenden mislukt", { description: errorMessage(error) });
+    } finally {
+      setBulkAction(null);
+    }
+  }
+
+  async function startGmailOAuth() {
+    if (typeof window === "undefined") return;
+    setBulkAction("gmail_auth");
+    try {
+      const redirectUri = `${window.location.origin}/afs-huur`;
+      const { data, error } = await supabase.functions.invoke<InvoiceFunctionPayload>(
+        "afs-rental-invoice",
+        {
+          body: {
+            action: "gmail_auth_url",
+            redirect_uri: redirectUri,
+          },
+        },
+      );
+      if (error) throw error;
+      if (data?.message) throw new Error(data.message);
+      if (!data?.auth_url || !data.state) throw new Error("Gmail auth URL ontbreekt");
+
+      sessionStorage.setItem("afs-gmail-oauth-state", data.state);
+      window.location.href = data.auth_url;
+    } catch (error) {
+      toast.error("Gmail koppeling starten mislukt", { description: errorMessage(error) });
+      setBulkAction(null);
+    }
+  }
+
+  async function exchangeGmailCode(code: string) {
+    if (typeof window === "undefined") return;
+    setBulkAction("gmail_exchange");
+    try {
+      const redirectUri = `${window.location.origin}/afs-huur`;
+      const { data, error } = await supabase.functions.invoke<GmailConnectionStatus>(
+        "afs-rental-invoice",
+        {
+          body: {
+            action: "gmail_exchange_code",
+            code,
+            redirect_uri: redirectUri,
+          },
+        },
+      );
+      if (error) throw error;
+      if (data?.message) throw new Error(data.message);
+
+      toast.success("Gmail gekoppeld");
+      qc.invalidateQueries({ queryKey: ["afs-gmail-status"] });
+    } catch (error) {
+      toast.error("Gmail koppeling mislukt", { description: errorMessage(error) });
+    } finally {
+      setBulkAction(null);
+    }
+  }
+
+  async function disconnectGmail() {
+    setBulkAction("gmail_disconnect");
+    try {
+      const { data, error } = await supabase.functions.invoke<GmailConnectionStatus>(
+        "afs-rental-invoice",
+        { body: { action: "gmail_disconnect" } },
+      );
+      if (error) throw error;
+      if (data?.message) throw new Error(data.message);
+
+      toast.success("Gmail ontkoppeld");
+      qc.invalidateQueries({ queryKey: ["afs-gmail-status"] });
+    } catch (error) {
+      toast.error("Gmail ontkoppelen mislukt", { description: errorMessage(error) });
     } finally {
       setBulkAction(null);
     }
@@ -1387,8 +1507,39 @@ function AfsRentPage() {
                 <CardDescription>
                   Zet de maandfacturen in de Gmail-queue en verwerk de queue in batch.
                 </CardDescription>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge
+                    variant={gmailStatusQ.data?.connected ? "default" : "outline"}
+                    className="whitespace-nowrap"
+                  >
+                    {gmailStatusQ.data?.connected ? "Gmail gekoppeld" : "Gmail niet gekoppeld"}
+                  </Badge>
+                  {gmailStatusQ.data?.from_email && <span>{gmailStatusQ.data.from_email}</span>}
+                  {gmailStatusQ.data?.source && <span>bron: {gmailStatusQ.data.source}</span>}
+                  {!gmailStatusQ.data?.client_configured && (
+                    <span className="text-destructive">Client ID/secret ontbreken in Railway</span>
+                  )}
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={startGmailOAuth}
+                  disabled={bulkAction === "gmail_auth" || bulkAction === "gmail_exchange"}
+                >
+                  <Mail className="h-4 w-4 mr-1" />
+                  {gmailStatusQ.data?.connected ? "Gmail opnieuw koppelen" : "Gmail koppelen"}
+                </Button>
+                {gmailStatusQ.data?.connected && gmailStatusQ.data.source === "database" && (
+                  <Button
+                    variant="outline"
+                    onClick={disconnectGmail}
+                    disabled={bulkAction === "gmail_disconnect"}
+                  >
+                    <Unplug className="h-4 w-4 mr-1" />
+                    Ontkoppel
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   onClick={queuePeriodInvoices}
@@ -1397,7 +1548,10 @@ function AfsRentPage() {
                   <Mail className="h-4 w-4 mr-1" />
                   Maand in queue
                 </Button>
-                <Button onClick={processEmailQueue} disabled={bulkAction === "process_queue"}>
+                <Button
+                  onClick={processEmailQueue}
+                  disabled={bulkAction === "process_queue" || !gmailStatusQ.data?.connected}
+                >
                   <Send className="h-4 w-4 mr-1" />
                   Verzend queue
                 </Button>
