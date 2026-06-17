@@ -16,6 +16,7 @@ import { Route as AuthenticatedWinstVerliesRouteImport } from './routes/_authent
 import { Route as AuthenticatedTransactiesRouteImport } from './routes/_authenticated/transacties'
 import { Route as AuthenticatedShopifyBetalingenRouteImport } from './routes/_authenticated/shopify-betalingen'
 import { Route as AuthenticatedMollieTransactiesRouteImport } from './routes/_authenticated/mollie-transacties'
+import { Route as AuthenticatedKassaAansluitingRouteImport } from './routes/_authenticated/kassa-aansluiting'
 import { Route as AuthenticatedInstellingenRouteImport } from './routes/_authenticated/instellingen'
 import { Route as AuthenticatedImportCsvRouteImport } from './routes/_authenticated/import-csv'
 import { Route as AuthenticatedGrootboekRouteImport } from './routes/_authenticated/grootboek'
@@ -64,6 +65,12 @@ const AuthenticatedMollieTransactiesRoute =
   AuthenticatedMollieTransactiesRouteImport.update({
     id: '/mollie-transacties',
     path: '/mollie-transacties',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedKassaAansluitingRoute =
+  AuthenticatedKassaAansluitingRouteImport.update({
+    id: '/kassa-aansluiting',
+    path: '/kassa-aansluiting',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedInstellingenRoute =
@@ -139,6 +146,7 @@ export interface FileRoutesByFullPath {
   '/grootboek': typeof AuthenticatedGrootboekRoute
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
+  '/kassa-aansluiting': typeof AuthenticatedKassaAansluitingRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/transacties': typeof AuthenticatedTransactiesRouteWithChildren
@@ -158,6 +166,7 @@ export interface FileRoutesByTo {
   '/grootboek': typeof AuthenticatedGrootboekRoute
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
+  '/kassa-aansluiting': typeof AuthenticatedKassaAansluitingRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/transacties': typeof AuthenticatedTransactiesRouteWithChildren
@@ -179,6 +188,7 @@ export interface FileRoutesById {
   '/_authenticated/grootboek': typeof AuthenticatedGrootboekRoute
   '/_authenticated/import-csv': typeof AuthenticatedImportCsvRoute
   '/_authenticated/instellingen': typeof AuthenticatedInstellingenRoute
+  '/_authenticated/kassa-aansluiting': typeof AuthenticatedKassaAansluitingRoute
   '/_authenticated/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/_authenticated/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/_authenticated/transacties': typeof AuthenticatedTransactiesRouteWithChildren
@@ -200,6 +210,7 @@ export interface FileRouteTypes {
     | '/grootboek'
     | '/import-csv'
     | '/instellingen'
+    | '/kassa-aansluiting'
     | '/mollie-transacties'
     | '/shopify-betalingen'
     | '/transacties'
@@ -219,6 +230,7 @@ export interface FileRouteTypes {
     | '/grootboek'
     | '/import-csv'
     | '/instellingen'
+    | '/kassa-aansluiting'
     | '/mollie-transacties'
     | '/shopify-betalingen'
     | '/transacties'
@@ -239,6 +251,7 @@ export interface FileRouteTypes {
     | '/_authenticated/grootboek'
     | '/_authenticated/import-csv'
     | '/_authenticated/instellingen'
+    | '/_authenticated/kassa-aansluiting'
     | '/_authenticated/mollie-transacties'
     | '/_authenticated/shopify-betalingen'
     | '/_authenticated/transacties'
@@ -301,6 +314,13 @@ declare module '@tanstack/react-router' {
       path: '/mollie-transacties'
       fullPath: '/mollie-transacties'
       preLoaderRoute: typeof AuthenticatedMollieTransactiesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/kassa-aansluiting': {
+      id: '/_authenticated/kassa-aansluiting'
+      path: '/kassa-aansluiting'
+      fullPath: '/kassa-aansluiting'
+      preLoaderRoute: typeof AuthenticatedKassaAansluitingRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/instellingen': {
@@ -408,6 +428,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedGrootboekRoute: typeof AuthenticatedGrootboekRoute
   AuthenticatedImportCsvRoute: typeof AuthenticatedImportCsvRoute
   AuthenticatedInstellingenRoute: typeof AuthenticatedInstellingenRoute
+  AuthenticatedKassaAansluitingRoute: typeof AuthenticatedKassaAansluitingRoute
   AuthenticatedMollieTransactiesRoute: typeof AuthenticatedMollieTransactiesRoute
   AuthenticatedShopifyBetalingenRoute: typeof AuthenticatedShopifyBetalingenRoute
   AuthenticatedTransactiesRoute: typeof AuthenticatedTransactiesRouteWithChildren
@@ -425,6 +446,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedGrootboekRoute: AuthenticatedGrootboekRoute,
   AuthenticatedImportCsvRoute: AuthenticatedImportCsvRoute,
   AuthenticatedInstellingenRoute: AuthenticatedInstellingenRoute,
+  AuthenticatedKassaAansluitingRoute: AuthenticatedKassaAansluitingRoute,
   AuthenticatedMollieTransactiesRoute: AuthenticatedMollieTransactiesRoute,
   AuthenticatedShopifyBetalingenRoute: AuthenticatedShopifyBetalingenRoute,
   AuthenticatedTransactiesRoute: AuthenticatedTransactiesRouteWithChildren,

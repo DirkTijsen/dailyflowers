@@ -13,6 +13,7 @@
     "local:db": "node local-supabase/setup.mjs",
     "local:reset": "node local-supabase/setup.mjs --reset",
     "import:shopify-payments": "node local-supabase/import-shopify-payments-csv.mjs",
+    "import:shopify-cash-sessions": "node local-supabase/import-shopify-cash-sessions-csv.mjs",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",

@@ -34,6 +34,7 @@ import {
   Users,
   HandCoins,
   WalletCards,
+  Banknote,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -60,6 +61,7 @@ const beheerNav = [
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
   { to: "/mollie-transacties", label: "Mollie transacties", icon: CreditCard },
   { to: "/shopify-betalingen", label: "Shopify betalingen", icon: WalletCards },
+  { to: "/kassa-aansluiting", label: "Kassa aansluiting", icon: Banknote },
   { to: "/exact-transacties", label: "Exact transacties", icon: FileText },
   { to: "/bold-afs-aansluiting", label: "Bold <> Mollie aansluiting", icon: Scale },
   { to: "/grootboek", label: "Grootboek", icon: BookOpen },

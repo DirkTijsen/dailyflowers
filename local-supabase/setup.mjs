@@ -140,6 +140,7 @@ async function main() {
     await applyMigration(app, "20260617110000_add_exact_sync_state.sql");
     await applyMigration(app, "20260617183000_add_shopify_payments_reconciliation.sql");
     await applyMigration(app, "20260617190000_add_shopify_payment_csv_import.sql");
+    await applyMigration(app, "20260617193000_add_shopify_cash_reconciliation.sql");
 
     await app.query(localAuthSql);
     await seedAdminUser(app);
