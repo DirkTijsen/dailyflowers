@@ -286,11 +286,17 @@ function ProfitLossPage() {
   async function syncExact() {
     setExactSyncing(true);
     try {
-      const { error } = await supabase.functions.invoke("exact-sync");
+      const { data, error } = await supabase.functions.invoke("exact-sync");
       if (error) throw error;
-      toast.success("Exact sync gestart", {
-        description: "De grootboekregels worden op de achtergrond opgehaald.",
-      });
+      if ((data as { status?: string } | null)?.status === "already_running") {
+        toast.message("Exact sync draait al", {
+          description: (data as { message?: string } | null)?.message,
+        });
+      } else {
+        toast.success("Exact sync gestart", {
+          description: "De grootboekregels worden op de achtergrond opgehaald.",
+        });
+      }
       qc.invalidateQueries({ queryKey: ["sync_state"] });
       qc.invalidateQueries({ queryKey: ["gl-accounts"] });
       qc.invalidateQueries({ queryKey: ["wv-gl-monthly"] });

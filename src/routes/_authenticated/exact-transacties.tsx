@@ -46,6 +46,7 @@ type SyncStateRow = {
   last_sweep_status: string | null;
   last_sweep_message: string | null;
   records_processed: number | null;
+  updated_at: string | null;
 };
 
 function ExactTransactionsPage() {
@@ -75,7 +76,7 @@ function ExactTransactionsPage() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("sync_state")
-        .select("channel,last_sweep_at,last_sweep_status,last_sweep_message,records_processed")
+        .select("channel,last_sweep_at,last_sweep_status,last_sweep_message,records_processed,updated_at")
         .eq("channel", "exact_gl")
         .maybeSingle();
       if (error) throw error;
@@ -119,9 +120,15 @@ function ExactTransactionsPage() {
   async function syncExact() {
     setSyncing(true);
     try {
-      const { error } = await supabase.functions.invoke("exact-sync");
+      const { data, error } = await supabase.functions.invoke("exact-sync");
       if (error) throw error;
-      toast.success("Exact sync gestart");
+      if ((data as { status?: string } | null)?.status === "already_running") {
+        toast.message("Exact sync draait al", {
+          description: (data as { message?: string } | null)?.message,
+        });
+      } else {
+        toast.success("Exact sync gestart");
+      }
       qc.invalidateQueries({ queryKey: ["sync_state"] });
       qc.invalidateQueries({ queryKey: ["exact-transactions"] });
       qc.invalidateQueries({ queryKey: ["wv-gl-monthly"] });
@@ -155,7 +162,7 @@ function ExactTransactionsPage() {
 
       <Card>
         <CardContent className="grid gap-3 pt-6 md:grid-cols-4">
-          <MiniStatus label="Status" value={syncStatusLabel(syncQ.data?.last_sweep_status)} />
+          <MiniStatus label="Status" value={syncStatusLabel(syncQ.data)} />
           <MiniStatus label="Laatste run" value={formatDateTimeNL(syncQ.data?.last_sweep_at)} />
           <MiniStatus label="Regels verwerkt" value={String(syncQ.data?.records_processed ?? 0)} />
           <MiniStatus label="Melding" value={syncQ.data?.last_sweep_message ?? "-"} />
@@ -400,12 +407,19 @@ function monthName(index: number) {
   return new Date(2026, index, 1).toLocaleDateString("nl-NL", { month: "long" });
 }
 
-function syncStatusLabel(status: string | null | undefined) {
-  if (status === "running") return "Draait";
+function syncStatusLabel(state: SyncStateRow | null | undefined) {
+  const status = state?.last_sweep_status;
+  if (status === "running") return isStaleRunning(state) ? "Vastgelopen?" : "Draait";
   if (status === "ok") return "Gelukt";
   if (status === "error") return "Fout";
   if (status === "skipped") return "Overgeslagen";
   return "-";
+}
+
+function isStaleRunning(state: SyncStateRow | null | undefined) {
+  if (state?.last_sweep_status !== "running" || !state.updated_at) return false;
+  const updatedAt = new Date(state.updated_at).getTime();
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt > 5 * 60 * 1000;
 }
 
 function exactDocumentUrl(row: ExactTransactionRow) {

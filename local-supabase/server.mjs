@@ -29,6 +29,7 @@ const databaseUrl =
   "postgres://postgres:postgres@localhost:5432/daily_flowers_local";
 const jwtSecret = process.env.LOCAL_JWT_SECRET ?? "daily-flowers-local-jwt-secret-change-me";
 const tokenTtlSeconds = Number(process.env.LOCAL_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 7);
+const exactRunningStaleMinutes = Number(process.env.EXACT_RUNNING_STALE_MINUTES ?? 5);
 const pool = new Pool({ connectionString: databaseUrl });
 const staticRoot = path.resolve(process.cwd(), "dist", "client");
 const builtServerEntry = path.resolve(process.cwd(), "dist", "server", "server.js");
@@ -773,6 +774,30 @@ async function handleFunction(req, res, url) {
   if (name === "exact-sync") {
     const since = url.searchParams.get("since");
     const until = url.searchParams.get("until");
+    const current = await pool.query(
+      `
+        SELECT last_sweep_status, updated_at
+        FROM public.sync_state
+        WHERE channel = 'exact_gl'
+        LIMIT 1
+      `,
+    );
+    const state = current.rows[0];
+    const updatedAt = state?.updated_at ? new Date(state.updated_at).getTime() : 0;
+    const isRecentRunning =
+      state?.last_sweep_status === "running" &&
+      Number.isFinite(updatedAt) &&
+      Date.now() - updatedAt < exactRunningStaleMinutes * 60 * 1000;
+
+    if (isRecentRunning) {
+      sendJson(res, 202, {
+        status: "already_running",
+        local: true,
+        message: "Exact sync draait al recent. Wacht op de volgende voortgangsupdate.",
+      });
+      return;
+    }
+
     runExactSweepFrom(pool, since, { untilIso: until }).catch((error) =>
       console.error("local exact-sync failed", error),
     );

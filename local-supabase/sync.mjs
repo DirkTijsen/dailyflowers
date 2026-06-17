@@ -17,6 +17,7 @@ const MOLLIE_FETCH_TIMEOUT_MS = Number(process.env.MOLLIE_FETCH_TIMEOUT_MS ?? 30
 const MOLLIE_VERBOSE_PARSE_ERRORS = process.env.MOLLIE_VERBOSE_PARSE_ERRORS === "true";
 const EXACT_SYNC_FROM = process.env.EXACT_SYNC_FROM ?? "2026-01-01T00:00:00Z";
 const EXACT_INCREMENTAL_OVERLAP_HOURS = Number(process.env.EXACT_INCREMENTAL_OVERLAP_HOURS ?? 48);
+const EXACT_RESUME_OVERLAP_DAYS = Number(process.env.EXACT_RESUME_OVERLAP_DAYS ?? 1);
 const EXACT_FETCH_TIMEOUT_MS = Number(process.env.EXACT_FETCH_TIMEOUT_MS ?? 60000);
 const EXACT_PAGE_SIZE = Number(process.env.EXACT_PAGE_SIZE ?? 5000);
 const EXACT_REPLACE_MANUAL_GL = process.env.EXACT_REPLACE_MANUAL_GL !== "false";
@@ -547,11 +548,24 @@ async function determineExactSince(pool) {
     `,
   );
   const lastOk = result.rows[0]?.last_sweep_at;
-  const since = lastOk
-    ? new Date(lastOk).getTime() - EXACT_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
+  if (lastOk) {
+    const since = new Date(lastOk).getTime() - EXACT_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000;
+    return new Date(Math.max(since, safeLowerBound)).toISOString();
+  }
+
+  const latestImported = await pool.query(
+    `
+      SELECT max(transaction_date) AS max_date
+      FROM public.gl_transactions
+      WHERE source = 'exact_invantive'
+    `,
+  );
+  const maxDate = latestImported.rows[0]?.max_date;
+  const resumeFrom = maxDate
+    ? new Date(maxDate).getTime() - EXACT_RESUME_OVERLAP_DAYS * 24 * 3600 * 1000
     : safeLowerBound;
 
-  return new Date(Math.max(since, safeLowerBound)).toISOString();
+  return new Date(Math.max(resumeFrom, safeLowerBound)).toISOString();
 }
 
 async function fetchExactGl(pool, sinceIso, untilIso = null) {
@@ -616,9 +630,16 @@ async function syncExactTransactionLines(pool, sinceIso, accountMap, untilIso = 
 
   const seen = new Set();
   let total = 0;
-  let chunks = 0;
 
   for (const [chunkStart, chunkEnd] of dailyRanges(start, until)) {
+    await recordSweep(
+      pool,
+      "exact_gl",
+      "running",
+      `Exact sync bezig: ${total} regels, dag ${chunkStart.toISOString().slice(0, 10)}`,
+      total,
+    );
+
     const rows = await fetchExactTransactionLineRange(chunkStart, chunkEnd, "Date");
     const freshRows = [];
     for (const row of rows) {
@@ -636,16 +657,13 @@ async function syncExactTransactionLines(pool, sinceIso, accountMap, untilIso = 
     ]);
 
     total += mapped.length;
-    chunks += 1;
-    if (chunks % 7 === 0) {
-      await recordSweep(
-        pool,
-        "exact_gl",
-        "running",
-        `Exact sync bezig: ${total} regels t/m ${chunkEnd.toISOString().slice(0, 10)}`,
-        total,
-      );
-    }
+    await recordSweep(
+      pool,
+      "exact_gl",
+      "running",
+      `Exact sync bezig: ${total} regels t/m ${previousDayLabel(chunkEnd)}`,
+      total,
+    );
   }
 
   const lowerBound = startOfUtcDay(EXACT_SYNC_FROM);
@@ -668,6 +686,10 @@ async function syncExactTransactionLines(pool, sinceIso, accountMap, untilIso = 
   }
 
   return total;
+}
+
+function previousDayLabel(end) {
+  return new Date(end.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 async function fetchExactTransactionLineRange(start, end, field) {
