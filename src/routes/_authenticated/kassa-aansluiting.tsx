@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDateNL, formatDateTimeNL, formatEUR, monthLabel } from "@/lib/format";
@@ -62,13 +64,38 @@ type ExactRow = {
   exact_document_url: string | null;
 };
 
+type SyncStateRow = {
+  channel: string;
+  last_sweep_at: string | null;
+  last_sweep_status: string | null;
+  last_sweep_message: string | null;
+  records_processed: number | null;
+  updated_at: string | null;
+};
+
 function CashReconciliationPage() {
+  const qc = useQueryClient();
   const [year, setYear] = useState("2026");
   const [month, setMonth] = useState("all");
+  const [syncing, setSyncing] = useState(false);
 
   const periodStart = `${year}-01`;
   const periodEnd = `${year}-12`;
   const selectedPeriod = month === "all" ? null : `${year}-${month}`;
+
+  const syncQ = useQuery({
+    queryKey: ["sync_state", "shopify_cash"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("sync_state")
+        .select("channel,last_sweep_at,last_sweep_status,last_sweep_message,records_processed,updated_at")
+        .eq("channel", "shopify_cash")
+        .maybeSingle();
+      if (error) throw error;
+      return data as SyncStateRow | null;
+    },
+    refetchInterval: (query) => (query.state.data?.last_sweep_status === "running" ? 5000 : false),
+  });
 
   const monthlyQ = useQuery({
     queryKey: ["shopify-cash-monthly", year, month],
@@ -153,6 +180,28 @@ function CashReconciliationPage() {
 
   const cashAfterDiscrepancy = totals.cash + totals.discrepancy;
 
+  async function syncCash() {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("shopify-cash-sync");
+      if (error) throw error;
+      toast.success("Shopify kassasessies sync gestart", {
+        description: (data as { message?: string } | null)?.message,
+      });
+      qc.invalidateQueries({ queryKey: ["sync_state"] });
+      qc.invalidateQueries({ queryKey: ["shopify-cash-monthly"] });
+      qc.invalidateQueries({ queryKey: ["shopify-cash-daily"] });
+      qc.invalidateQueries({ queryKey: ["shopify-cash-orders"] });
+      qc.invalidateQueries({ queryKey: ["shopify-cash-exact"] });
+    } catch (error) {
+      toast.error("Shopify kassasessies sync mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -192,8 +241,21 @@ function CashReconciliationPage() {
               </SelectContent>
             </Select>
           </Field>
+          <Button className="self-end" variant="outline" onClick={syncCash} disabled={syncing}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            Kas sync
+          </Button>
         </div>
       </div>
+
+      <Card>
+        <CardContent className="grid gap-3 pt-6 md:grid-cols-4">
+          <MiniStatus label="Kas sync" value={syncStatusLabel(syncQ.data)} />
+          <MiniStatus label="Laatste run" value={formatDateTimeNL(syncQ.data?.last_sweep_at)} />
+          <MiniStatus label="Regels verwerkt" value={String(syncQ.data?.records_processed ?? 0)} />
+          <MiniStatus label="Melding" value={syncQ.data?.last_sweep_message ?? "-"} />
+        </CardContent>
+      </Card>
 
       <div className="grid gap-3 lg:grid-cols-4">
         <SummaryCard title="Contant / extern uit orders" value={formatEUR(totals.cash)} />
@@ -396,6 +458,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function MiniStatus({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-sm font-medium" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function Th({ children, right = false }: { children?: ReactNode; right?: boolean }) {
   return <th className={`px-3 py-2 font-medium ${right ? "text-right" : ""}`}>{children}</th>;
 }
@@ -412,4 +485,12 @@ function Td({
   const toneClass =
     tone === undefined || Math.abs(tone) < 0.01 ? "" : tone > 0 ? "text-emerald-700" : "text-destructive";
   return <td className={`px-3 py-2 ${right ? "text-right tabular-nums" : ""} ${toneClass}`}>{children}</td>;
+}
+
+function syncStatusLabel(state: SyncStateRow | null | undefined) {
+  const status = state?.last_sweep_status;
+  if (status === "running") return "Draait";
+  if (status === "ok") return "Bijgewerkt";
+  if (status === "error") return "Fout";
+  return "Nog niet gesynct";
 }

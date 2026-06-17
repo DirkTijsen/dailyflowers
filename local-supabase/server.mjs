@@ -11,6 +11,7 @@ import {
   markSweepRunning,
   processMollieWebhook,
   processShopifyWebhook,
+  runShopifyCashSweepFrom,
   runExactSweepFrom,
   runShopifyPaymentsSweepFrom,
   runSweep,
@@ -340,6 +341,9 @@ const resources = {
     table: "public.shopify_cash_sessions",
     columns: [
       "id",
+      "connection_id",
+      "shop_domain",
+      "shopify_session_id",
       "location_id",
       "location_name",
       "session_start",
@@ -348,9 +352,43 @@ const resources = {
       "status",
       "discrepancy",
       "currency",
+      "opening_balance",
+      "closing_balance",
+      "expected_balance",
+      "expected_closing_balance",
+      "total_cash_sales",
+      "total_cash_refunds",
+      "net_cash_sales",
+      "total_adjustments",
       "import_source",
       "import_batch_id",
       "raw_payload",
+      "synced_at",
+      "created_at",
+      "updated_at",
+    ],
+    writable: true,
+  },
+  shopify_cash_session_transactions: {
+    table: "public.shopify_cash_session_transactions",
+    columns: [
+      "id",
+      "connection_id",
+      "shop_domain",
+      "shopify_session_id",
+      "shopify_transaction_id",
+      "location_id",
+      "register_id",
+      "order_id",
+      "order_name",
+      "kind",
+      "status",
+      "processed_at",
+      "amount",
+      "currency",
+      "import_source",
+      "raw_payload",
+      "synced_at",
       "created_at",
       "updated_at",
     ],
@@ -628,7 +666,11 @@ const resources = {
       "order_amount",
       "shopify_payment_tx_count",
       "shopify_payment_amount",
+      "cash_transaction_count",
+      "shopify_cash_transaction_amount",
+      "fallback_cash_amount",
       "cash_amount",
+      "cash_source",
       "cash_match_status",
       "cash_session_id",
       "location_id",
@@ -649,6 +691,8 @@ const resources = {
       "cash_sales_amount",
       "pos_order_amount",
       "shopify_payment_amount",
+      "shopify_cash_transaction_amount",
+      "shopify_cash_transaction_order_count",
       "cash_orders_without_session",
       "session_count",
       "open_session_count",
@@ -668,6 +712,8 @@ const resources = {
       "cash_sales_amount",
       "pos_order_amount",
       "shopify_payment_amount",
+      "shopify_cash_transaction_amount",
+      "shopify_cash_transaction_order_count",
       "cash_orders_without_session",
       "session_count",
       "open_session_count",
@@ -1132,6 +1178,31 @@ async function handleFunction(req, res, url) {
       status: "started",
       local: true,
       message: "Shopify Payments sync draait op de achtergrond.",
+    });
+    return;
+  }
+
+  if (name === "shopify-cash-sync") {
+    const since = url.searchParams.get("since");
+    await pool.query(
+      `
+        INSERT INTO public.sync_state (channel, last_sweep_at, last_sweep_status, last_sweep_message, records_processed, updated_at)
+        VALUES ('shopify_cash', now(), 'running', 'Shopify kassasessies sync gestart...', 0, now())
+        ON CONFLICT (channel) DO UPDATE SET
+          last_sweep_at = EXCLUDED.last_sweep_at,
+          last_sweep_status = EXCLUDED.last_sweep_status,
+          last_sweep_message = EXCLUDED.last_sweep_message,
+          records_processed = EXCLUDED.records_processed,
+          updated_at = now()
+      `,
+    );
+    runShopifyCashSweepFrom(pool, since).catch((error) =>
+      console.error("local shopify-cash-sync failed", error),
+    );
+    sendJson(res, 202, {
+      status: "started",
+      local: true,
+      message: "Shopify kassasessies sync draait op de achtergrond.",
     });
     return;
   }

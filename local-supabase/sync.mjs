@@ -9,7 +9,12 @@ const SHOPIFY_INCREMENTAL_OVERLAP_HOURS = Number(
 const SHOPIFY_PAYMENTS_INCREMENTAL_OVERLAP_HOURS = Number(
   process.env.SHOPIFY_PAYMENTS_INCREMENTAL_OVERLAP_HOURS ?? 168,
 );
+const SHOPIFY_CASH_INCREMENTAL_OVERLAP_HOURS = Number(
+  process.env.SHOPIFY_CASH_INCREMENTAL_OVERLAP_HOURS ?? 72,
+);
 const SHOPIFY_SYNC_FROM = process.env.SHOPIFY_SYNC_FROM ?? null;
+const SHOPIFY_CASH_SYNC_FROM =
+  process.env.SHOPIFY_CASH_SYNC_FROM ?? process.env.SHOPIFY_SYNC_FROM ?? "2026-01-01T00:00:00Z";
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-04";
 const MOLLIE_SYNC_FROM = process.env.MOLLIE_SYNC_FROM ?? "2026-01-01T00:00:00Z";
 const MOLLIE_INCREMENTAL_OVERLAP_HOURS = Number(
@@ -164,6 +169,51 @@ const shopifyPaymentBalanceTransactionColumns = [
   "synced_at",
 ];
 
+const shopifyCashSessionColumns = [
+  "connection_id",
+  "shop_domain",
+  "shopify_session_id",
+  "location_id",
+  "location_name",
+  "session_start",
+  "session_end",
+  "register_id",
+  "status",
+  "discrepancy",
+  "currency",
+  "opening_balance",
+  "closing_balance",
+  "expected_balance",
+  "expected_closing_balance",
+  "total_cash_sales",
+  "total_cash_refunds",
+  "net_cash_sales",
+  "total_adjustments",
+  "import_source",
+  "import_batch_id",
+  "raw_payload",
+  "synced_at",
+];
+
+const shopifyCashSessionTransactionColumns = [
+  "connection_id",
+  "shop_domain",
+  "shopify_session_id",
+  "shopify_transaction_id",
+  "location_id",
+  "register_id",
+  "order_id",
+  "order_name",
+  "kind",
+  "status",
+  "processed_at",
+  "amount",
+  "currency",
+  "import_source",
+  "raw_payload",
+  "synced_at",
+];
+
 const exactGlTransactionColumns = [
   "source",
   "external_id",
@@ -185,6 +235,7 @@ export async function markSweepRunning(pool) {
     recordSweep(pool, "shopify_webshop", "running", "Sweep gestart...", 0),
     recordSweep(pool, "shopify_winkel", "running", "Sweep gestart...", 0),
     recordSweep(pool, "shopify_payments", "running", "Shopify Payments sync gestart...", 0),
+    recordSweep(pool, "shopify_cash", "running", "Shopify kassasessies sync gestart...", 0),
     recordSweep(pool, "bold_afs", "running", "Sweep gestart...", 0),
     recordSweep(pool, "exact_gl", "running", "Exact sync gestart...", 0),
   ]);
@@ -202,6 +253,10 @@ export async function runShopifySweepFrom(pool, sinceIso, options = {}) {
 
 export async function runShopifyPaymentsSweepFrom(pool, sinceIso = null, options = {}) {
   return sweepShopifyPayments(pool, { ...options, sinceIso, throwOnError: options.throwOnError ?? true });
+}
+
+export async function runShopifyCashSweepFrom(pool, sinceIso = null, options = {}) {
+  return sweepShopifyCash(pool, { ...options, sinceIso, throwOnError: options.throwOnError ?? true });
 }
 
 export async function processShopifyWebhook(pool, rawBody, signature) {
@@ -231,8 +286,10 @@ async function sweepShopify(pool, options = {}) {
 
     let orderTotal = 0;
     let paymentTotal = 0;
+    let cashTotal = 0;
     const orderErrors = [];
     const paymentErrors = [];
+    const cashErrors = [];
 
     for (const conn of result.rows) {
       try {
@@ -254,6 +311,16 @@ async function sweepShopify(pool, options = {}) {
         paymentErrors.push(`${conn.label}: ${message}`);
         console.error("shopify payments conn fail", conn.label, message);
       }
+
+      try {
+        const cashSinceIso = options.cashSinceIso ?? options.sinceIso ?? (await determineShopifyCashSince(pool));
+        const result = await sweepShopifyCashConnection(pool, conn, cashSinceIso);
+        cashTotal += result.sessions + result.transactions;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        cashErrors.push(`${conn.label}: ${message}`);
+        console.error("shopify cash conn fail", conn.label, message);
+      }
     }
 
     const orderStatus = orderErrors.length > 0 ? "error" : "ok";
@@ -270,11 +337,19 @@ async function sweepShopify(pool, options = {}) {
         ? paymentErrors.join(" | ")
         : `Shopify Payments voltooid (${result.rows.length} koppeling(en))`;
     await recordSweep(pool, "shopify_payments", paymentStatus, paymentMessage, paymentTotal);
+
+    const cashStatus = cashErrors.length > 0 ? "error" : "ok";
+    const cashMessage =
+      cashErrors.length > 0
+        ? cashErrors.join(" | ")
+        : `Shopify kassasessies voltooid (${result.rows.length} koppeling(en))`;
+    await recordSweep(pool, "shopify_cash", cashStatus, cashMessage, cashTotal);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await recordSweep(pool, "shopify_webshop", "error", message, 0);
     await recordSweep(pool, "shopify_winkel", "error", message, 0);
     await recordSweep(pool, "shopify_payments", "error", message, 0);
+    await recordSweep(pool, "shopify_cash", "error", message, 0);
   }
 }
 
@@ -306,6 +381,35 @@ async function determineShopifyPaymentsSince(pool) {
   const since = lastOk
     ? new Date(lastOk).getTime() - SHOPIFY_PAYMENTS_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
     : Date.now() - SHOPIFY_INITIAL_LOOKBACK_DAYS * 24 * 3600 * 1000;
+
+  return new Date(Math.max(since, safeLowerBound)).toISOString();
+}
+
+async function determineShopifyCashSince(pool) {
+  const lowerBound = new Date(SHOPIFY_CASH_SYNC_FROM).getTime();
+  const safeLowerBound = Number.isFinite(lowerBound) ? lowerBound : Date.parse("2026-01-01T00:00:00Z");
+  const imported = await pool.query(
+    "SELECT EXISTS (SELECT 1 FROM public.shopify_cash_session_transactions LIMIT 1) AS has_rows",
+  );
+
+  if (!imported.rows[0]?.has_rows) {
+    return new Date(safeLowerBound).toISOString();
+  }
+
+  const result = await pool.query(
+    `
+      SELECT last_sweep_at
+      FROM public.sync_state
+      WHERE channel = 'shopify_cash'
+        AND last_sweep_status = 'ok'
+        AND last_sweep_at IS NOT NULL
+      LIMIT 1
+    `,
+  );
+  const lastOk = result.rows[0]?.last_sweep_at;
+  const since = lastOk
+    ? new Date(lastOk).getTime() - SHOPIFY_CASH_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
+    : safeLowerBound;
 
   return new Date(Math.max(since, safeLowerBound)).toISOString();
 }
@@ -417,6 +521,295 @@ async function sweepShopifyPaymentsConnection(pool, conn, sinceIso) {
   }
 
   return { payouts: payouts.length, balanceTransactions: balanceTransactionCount };
+}
+
+async function sweepShopifyCash(pool, options = {}) {
+  try {
+    const result = await pool.query(
+      `
+        SELECT id, shop_domain, client_id, access_token, label
+        FROM public.shopify_connections
+        WHERE active = true
+        ORDER BY created_at
+      `,
+    );
+    const sinceIso = options.sinceIso ?? (await determineShopifyCashSince(pool));
+    let totalSessions = 0;
+    let totalTransactions = 0;
+    const errors = [];
+
+    await recordSweep(pool, "shopify_cash", "running", `Shopify kassasessies sync vanaf ${sinceIso}`, 0);
+
+    for (const conn of result.rows) {
+      try {
+        const counts = await sweepShopifyCashConnection(pool, conn, sinceIso);
+        totalSessions += counts.sessions;
+        totalTransactions += counts.transactions;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${conn.label}: ${message}`);
+        console.error("shopify cash conn fail", conn.label, message);
+      }
+    }
+
+    if (errors.length > 0) {
+      const message = errors.join(" | ");
+      await recordSweep(pool, "shopify_cash", "error", message, totalSessions + totalTransactions);
+      if (options.throwOnError) throw new Error(message);
+    } else {
+      await recordSweep(
+        pool,
+        "shopify_cash",
+        "ok",
+        `Shopify kassasessies voltooid: ${totalSessions} sessies, ${totalTransactions} cash transacties`,
+        totalSessions + totalTransactions,
+      );
+    }
+
+    return totalSessions + totalTransactions;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordSweep(pool, "shopify_cash", "error", message, 0);
+    if (options.throwOnError) throw error;
+    return 0;
+  }
+}
+
+async function sweepShopifyCashConnection(pool, conn, sinceIso) {
+  const domain = normalizeShopDomain(conn.shop_domain);
+  if (!/^[a-z0-9-]+\.myshopify\.com$/.test(domain)) {
+    throw new Error(`Ongeldig shop-domein "${conn.shop_domain}". Verwacht: <winkel>.myshopify.com`);
+  }
+
+  const accessToken = await getShopifyAccessToken(domain, conn);
+  const sessions = mergeShopifyCashSessions([
+    ...(await fetchShopifyCashTrackingSessions(domain, accessToken, `opening_time:>=${sinceIso}`, "OPENING_TIME_DESC")),
+    ...(await fetchShopifyCashTrackingSessions(domain, accessToken, `closing_time:>=${sinceIso}`, "CLOSING_TIME_DESC")),
+  ]);
+
+  let transactionCount = 0;
+  for (const session of sessions) {
+    await upsertShopifyCashSession(pool, conn, domain, session);
+    const transactions = await fetchAllShopifyCashTransactions(domain, accessToken, session);
+    transactionCount += transactions.length;
+    await upsertShopifyCashTransactions(pool, conn, domain, session, transactions);
+  }
+
+  return { sessions: sessions.length, transactions: transactionCount };
+}
+
+async function fetchShopifyCashTrackingSessions(domain, accessToken, search, sortKey) {
+  const query = `
+    query DailyFlowersCashTrackingSessions($cursor: String, $search: String!, $sortKey: CashTrackingSessionsSortKeys!) {
+      cashTrackingSessions(first: 100, after: $cursor, query: $search, sortKey: $sortKey) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          registerName
+          openingTime
+          closingTime
+          cashTrackingEnabled
+          openingBalance { amount currencyCode }
+          closingBalance { amount currencyCode }
+          expectedBalance { amount currencyCode }
+          expectedClosingBalance { amount currencyCode }
+          totalCashSales { amount currencyCode }
+          totalCashRefunds { amount currencyCode }
+          netCashSales { amount currencyCode }
+          totalAdjustments { amount currencyCode }
+          totalDiscrepancy { amount currencyCode }
+          location { id name legacyResourceId }
+          cashTransactions(first: 100) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              kind
+              status
+              processedAt
+              amountSet { shopMoney { amount currencyCode } }
+              order { id legacyResourceId name }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  let cursor = null;
+  const sessions = [];
+
+  while (true) {
+    const payload = await shopifyGraphql(domain, accessToken, query, {
+      cursor,
+      search,
+      sortKey,
+    });
+    const connection = payload.data?.cashTrackingSessions;
+    sessions.push(...(connection?.nodes ?? []));
+    if (!connection?.pageInfo?.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+
+  return sessions;
+}
+
+async function fetchAllShopifyCashTransactions(domain, accessToken, session) {
+  const firstPage = session.cashTransactions?.nodes ?? [];
+  const pageInfo = session.cashTransactions?.pageInfo;
+  if (!pageInfo?.hasNextPage) return firstPage;
+
+  const query = `
+    query DailyFlowersCashTrackingSessionTransactions($id: ID!, $cursor: String) {
+      cashTrackingSession(id: $id) {
+        cashTransactions(first: 100, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            kind
+            status
+            processedAt
+            amountSet { shopMoney { amount currencyCode } }
+            order { id legacyResourceId name }
+          }
+        }
+      }
+    }
+  `;
+
+  let cursor = pageInfo.endCursor;
+  const transactions = [...firstPage];
+  while (cursor) {
+    const payload = await shopifyGraphql(domain, accessToken, query, {
+      id: session.id,
+      cursor,
+    });
+    const connection = payload.data?.cashTrackingSession?.cashTransactions;
+    transactions.push(...(connection?.nodes ?? []));
+    cursor = connection?.pageInfo?.hasNextPage ? connection.pageInfo.endCursor : null;
+  }
+
+  return transactions;
+}
+
+async function shopifyGraphql(domain, accessToken, query, variables) {
+  const response = await fetchWithRetry(
+    `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "x-shopify-access-token": accessToken,
+      },
+      body: JSON.stringify({ query, variables }),
+    },
+    3,
+    30000,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Shopify GraphQL ${response.status}: ${shorten(await response.text())}`);
+  }
+
+  const payload = await response.json();
+  if (payload.errors?.length) {
+    throw new Error(`Shopify GraphQL: ${shorten(JSON.stringify(payload.errors))}`);
+  }
+
+  return payload;
+}
+
+function mergeShopifyCashSessions(sessions) {
+  const byId = new Map();
+  for (const session of sessions) {
+    if (!session?.id) continue;
+    byId.set(session.id, { ...(byId.get(session.id) ?? {}), ...session });
+  }
+  return [...byId.values()];
+}
+
+async function upsertShopifyCashSession(pool, conn, domain, session) {
+  const locationId = cleanText(session.location?.legacyResourceId) || gidTail(session.location?.id);
+  const registerId = cleanText(session.registerName) || "unknown";
+  const openingTime = session.openingTime ?? null;
+  if (!locationId || !openingTime) return;
+
+  await upsertRows(
+    pool,
+    "public.shopify_cash_sessions",
+    shopifyCashSessionColumns,
+    [
+      {
+        connection_id: conn.id,
+        shop_domain: domain,
+        shopify_session_id: gidTail(session.id),
+        location_id: locationId,
+        location_name: cleanText(session.location?.name) || null,
+        session_start: openingTime,
+        session_end: session.closingTime ?? null,
+        register_id: registerId,
+        status: session.closingTime ? "closed" : "open",
+        discrepancy: moneyAmount(session.totalDiscrepancy) ?? 0,
+        currency: sessionCurrency(session),
+        opening_balance: moneyAmount(session.openingBalance),
+        closing_balance: moneyAmount(session.closingBalance),
+        expected_balance: moneyAmount(session.expectedBalance),
+        expected_closing_balance: moneyAmount(session.expectedClosingBalance),
+        total_cash_sales: moneyAmount(session.totalCashSales),
+        total_cash_refunds: moneyAmount(session.totalCashRefunds),
+        net_cash_sales: moneyAmount(session.netCashSales),
+        total_adjustments: moneyAmount(session.totalAdjustments),
+        import_source: "shopify_cash_api",
+        import_batch_id: null,
+        raw_payload: session,
+        synced_at: new Date().toISOString(),
+      },
+    ],
+    ["location_id", "register_id", "session_start"],
+  );
+}
+
+async function upsertShopifyCashTransactions(pool, conn, domain, session, transactions) {
+  const locationId = cleanText(session.location?.legacyResourceId) || gidTail(session.location?.id);
+  const registerId = cleanText(session.registerName) || "unknown";
+  const shopifySessionId = gidTail(session.id);
+  const rows = transactions
+    .map((tx) => ({
+      connection_id: conn.id,
+      shop_domain: domain,
+      shopify_session_id: shopifySessionId,
+      shopify_transaction_id: gidTail(tx.id),
+      location_id: locationId,
+      register_id: registerId,
+      order_id: cleanText(tx.order?.legacyResourceId) || gidTail(tx.order?.id) || null,
+      order_name: cleanText(tx.order?.name) || null,
+      kind: cleanText(tx.kind) || null,
+      status: cleanText(tx.status) || null,
+      processed_at: tx.processedAt ?? null,
+      amount: moneyAmount(tx.amountSet) ?? 0,
+      currency: moneyCurrency(tx.amountSet),
+      import_source: "shopify_cash_api",
+      raw_payload: tx,
+      synced_at: new Date().toISOString(),
+    }))
+    .filter((row) => row.shopify_transaction_id);
+
+  await upsertRows(
+    pool,
+    "public.shopify_cash_session_transactions",
+    shopifyCashSessionTransactionColumns,
+    rows,
+    ["shop_domain", "shopify_transaction_id"],
+  );
 }
 
 async function getShopifyAccessToken(domain, conn) {
@@ -2030,7 +2423,24 @@ function nullableMoney(value) {
 }
 
 function moneyAmount(moneyBag) {
-  return Number(moneyBag?.shopMoney?.amount ?? 0);
+  const value = moneyBag?.shopMoney?.amount ?? moneyBag?.amount;
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? +number.toFixed(2) : null;
+}
+
+function moneyCurrency(moneyBag) {
+  return cleanText(moneyBag?.shopMoney?.currencyCode ?? moneyBag?.currencyCode) || null;
+}
+
+function sessionCurrency(session) {
+  return (
+    moneyCurrency(session?.netCashSales) ??
+    moneyCurrency(session?.totalCashSales) ??
+    moneyCurrency(session?.openingBalance) ??
+    moneyCurrency(session?.expectedBalance) ??
+    null
+  );
 }
 
 function pick(row, keys) {
