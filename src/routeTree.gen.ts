@@ -18,6 +18,7 @@ import { Route as AuthenticatedMollieTransactiesRouteImport } from './routes/_au
 import { Route as AuthenticatedInstellingenRouteImport } from './routes/_authenticated/instellingen'
 import { Route as AuthenticatedImportCsvRouteImport } from './routes/_authenticated/import-csv'
 import { Route as AuthenticatedGrootboekRouteImport } from './routes/_authenticated/grootboek'
+import { Route as AuthenticatedGebruikersRouteImport } from './routes/_authenticated/gebruikers'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedBudgettenRouteImport } from './routes/_authenticated/budgetten'
 import { Route as AuthenticatedBtwExportRouteImport } from './routes/_authenticated/btw-export'
@@ -72,6 +73,11 @@ const AuthenticatedGrootboekRoute = AuthenticatedGrootboekRouteImport.update({
   path: '/grootboek',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedGebruikersRoute = AuthenticatedGebruikersRouteImport.update({
+  id: '/gebruikers',
+  path: '/gebruikers',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/btw-export': typeof AuthenticatedBtwExportRoute
   '/budgetten': typeof AuthenticatedBudgettenRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/gebruikers': typeof AuthenticatedGebruikersRoute
   '/grootboek': typeof AuthenticatedGrootboekRoute
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByTo {
   '/btw-export': typeof AuthenticatedBtwExportRoute
   '/budgetten': typeof AuthenticatedBudgettenRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/gebruikers': typeof AuthenticatedGebruikersRoute
   '/grootboek': typeof AuthenticatedGrootboekRoute
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
@@ -139,6 +147,7 @@ export interface FileRoutesById {
   '/_authenticated/btw-export': typeof AuthenticatedBtwExportRoute
   '/_authenticated/budgetten': typeof AuthenticatedBudgettenRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/gebruikers': typeof AuthenticatedGebruikersRoute
   '/_authenticated/grootboek': typeof AuthenticatedGrootboekRoute
   '/_authenticated/import-csv': typeof AuthenticatedImportCsvRoute
   '/_authenticated/instellingen': typeof AuthenticatedInstellingenRoute
@@ -156,6 +165,7 @@ export interface FileRouteTypes {
     | '/btw-export'
     | '/budgetten'
     | '/dashboard'
+    | '/gebruikers'
     | '/grootboek'
     | '/import-csv'
     | '/instellingen'
@@ -171,6 +181,7 @@ export interface FileRouteTypes {
     | '/btw-export'
     | '/budgetten'
     | '/dashboard'
+    | '/gebruikers'
     | '/grootboek'
     | '/import-csv'
     | '/instellingen'
@@ -187,6 +198,7 @@ export interface FileRouteTypes {
     | '/_authenticated/btw-export'
     | '/_authenticated/budgetten'
     | '/_authenticated/dashboard'
+    | '/_authenticated/gebruikers'
     | '/_authenticated/grootboek'
     | '/_authenticated/import-csv'
     | '/_authenticated/instellingen'
@@ -267,6 +279,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedGrootboekRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/gebruikers': {
+      id: '/_authenticated/gebruikers'
+      path: '/gebruikers'
+      fullPath: '/gebruikers'
+      preLoaderRoute: typeof AuthenticatedGebruikersRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
@@ -324,6 +343,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedBtwExportRoute: typeof AuthenticatedBtwExportRoute
   AuthenticatedBudgettenRoute: typeof AuthenticatedBudgettenRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedGebruikersRoute: typeof AuthenticatedGebruikersRoute
   AuthenticatedGrootboekRoute: typeof AuthenticatedGrootboekRoute
   AuthenticatedImportCsvRoute: typeof AuthenticatedImportCsvRoute
   AuthenticatedInstellingenRoute: typeof AuthenticatedInstellingenRoute
@@ -337,6 +357,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedBtwExportRoute: AuthenticatedBtwExportRoute,
   AuthenticatedBudgettenRoute: AuthenticatedBudgettenRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedGebruikersRoute: AuthenticatedGebruikersRoute,
   AuthenticatedGrootboekRoute: AuthenticatedGrootboekRoute,
   AuthenticatedImportCsvRoute: AuthenticatedImportCsvRoute,
   AuthenticatedInstellingenRoute: AuthenticatedInstellingenRoute,

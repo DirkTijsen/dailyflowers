@@ -201,6 +201,11 @@ const resources = {
     ],
     writable: true,
   },
+  users: {
+    table: "(SELECT id, email, created_at FROM local_auth.users) AS users",
+    columns: ["id", "email", "created_at"],
+    writable: true,
+  },
   vw_bold_mollie_monthly_reconciliation: {
     table: "public.vw_bold_mollie_monthly_reconciliation",
     columns: [
@@ -522,6 +527,11 @@ async function handleRest(req, res, url) {
     return;
   }
 
+  if (resourceName === "users") {
+    await handleUsersRest(req, res, url, resource);
+    return;
+  }
+
   if (req.method === "GET" || req.method === "HEAD") {
     await selectRows(req, res, url, resource);
     return;
@@ -548,6 +558,118 @@ async function handleRest(req, res, url) {
   }
 
   sendJson(res, 405, { message: "Method not allowed" });
+}
+
+const userWritableResource = {
+  table: "local_auth.users",
+  columns: ["id", "email", "password", "created_at"],
+  writable: true,
+};
+
+async function handleUsersRest(req, res, url, publicResource) {
+  if (req.method === "GET" || req.method === "HEAD") {
+    await selectRows(req, res, url, publicResource);
+    return;
+  }
+
+  if (req.method === "POST") {
+    await insertUsers(req, res);
+    return;
+  }
+
+  if (req.method === "PATCH") {
+    await updateUsers(req, res, url);
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    await deleteUsers(res, url);
+    return;
+  }
+
+  sendJson(res, 405, { message: "Method not allowed" });
+}
+
+async function insertUsers(req, res) {
+  const body = await readJson(req);
+  const rows = Array.isArray(body) ? body : [body];
+  const returned = [];
+
+  for (const row of rows) {
+    const email = normalizeUserEmail(row?.email);
+    const password = String(row?.password ?? "");
+    if (!email || !password) {
+      sendJson(res, 400, { message: "E-mail en wachtwoord zijn verplicht" });
+      return;
+    }
+
+    const result = await pool.query(
+      `INSERT INTO local_auth.users (email, password)
+       VALUES ($1, $2)
+       RETURNING id, email, created_at`,
+      [email, hashPassword(password)],
+    );
+    returned.push(...result.rows);
+  }
+
+  sendJson(res, 201, returned);
+}
+
+async function updateUsers(req, res, url) {
+  const body = await readJson(req);
+  const values = [];
+  const setters = [];
+
+  if (Object.prototype.hasOwnProperty.call(body ?? {}, "email")) {
+    const email = normalizeUserEmail(body.email);
+    if (!email) {
+      sendJson(res, 400, { message: "E-mail is verplicht" });
+      return;
+    }
+    values.push(email);
+    setters.push(`email = $${values.length}`);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body ?? {}, "password")) {
+    const password = String(body.password ?? "");
+    if (!password) {
+      sendJson(res, 400, { message: "Wachtwoord is verplicht" });
+      return;
+    }
+    values.push(hashPassword(password));
+    setters.push(`password = $${values.length}`);
+  }
+
+  if (setters.length === 0) {
+    sendJson(res, 400, { message: "Geen wijzigingen opgegeven" });
+    return;
+  }
+
+  const where = buildWhere(userWritableResource, url.searchParams, values);
+  if (!where.clause) {
+    sendJson(res, 400, { message: "Filter verplicht voor gebruikerswijziging" });
+    return;
+  }
+
+  const result = await pool.query(
+    `UPDATE local_auth.users SET ${setters.join(", ")}${where.clause} RETURNING id, email, created_at`,
+    where.values,
+  );
+  sendJson(res, 200, result.rows);
+}
+
+async function deleteUsers(res, url) {
+  const where = buildWhere(userWritableResource, url.searchParams);
+  if (!where.clause) {
+    sendJson(res, 400, { message: "Filter verplicht voor gebruikersverwijdering" });
+    return;
+  }
+
+  const result = await pool.query(
+    `DELETE FROM local_auth.users${where.clause} RETURNING id, email, created_at`,
+    where.values,
+  );
+  sendJson(res, 200, result.rows);
 }
 
 async function handleFunction(req, res, url) {
@@ -940,6 +1062,17 @@ async function findLocalUser(email, password) {
   const row = result.rows[0];
   if (!row || !verifyPassword(password, String(row.password ?? ""))) return null;
   return { id: row.id, email: row.email, created_at: row.created_at };
+}
+
+function normalizeUserEmail(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const iterations = 100000;
+  const hash = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256").toString("hex");
+  return `pbkdf2_sha256$${iterations}$${salt}$${hash}`;
 }
 
 function verifyPassword(password, stored) {

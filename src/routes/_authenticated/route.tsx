@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
-  LayoutDashboard, ListOrdered, Target, FileSpreadsheet, Settings, LogOut, Flower2, Upload, CreditCard, Scale, BookOpen, BarChart3,
+  LayoutDashboard, ListOrdered, Target, FileSpreadsheet, Settings, LogOut, Flower2, Upload, CreditCard, Scale, BookOpen, BarChart3, Users,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -46,6 +46,7 @@ const beheerNav = [
   { to: "/bold-afs-aansluiting", label: "Bold <> Mollie aansluiting", icon: Scale },
   { to: "/grootboek", label: "Grootboek", icon: BookOpen },
   { to: "/import-csv", label: "CSV import", icon: Upload },
+  { to: "/gebruikers", label: "Gebruikers", icon: Users },
 ] as const;
 
 function AuthedLayout() {
