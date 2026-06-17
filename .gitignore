@@ -24,6 +24,7 @@ dist-ssr
 # Local/imported business data
 exports/
 .tmp_shopify_orders/
+.tmp_migration/
 
 # Wrangler / Cloudflare
 .wrangler/
