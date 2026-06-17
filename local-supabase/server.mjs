@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -1175,14 +1176,23 @@ async function serveStatic(req, res, url) {
     return;
   }
 
+  const staticOnly = isStaticAssetPath(url.pathname);
   const filePath = resolveStaticPath(url.pathname);
   if (!filePath) {
+    if (staticOnly) {
+      sendJson(res, 404, { message: "Static asset not found" });
+      return;
+    }
     await serveBuiltApp(req, res, url);
     return;
   }
 
   const stat = await fsp.stat(filePath).catch(() => null);
   if (!stat?.isFile()) {
+    if (staticOnly) {
+      sendJson(res, 404, { message: "Static asset not found" });
+      return;
+    }
     await serveBuiltApp(req, res, url);
     return;
   }
@@ -1213,6 +1223,12 @@ function resolveStaticPath(pathname) {
 
   const indexPath = path.join(staticRoot, "index.html");
   return fs.existsSync(indexPath) ? indexPath : null;
+}
+
+function isStaticAssetPath(pathname) {
+  const cleanPath = pathname.split("?")[0] ?? "";
+  if (cleanPath.startsWith("/assets/")) return true;
+  return Boolean(path.extname(cleanPath));
 }
 
 async function serveBuiltApp(req, res, url) {
