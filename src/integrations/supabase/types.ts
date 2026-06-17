@@ -88,6 +88,57 @@ export type Database = {
           },
         ]
       }
+      pl_budget_lines: {
+        Row: {
+          amount: number
+          budget_year: number
+          created_at: string
+          id: string
+          kind: string
+          line_key: string
+          line_label: string
+          period: string
+          section: string
+          sort_order: number
+          source_label: string
+          source_sheet: string
+          source_workbook: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          budget_year: number
+          created_at?: string
+          id?: string
+          kind?: string
+          line_key: string
+          line_label: string
+          period: string
+          section: string
+          sort_order?: number
+          source_label: string
+          source_sheet: string
+          source_workbook: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          budget_year?: number
+          created_at?: string
+          id?: string
+          kind?: string
+          line_key?: string
+          line_label?: string
+          period?: string
+          section?: string
+          sort_order?: number
+          source_label?: string
+          source_sheet?: string
+          source_workbook?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       machines: {
         Row: {
           active: boolean

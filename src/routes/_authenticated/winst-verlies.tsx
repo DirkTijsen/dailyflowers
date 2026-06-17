@@ -13,7 +13,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { formatDateNL, formatDateTimeNL, formatEUR } from "@/lib/format";
 import {
@@ -63,6 +69,19 @@ type GlRevenueSourceRow = {
   net_total: number;
 };
 
+type PlBudgetLine = {
+  period: string;
+  section: string;
+  line_key: string;
+  line_label: string;
+  kind: "revenue" | "cost";
+  amount: number | string;
+  source_workbook: string;
+  source_sheet: string;
+  source_label: string;
+  sort_order: number;
+};
+
 type DetailBase = {
   source: "gl" | "sales";
   label: string;
@@ -87,6 +106,9 @@ type PlRow = {
   valueFormat?: "currency" | "percentage";
   values: Record<string, number>;
   ytd: number;
+  budgetValues?: Record<string, number>;
+  budgetYtd?: number;
+  budgetOnly?: boolean;
   detailByPeriod?: Record<string, DetailBase>;
 };
 
@@ -156,6 +178,23 @@ type ShopifyOrderDetailRow = {
   raw_payload: Record<string, unknown> | null;
 };
 
+type SupabaseError = { message: string };
+type SupabaseResult<T> = { data: T[] | null; error: SupabaseError | null };
+type SupabaseQuery<T> = PromiseLike<SupabaseResult<T>> & {
+  select(columns: string): SupabaseQuery<T>;
+  order(column: string, options?: Record<string, unknown>): SupabaseQuery<T>;
+  in(column: string, values: unknown[]): SupabaseQuery<T>;
+  gte(column: string, value: unknown): SupabaseQuery<T>;
+  lt(column: string, value: unknown): SupabaseQuery<T>;
+  eq(column: string, value: unknown): SupabaseQuery<T>;
+  limit(count: number): SupabaseQuery<T>;
+  upsert(values: unknown, options?: Record<string, unknown>): PromiseLike<SupabaseResult<T>>;
+};
+
+const db = supabase as unknown as {
+  from<T = unknown>(table: string): SupabaseQuery<T>;
+};
+
 function ProfitLossPage() {
   const qc = useQueryClient();
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -167,8 +206,8 @@ function ProfitLossPage() {
   const accountsQ = useQuery({
     queryKey: ["gl-accounts"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("gl_accounts")
+      const { data, error } = await db
+        .from<GlAccount>("gl_accounts")
         .select("*")
         .order("sort_order")
         .order("account_code");
@@ -180,8 +219,8 @@ function ProfitLossPage() {
   const glQ = useQuery({
     queryKey: ["wv-gl-monthly", months],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("vw_gl_monthly_account")
+      const { data, error } = await db
+        .from<GlPeriodRow>("vw_gl_monthly_account")
         .select("*")
         .in("period", months);
       if (error) throw error;
@@ -193,8 +232,8 @@ function ProfitLossPage() {
   const salesQ = useQuery({
     queryKey: ["wv-sales-monthly", months],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("vw_monthly_revenue_actuals")
+      const { data, error } = await db
+        .from<SalesPeriodRow>("vw_monthly_revenue_actuals")
         .select("*")
         .in("period", months);
       if (error) throw error;
@@ -206,12 +245,29 @@ function ProfitLossPage() {
   const glRevenueSourceQ = useQuery({
     queryKey: ["wv-gl-revenue-source-monthly", months],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("vw_gl_revenue_source_monthly")
+      const { data, error } = await db
+        .from<GlRevenueSourceRow>("vw_gl_revenue_source_monthly")
         .select("*")
         .in("period", months);
       if (error) throw error;
       return (data ?? []) as GlRevenueSourceRow[];
+    },
+    enabled: months.length > 0,
+  });
+
+  const budgetsQ = useQuery({
+    queryKey: ["wv-pl-budget-lines", months],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<PlBudgetLine>("pl_budget_lines")
+        .select(
+          "period,section,line_key,line_label,kind,amount,source_workbook,source_sheet,source_label,sort_order",
+        )
+        .in("period", months)
+        .order("sort_order")
+        .order("line_label");
+      if (error) throw error;
+      return (data ?? []) as PlBudgetLine[];
     },
     enabled: months.length > 0,
   });
@@ -223,9 +279,10 @@ function ProfitLossPage() {
         glRows: glQ.data ?? [],
         salesRows: salesQ.data ?? [],
         glRevenueSourceRows: glRevenueSourceQ.data ?? [],
+        budgetLines: budgetsQ.data ?? [],
         accounts: accountsQ.data ?? [],
       }),
-    [accountsQ.data, glQ.data, glRevenueSourceQ.data, months, salesQ.data],
+    [accountsQ.data, budgetsQ.data, glQ.data, glRevenueSourceQ.data, months, salesQ.data],
   );
 
   function openDetail(row: PlRow, period: string) {
@@ -266,7 +323,7 @@ function ProfitLossPage() {
 
       const chunk = 500;
       for (let i = 0; i < rows.length; i += chunk) {
-        const { error } = await (supabase as any)
+        const { error } = await db
           .from("gl_transactions")
           .upsert(rows.slice(i, i + chunk), { onConflict: "source,external_id" });
         if (error) throw error;
@@ -325,7 +382,10 @@ function ProfitLossPage() {
             <RefreshCw className={`mr-2 h-4 w-4 ${exactSyncing ? "animate-spin" : ""}`} />
             Exact sync
           </Button>
-          <Button variant="outline" onClick={() => downloadTransactionTemplate(accountsQ.data ?? [])}>
+          <Button
+            variant="outline"
+            onClick={() => downloadTransactionTemplate(accountsQ.data ?? [])}
+          >
             <Download className="mr-2 h-4 w-4" />
             Transactie-template
           </Button>
@@ -333,7 +393,12 @@ function ProfitLossPage() {
             <label>
               <Upload className="mr-2 h-4 w-4" />
               W&V-transacties uploaden
-              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={uploadTransactions} />
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={uploadTransactions}
+              />
             </label>
           </Button>
         </div>
@@ -343,17 +408,29 @@ function ProfitLossPage() {
         <CardContent className="grid gap-3 pt-6 md:grid-cols-[130px_130px] items-end">
           <Field label="Jaar">
             <Select value={year} onValueChange={setYear}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
-                {yearOptions().map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+                {yearOptions().map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </Field>
           <Field label="T/m kwartaal">
             <Select value={toQuarter} onValueChange={setToQuarter}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
-                {[1, 2, 3, 4].map((quarter) => <SelectItem key={quarter} value={`Q${quarter}`}>Q{quarter}</SelectItem>)}
+                {[1, 2, 3, 4].map((quarter) => (
+                  <SelectItem key={quarter} value={`Q${quarter}`}>
+                    Q{quarter}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </Field>
@@ -364,51 +441,94 @@ function ProfitLossPage() {
         <CardHeader>
           <CardTitle className="text-base">Winst en verlies per maand</CardTitle>
           <CardDescription>
-            Klik op een maandbedrag om de onderliggende grootboekregels of verkooptransacties te zien.
+            Actuals naast het 2026-budget uit de prognose. Klik op een actual om de onderliggende
+            grootboekregels of verkooptransacties te zien.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] text-sm">
+            <table className="w-full min-w-[1680px] text-sm">
               <thead className="bg-muted/50 text-left">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Rubriek</th>
-                  <th className="px-3 py-2 font-medium">Regel</th>
+                  <th className="px-3 py-2 font-medium" rowSpan={2}>
+                    Rubriek
+                  </th>
+                  <th className="px-3 py-2 font-medium" rowSpan={2}>
+                    Regel
+                  </th>
                   {months.map((period) => (
-                    <th key={period} className="px-3 py-2 text-right font-medium">
+                    <th
+                      key={period}
+                      className="border-l px-3 py-2 text-center font-medium"
+                      colSpan={3}
+                    >
                       <span className="block">{monthShortLabel(period)}</span>
-                      <span className="block text-[11px] font-normal text-muted-foreground">{monthToQuarterKey(period).replace(`${year}-`, "")}</span>
+                      <span className="block text-[11px] font-normal text-muted-foreground">
+                        {monthToQuarterKey(period).replace(`${year}-`, "")}
+                      </span>
                     </th>
                   ))}
-                  <th className="px-3 py-2 text-right font-medium">YTD</th>
+                  <th className="border-l px-3 py-2 text-center font-medium" colSpan={3}>
+                    YTD
+                  </th>
+                </tr>
+                <tr>
+                  {months.map((period) => (
+                    <BudgetHeaderCells key={`${period}-headers`} />
+                  ))}
+                  <BudgetHeaderCells />
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.key} className={row.kind === "subtotal" || row.kind === "result" ? "border-t bg-muted/20" : "border-t hover:bg-muted/30"}>
+                  <tr
+                    key={row.key}
+                    className={
+                      row.kind === "subtotal" || row.kind === "result"
+                        ? "border-t bg-muted/20"
+                        : "border-t hover:bg-muted/30"
+                    }
+                  >
                     <td className="px-3 py-2">
-                      {row.level === 0 ? <Badge variant="outline">{sectionLabel(row.section)}</Badge> : null}
+                      {row.level === 0 ? (
+                        <Badge variant="outline">{sectionLabel(row.section)}</Badge>
+                      ) : null}
                     </td>
-                    <td className={row.level === 0 ? "px-3 py-2 font-semibold" : "px-3 py-2 pl-8"}>{row.label}</td>
+                    <td className={row.level === 0 ? "px-3 py-2 font-semibold" : "px-3 py-2 pl-8"}>
+                      {row.label}
+                    </td>
                     {months.map((period) => {
                       const value = row.values[period] ?? 0;
-                      const canOpen = Boolean(row.detailByPeriod?.[period]) && Math.abs(value) >= 0.005;
+                      const budget = row.budgetValues?.[period];
+                      const canOpen =
+                        Boolean(row.detailByPeriod?.[period]) && Math.abs(value) >= 0.005;
                       return (
-                        <AmountCell
+                        <BudgetAmountCells
                           key={`${row.key}-${period}`}
                           value={value}
+                          budget={budget}
+                          budgetOnly={row.budgetOnly}
                           valueFormat={row.valueFormat}
                           strong={row.kind !== "normal"}
                           onClick={canOpen ? () => openDetail(row, period) : undefined}
                         />
                       );
                     })}
-                    <AmountCell value={row.ytd} valueFormat={row.valueFormat} strong />
+                    <BudgetAmountCells
+                      value={row.ytd}
+                      budget={row.budgetYtd}
+                      budgetOnly={row.budgetOnly}
+                      valueFormat={row.valueFormat}
+                      strong
+                    />
                   </tr>
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={months.length + 3} className="px-3 py-8 text-center text-muted-foreground">
+                    <td
+                      colSpan={months.length * 3 + 5}
+                      className="px-3 py-8 text-center text-muted-foreground"
+                    >
                       Geen W&V-data voor deze selectie.
                     </td>
                   </tr>
@@ -423,7 +543,8 @@ function ProfitLossPage() {
         <CardHeader>
           <CardTitle className="text-base">Omzetaansluiting GL versus eigen data</CardTitle>
           <CardDescription>
-            Exact Mollie-dagboek wordt aangesloten op de AFS-transacties in de app. De resterende Exact-omzet vormt de Shopify-delta.
+            Exact Mollie-dagboek wordt aangesloten op de AFS-transacties in de app. De resterende
+            Exact-omzet vormt de Shopify-delta.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -446,15 +567,33 @@ function ProfitLossPage() {
                 {reconciliation.map((row) => (
                   <tr key={row.key} className="border-t hover:bg-muted/30">
                     <td className="px-3 py-2 tabular-nums">{monthLabel(row.period)}</td>
-                    <AmountCell value={row.gl} onClick={() => openReconciliationDetail(row.glDetail, row.period, row.gl)} />
-                    <AmountCell value={row.own} onClick={() => openReconciliationDetail(row.ownDetail, row.period, row.own)} />
+                    <AmountCell
+                      value={row.gl}
+                      onClick={() => openReconciliationDetail(row.glDetail, row.period, row.gl)}
+                    />
+                    <AmountCell
+                      value={row.own}
+                      onClick={() => openReconciliationDetail(row.ownDetail, row.period, row.own)}
+                    />
                     <AmountCell value={row.diff} toneBySign />
-                    <AmountCell value={row.glMollie} onClick={() => openReconciliationDetail(row.glMollieDetail, row.period, row.glMollie)} />
-                    <AmountCell value={row.ownMollie} onClick={() => openReconciliationDetail(row.ownMollieDetail, row.period, row.ownMollie)} />
+                    <AmountCell
+                      value={row.glMollie}
+                      onClick={() =>
+                        openReconciliationDetail(row.glMollieDetail, row.period, row.glMollie)
+                      }
+                    />
+                    <AmountCell
+                      value={row.ownMollie}
+                      onClick={() =>
+                        openReconciliationDetail(row.ownMollieDetail, row.period, row.ownMollie)
+                      }
+                    />
                     <AmountCell value={row.mollieDiff} />
                     <AmountCell value={row.shopifyDiff} toneBySign />
                     <td className="px-3 py-2">
-                      <Badge variant={row.source === "Eigen data" ? "secondary" : "outline"}>{row.source}</Badge>
+                      <Badge variant={row.source === "Eigen data" ? "secondary" : "outline"}>
+                        {row.source}
+                      </Badge>
                     </td>
                   </tr>
                 ))}
@@ -474,12 +613,14 @@ function buildProfitLoss({
   glRows,
   salesRows,
   glRevenueSourceRows,
+  budgetLines,
   accounts,
 }: {
   months: string[];
   glRows: GlPeriodRow[];
   salesRows: SalesPeriodRow[];
   glRevenueSourceRows: GlRevenueSourceRow[];
+  budgetLines: PlBudgetLine[];
   accounts: GlAccount[];
 }) {
   const accountsByCode = new Map(accounts.map((account) => [account.account_code, account]));
@@ -490,6 +631,9 @@ function buildProfitLoss({
   const glRevenueBySource = new Map<string, number>();
   const rows: PlRow[] = [];
   const reconciliation: ReconciliationRow[] = [];
+  const budgetByLine = budgetLinesByKey(budgetLines, months);
+  const budgetBySection = budgetLinesBySection(budgetLines, months);
+  const budgetRowsBySection = budgetOnlyRowsBySection(budgetLines, months);
 
   for (const row of glRows) {
     const account = accountsByCode.get(row.account_code);
@@ -514,21 +658,38 @@ function buildProfitLoss({
   }
 
   const revenueTotal = blankValues(months);
+  const revenueBudgetTotal = blankValues(months);
   const revenueTotalDetails: Record<string, DetailBase> = {};
   for (const channel of CHANNELS) {
     const values = blankValues(months);
+    const budgetValues = budgetByLine.get(`revenue-${channel}`) ?? blankValues(months);
     const detailByPeriod: Record<string, DetailBase> = {};
     for (const period of months) {
       const own = ownRevenue.get(`${period}|${channel}`) ?? 0;
       values[period] = own;
       revenueTotal[period] += values[period];
+      revenueBudgetTotal[period] += budgetValues[period] ?? 0;
       detailByPeriod[period] = {
         source: "sales",
         label: `${channelLabel(channel)} verkooptransacties`,
         channel,
       };
     }
-    rows.push(makeRow(`revenue-${channel}`, channelLabel(channel), "revenue", 1, "normal", values, months, detailByPeriod));
+    rows.push(
+      makeRow(
+        `revenue-${channel}`,
+        channelLabel(channel),
+        "revenue",
+        1,
+        "normal",
+        values,
+        months,
+        detailByPeriod,
+        undefined,
+        undefined,
+        budgetValues,
+      ),
+    );
   }
 
   for (const period of months) {
@@ -583,11 +744,36 @@ function buildProfitLoss({
     });
   }
 
-  rows.push(makeRow("revenue-total", "Omzet totaal", "revenue", 0, "subtotal", revenueTotal, months, revenueTotalDetails));
+  rows.push(
+    makeRow(
+      "revenue-total",
+      "Omzet totaal",
+      "revenue",
+      0,
+      "subtotal",
+      revenueTotal,
+      months,
+      revenueTotalDetails,
+      undefined,
+      undefined,
+      revenueBudgetTotal,
+    ),
+  );
 
   const costTotal = blankValues(months);
+  const costBudgetTotal = blankValues(months);
   const revenueYtd = sumValues(revenueTotal, months);
-  const nonRevenueAccounts = new Map<string, { label: string; section: string; sort: number; values: Record<string, number>; accountCode: string }>();
+  const revenueBudgetYtd = sumValues(revenueBudgetTotal, months);
+  const nonRevenueAccounts = new Map<
+    string,
+    {
+      label: string;
+      section: string;
+      sort: number;
+      values: Record<string, number>;
+      accountCode: string;
+    }
+  >();
   for (const row of glRows) {
     if (row.pl_section === "revenue") continue;
     const account = accountsByCode.get(row.account_code);
@@ -616,9 +802,13 @@ function buildProfitLoss({
   let currentSection = "";
   let sectionValues = blankValues(months);
   let sectionAccountCodes: string[] = [];
+  const flushedSections = new Set<string>();
   const flushSection = () => {
     if (!currentSection) return;
+    flushedSections.add(currentSection);
+    const sectionBudgetValues = budgetBySection.get(currentSection) ?? blankValues(months);
     for (const period of months) costTotal[period] += sectionValues[period] ?? 0;
+    for (const period of months) costBudgetTotal[period] += sectionBudgetValues[period] ?? 0;
     const sectionDetails = Object.fromEntries(
       months.map((period) => [
         period,
@@ -629,18 +819,61 @@ function buildProfitLoss({
         },
       ]),
     );
-    rows.push(makeRow(`subtotal-${currentSection}`, `${sectionLabel(currentSection)} totaal`, currentSection, 0, "subtotal", sectionValues, months, sectionDetails));
+    for (const budgetRow of budgetRowsBySection.get(currentSection) ?? []) rows.push(budgetRow);
+    rows.push(
+      makeRow(
+        `subtotal-${currentSection}`,
+        `${sectionLabel(currentSection)} totaal`,
+        currentSection,
+        0,
+        "subtotal",
+        sectionValues,
+        months,
+        sectionDetails,
+        undefined,
+        undefined,
+        sectionBudgetValues,
+      ),
+    );
     if (currentSection === "cost_of_goods") {
       const grossMarginValues = blankValues(months);
       const grossMarginPercentageValues = blankValues(months);
+      const grossMarginBudgetValues = blankValues(months);
+      const grossMarginPercentageBudgetValues = blankValues(months);
       for (const period of months) {
         grossMarginValues[period] = revenueTotal[period] - (sectionValues[period] ?? 0);
-        grossMarginPercentageValues[period] = percentage(grossMarginValues[period], revenueTotal[period]);
+        grossMarginPercentageValues[period] = percentage(
+          grossMarginValues[period],
+          revenueTotal[period],
+        );
+        grossMarginBudgetValues[period] =
+          revenueBudgetTotal[period] - (sectionBudgetValues[period] ?? 0);
+        grossMarginPercentageBudgetValues[period] = percentage(
+          grossMarginBudgetValues[period],
+          revenueBudgetTotal[period],
+        );
       }
 
       const grossMarginYtd = revenueYtd - sumValues(sectionValues, months);
       const grossMarginPercentageYtd = percentage(grossMarginYtd, revenueYtd);
-      rows.push(makeRow("gross-margin", "Brutomarge", "cost_of_goods", 0, "result", grossMarginValues, months));
+      const grossMarginBudgetYtd = revenueBudgetYtd - sumValues(sectionBudgetValues, months);
+      const grossMarginPercentageBudgetYtd = percentage(grossMarginBudgetYtd, revenueBudgetYtd);
+      rows.push(
+        makeRow(
+          "gross-margin",
+          "Brutomarge",
+          "cost_of_goods",
+          0,
+          "result",
+          grossMarginValues,
+          months,
+          undefined,
+          undefined,
+          undefined,
+          grossMarginBudgetValues,
+          grossMarginBudgetYtd,
+        ),
+      );
       rows.push(
         makeRow(
           "gross-margin-percentage",
@@ -653,6 +886,8 @@ function buildProfitLoss({
           undefined,
           "percentage",
           grossMarginPercentageYtd,
+          grossMarginPercentageBudgetValues,
+          grossMarginPercentageBudgetYtd,
         ),
       );
     }
@@ -675,36 +910,82 @@ function buildProfitLoss({
         },
       ]),
     );
-    rows.push(makeRow(`account-${account.accountCode}`, account.label, account.section, 1, "normal", account.values, months, detailByPeriod));
+    rows.push(
+      makeRow(
+        `account-${account.accountCode}`,
+        account.label,
+        account.section,
+        1,
+        "normal",
+        account.values,
+        months,
+        detailByPeriod,
+      ),
+    );
     sectionAccountCodes.push(account.accountCode);
     for (const period of months) sectionValues[period] += account.values[period] ?? 0;
   }
   flushSection();
 
+  for (const section of [...budgetBySection.keys()].sort(
+    (a, b) => sectionIndex(a) - sectionIndex(b),
+  )) {
+    if (section === "revenue" || flushedSections.has(section)) continue;
+    currentSection = section;
+    sectionValues = blankValues(months);
+    sectionAccountCodes = [];
+    flushSection();
+  }
+
   const resultValues = blankValues(months);
+  const resultBudgetValues = blankValues(months);
   for (const period of months) {
     resultValues[period] = revenueTotal[period] - costTotal[period];
+    resultBudgetValues[period] = revenueBudgetTotal[period] - costBudgetTotal[period];
   }
-  rows.push(makeRow("result", "Resultaat", "other", 0, "result", resultValues, months));
+  rows.push(
+    makeRow(
+      "result",
+      "Resultaat",
+      "other",
+      0,
+      "result",
+      resultValues,
+      months,
+      undefined,
+      undefined,
+      undefined,
+      resultBudgetValues,
+    ),
+  );
 
   return { rows, reconciliation };
 }
 
-function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelection | null; onOpenChange: (open: boolean) => void }) {
+function TransactionDetailDialog({
+  detail,
+  onOpenChange,
+}: {
+  detail: DetailSelection | null;
+  onOpenChange: (open: boolean) => void;
+}) {
   const range = useMemo(() => (detail ? monthRange(detail.period) : null), [detail]);
   const detailQ = useQuery({
     queryKey: ["wv-detail", detail],
     queryFn: async () => {
       if (!detail || !range) return [];
       if (detail.source === "gl") {
-        let q = (supabase as any)
-          .from("gl_transactions")
-          .select("id,transaction_date,account_code,description,relation_name,document_number,amount,debit_amount,credit_amount,raw_payload")
+        let q = db
+          .from<GlDetailRow>("gl_transactions")
+          .select(
+            "id,transaction_date,account_code,description,relation_name,document_number,amount,debit_amount,credit_amount,raw_payload",
+          )
           .gte("transaction_date", range.startDate)
           .lt("transaction_date", range.endDate)
           .order("transaction_date", { ascending: false })
           .limit(detail.revenueSource ? 30000 : 10000);
-        if (!detail.revenueSource && detail.accountCodes && detail.accountCodes.length > 0) q = q.in("account_code", detail.accountCodes);
+        if (!detail.revenueSource && detail.accountCodes && detail.accountCodes.length > 0)
+          q = q.in("account_code", detail.accountCodes);
         const { data, error } = await q;
         if (error) throw error;
         const rows = (data ?? []) as GlDetailRow[];
@@ -712,7 +993,9 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
 
         const accountSet = new Set((detail.accountCodes ?? []).map(String));
         const mollieEntryNumbers = new Set(
-          rows.map((row) => (isMollieClearingGlRow(row) ? glEntryNumber(row) : null)).filter(Boolean) as string[],
+          rows
+            .map((row) => (isMollieClearingGlRow(row) ? glEntryNumber(row) : null))
+            .filter(Boolean) as string[],
         );
         return rows.filter((row) => {
           if (accountSet.size > 0 && !accountSet.has(String(row.account_code ?? ""))) return false;
@@ -720,14 +1003,19 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
         });
       }
 
-      const wantsShopify = !detail.channel || detail.channel === "shopify_webshop" || detail.channel === "shopify_winkel";
+      const wantsShopify =
+        !detail.channel ||
+        detail.channel === "shopify_webshop" ||
+        detail.channel === "shopify_winkel";
       const wantsTransactions = !detail.channel || detail.channel === "bold_afs";
       const rows: SalesDetailRow[] = [];
 
       if (wantsShopify) {
-        let q = (supabase as any)
-          .from("shopify_order_summaries")
-          .select("id,external_id,order_name,source_name,channel,financial_status,processed_at,current_total_price,current_total_tax,total_price,total_tax,line_tax_total,total_shipping,total_refunded,raw_payload")
+        let q = db
+          .from<ShopifyOrderDetailRow>("shopify_order_summaries")
+          .select(
+            "id,external_id,order_name,source_name,channel,financial_status,processed_at,current_total_price,current_total_tax,total_price,total_tax,line_tax_total,total_shipping,total_refunded,raw_payload",
+          )
           .gte("processed_at", range.startIso)
           .lt("processed_at", range.endIso)
           .order("processed_at", { ascending: false, nullsFirst: false })
@@ -739,9 +1027,11 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
       }
 
       if (wantsTransactions) {
-        let q = (supabase as any)
-          .from("transactions")
-          .select("id,external_id,source,channel,article_number,product_name,amount_gross,amount_net,vat_amount,vat_rate,invoice_number,status,paid_at,description_raw,parse_status")
+        let q = db
+          .from<SalesDetailRow>("transactions")
+          .select(
+            "id,external_id,source,channel,article_number,product_name,amount_gross,amount_net,vat_amount,vat_rate,invoice_number,status,paid_at,description_raw,parse_status",
+          )
           .eq("status", "paid")
           .eq("parse_status", "ok")
           .gte("paid_at", range.startIso)
@@ -754,7 +1044,9 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
         rows.push(...((data ?? []) as SalesDetailRow[]));
       }
 
-      return rows.sort((a, b) => new Date(b.paid_at ?? 0).getTime() - new Date(a.paid_at ?? 0).getTime());
+      return rows.sort(
+        (a, b) => new Date(b.paid_at ?? 0).getTime() - new Date(a.paid_at ?? 0).getTime(),
+      );
     },
     enabled: Boolean(detail && range),
   });
@@ -764,7 +1056,8 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
     if (detail?.source === "gl") return sum + Number((row as GlDetailRow).amount ?? 0);
     return sum + Number((row as SalesDetailRow).amount_net ?? 0);
   }, 0);
-  const normalizedSourceTotal = detail?.source === "gl" && detail.invertGlSign ? -sourceTotal : sourceTotal;
+  const normalizedSourceTotal =
+    detail?.source === "gl" && detail.invertGlSign ? -sourceTotal : sourceTotal;
 
   return (
     <Dialog open={Boolean(detail)} onOpenChange={onOpenChange}>
@@ -773,7 +1066,9 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
           <DialogHeader>
             <DialogTitle>{detail?.title ?? "Transacties"}</DialogTitle>
             <DialogDescription>
-              {detail?.source === "gl" ? "Onderliggende grootboektransacties" : "Onderliggende verkooptransacties"}
+              {detail?.source === "gl"
+                ? "Onderliggende grootboektransacties"
+                : "Onderliggende verkooptransacties"}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -784,10 +1079,13 @@ function TransactionDetailDialog({ detail, onOpenChange }: { detail: DetailSelec
         </div>
         <div className="max-h-[58vh] overflow-auto px-6 pb-6 pt-3">
           {detailQ.isLoading ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">Transacties laden...</div>
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Transacties laden...
+            </div>
           ) : detailQ.isError ? (
             <div className="py-8 text-center text-sm text-destructive">
-              Detail ophalen mislukt: {detailQ.error instanceof Error ? detailQ.error.message : String(detailQ.error)}
+              Detail ophalen mislukt:{" "}
+              {detailQ.error instanceof Error ? detailQ.error.message : String(detailQ.error)}
             </div>
           ) : detail?.source === "gl" ? (
             <GlDetailTable rows={rows as GlDetailRow[]} />
@@ -827,7 +1125,13 @@ function GlDetailTable({ rows }: { rows: GlDetailRow[] }) {
               <td className="whitespace-nowrap px-3 py-2">{row.document_number || "-"}</td>
               <td className="whitespace-nowrap px-3 py-1">
                 {documentUrl ? (
-                  <Button asChild variant="ghost" size="icon" className="h-7 w-7" title="Open Exact-document">
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    title="Open Exact-document"
+                  >
                     <a href={documentUrl} target="_blank" rel="noreferrer">
                       <ExternalLink className="h-4 w-4" />
                     </a>
@@ -838,9 +1142,15 @@ function GlDetailTable({ rows }: { rows: GlDetailRow[] }) {
               </td>
               <td className="px-3 py-2">{row.relation_name || "-"}</td>
               <td className="px-3 py-2">{row.description || "-"}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.amount)}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.debit_amount)}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.credit_amount)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                {formatEUR(row.amount)}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                {formatEUR(row.debit_amount)}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                {formatEUR(row.credit_amount)}
+              </td>
             </tr>
           );
         })}
@@ -869,14 +1179,24 @@ function SalesDetailTable({ rows }: { rows: SalesDetailRow[] }) {
       <tbody>
         {rows.map((row) => (
           <tr key={row.id} className="border-t align-top">
-            <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formatDateTimeNL(row.paid_at)}</td>
+            <td className="whitespace-nowrap px-3 py-2 tabular-nums">
+              {formatDateTimeNL(row.paid_at)}
+            </td>
             <td className="whitespace-nowrap px-3 py-2">{channelLabel(row.channel)}</td>
-            <td className="whitespace-nowrap px-3 py-2">{row.invoice_number || row.external_id || "-"}</td>
+            <td className="whitespace-nowrap px-3 py-2">
+              {row.invoice_number || row.external_id || "-"}
+            </td>
             <td className="whitespace-nowrap px-3 py-2">{row.article_number || "-"}</td>
             <td className="px-3 py-2">{row.product_name || row.description_raw || "-"}</td>
-            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.amount_net)}</td>
-            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.vat_amount)}</td>
-            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatEUR(row.amount_gross)}</td>
+            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+              {formatEUR(row.amount_net)}
+            </td>
+            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+              {formatEUR(row.vat_amount)}
+            </td>
+            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+              {formatEUR(row.amount_gross)}
+            </td>
             <td className="whitespace-nowrap px-3 py-2">{row.source || "-"}</td>
           </tr>
         ))}
@@ -905,7 +1225,9 @@ function mapShopifyOrderDetail(row: ShopifyOrderDetailRow): SalesDetailRow {
       row.source_name ? `Bron: ${row.source_name}` : null,
       Number(row.total_shipping ?? 0) ? `Verzendkosten: ${formatEUR(row.total_shipping)}` : null,
       Number(row.total_refunded ?? 0) ? `Refunds: ${formatEUR(row.total_refunded)}` : null,
-    ].filter(Boolean).join(" | "),
+    ]
+      .filter(Boolean)
+      .join(" | "),
     parse_status: "ok",
   };
 }
@@ -931,17 +1253,31 @@ function classifyGlRevenueSource(
 }
 
 function glEntryNumber(row: GlDetailRow) {
-  const raw = payloadValue(row.raw_payload, ["entrynumber", "entry_number", "EntryNumber", "Boekstuk"]);
+  const raw = payloadValue(row.raw_payload, [
+    "entrynumber",
+    "entry_number",
+    "EntryNumber",
+    "Boekstuk",
+  ]);
   const value = String(raw ?? "").trim();
   return value || null;
 }
 
 function exactDocumentUrl(row: GlDetailRow) {
-  const rawUrl = payloadValue(row.raw_payload, ["exact_document_url", "ExactDocumentUrl", "document_url", "DocumentUrl"]);
+  const rawUrl = payloadValue(row.raw_payload, [
+    "exact_document_url",
+    "ExactDocumentUrl",
+    "document_url",
+    "DocumentUrl",
+  ]);
   const url = String(rawUrl ?? "").trim();
   if (/^https?:\/\//i.test(url)) return url;
 
-  const rawDocumentId = payloadValue(row.raw_payload, ["exact_document_id", "Document", "document"]);
+  const rawDocumentId = payloadValue(row.raw_payload, [
+    "exact_document_id",
+    "Document",
+    "document",
+  ]);
   const documentId = String(rawDocumentId ?? "").trim();
   if (!documentId) return null;
   return `https://start.exactonline.nl/docs/DocView.aspx?DocumentID=${encodeURIComponent(documentId)}`;
@@ -989,12 +1325,91 @@ function makeRow(
   detailByPeriod?: Record<string, DetailBase>,
   valueFormat?: PlRow["valueFormat"],
   ytd?: number,
+  budgetValues?: Record<string, number>,
+  budgetYtd?: number,
+  budgetOnly = false,
 ): PlRow {
-  return { key, label, section, level, kind, valueFormat, values, ytd: ytd ?? sumValues(values, months), detailByPeriod };
+  return {
+    key,
+    label,
+    section,
+    level,
+    kind,
+    valueFormat,
+    values,
+    ytd: ytd ?? sumValues(values, months),
+    budgetValues,
+    budgetYtd: budgetValues ? (budgetYtd ?? sumValues(budgetValues, months)) : undefined,
+    budgetOnly,
+    detailByPeriod,
+  };
 }
 
 function blankValues(months: string[]) {
   return Object.fromEntries(months.map((period) => [period, 0]));
+}
+
+function budgetLinesByKey(budgetLines: PlBudgetLine[], months: string[]) {
+  const result = new Map<string, Record<string, number>>();
+  for (const line of budgetLines) {
+    if (!result.has(line.line_key)) result.set(line.line_key, blankValues(months));
+    result.get(line.line_key)![line.period] += Number(line.amount ?? 0);
+  }
+  return result;
+}
+
+function budgetLinesBySection(budgetLines: PlBudgetLine[], months: string[]) {
+  const result = new Map<string, Record<string, number>>();
+  for (const line of budgetLines) {
+    if (line.kind === "revenue") continue;
+    if (!result.has(line.section)) result.set(line.section, blankValues(months));
+    result.get(line.section)![line.period] += Number(line.amount ?? 0);
+  }
+  return result;
+}
+
+function budgetOnlyRowsBySection(budgetLines: PlBudgetLine[], months: string[]) {
+  const grouped = new Map<string, Map<string, PlBudgetLine[]>>();
+  for (const line of budgetLines) {
+    if (line.kind === "revenue") continue;
+    if (!grouped.has(line.section)) grouped.set(line.section, new Map());
+    const section = grouped.get(line.section)!;
+    if (!section.has(line.line_key)) section.set(line.line_key, []);
+    section.get(line.line_key)!.push(line);
+  }
+
+  const result = new Map<string, PlRow[]>();
+  for (const [section, linesByKey] of grouped.entries()) {
+    const rows = [...linesByKey.entries()]
+      .map(([lineKey, lines]) => {
+        const sorted = [...lines].sort((a, b) => a.sort_order - b.sort_order);
+        const first = sorted[0];
+        const budgetValues = blankValues(months);
+        for (const line of sorted) budgetValues[line.period] += Number(line.amount ?? 0);
+        return makeRow(
+          `budget-${lineKey}`,
+          first.line_label,
+          section,
+          1,
+          "normal",
+          blankValues(months),
+          months,
+          undefined,
+          undefined,
+          0,
+          budgetValues,
+          undefined,
+          true,
+        );
+      })
+      .sort((a, b) => {
+        const aLine = linesByKey.get(a.key.replace(/^budget-/, ""))?.[0];
+        const bLine = linesByKey.get(b.key.replace(/^budget-/, ""))?.[0];
+        return Number(aLine?.sort_order ?? 999999) - Number(bLine?.sort_order ?? 999999);
+      });
+    result.set(section, rows);
+  }
+  return result;
 }
 
 function sumValues(values: Record<string, number>, months: string[]) {
@@ -1032,6 +1447,97 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function BudgetHeaderCells() {
+  return (
+    <>
+      <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
+      <th className="px-3 py-2 text-right font-medium">Budget</th>
+      <th className="px-3 py-2 text-right font-medium">Verschil</th>
+    </>
+  );
+}
+
+function BudgetAmountCells({
+  value,
+  budget,
+  budgetOnly = false,
+  valueFormat = "currency",
+  strong = false,
+  onClick,
+}: {
+  value: number;
+  budget?: number;
+  budgetOnly?: boolean;
+  valueFormat?: "currency" | "percentage";
+  strong?: boolean;
+  onClick?: () => void;
+}) {
+  const hasBudget = budget !== undefined && Number.isFinite(budget);
+  const variance = hasBudget && !budgetOnly ? value - Number(budget) : undefined;
+  return (
+    <>
+      <BudgetValueCell
+        value={budgetOnly ? undefined : value}
+        valueFormat={valueFormat}
+        strong={strong}
+        onClick={budgetOnly ? undefined : onClick}
+        className="border-l"
+      />
+      <BudgetValueCell value={hasBudget ? Number(budget) : undefined} valueFormat={valueFormat} />
+      <BudgetValueCell
+        value={variance}
+        valueFormat={valueFormat}
+        strong={strong}
+        muted={!hasBudget}
+      />
+    </>
+  );
+}
+
+function BudgetValueCell({
+  value,
+  valueFormat = "currency",
+  strong = false,
+  muted = false,
+  className = "",
+  onClick,
+}: {
+  value?: number;
+  valueFormat?: "currency" | "percentage";
+  strong?: boolean;
+  muted?: boolean;
+  className?: string;
+  onClick?: () => void;
+}) {
+  const numericValue = Number(value);
+  const hasValue = value !== undefined && Number.isFinite(numericValue);
+  const classes = [
+    "px-3 py-2 text-right tabular-nums",
+    strong ? "font-semibold" : "",
+    muted || !hasValue ? "text-muted-foreground" : "",
+    className,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const formatted = hasValue
+    ? valueFormat === "percentage"
+      ? formatPercentage(numericValue)
+      : formatEUR(numericValue)
+    : "-";
+  if (!onClick || !hasValue) return <td className={classes}>{formatted}</td>;
+  return (
+    <td className={classes}>
+      <button
+        type="button"
+        className="rounded px-1 text-right underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-ring"
+        onClick={onClick}
+      >
+        {formatted}
+      </button>
+    </td>
+  );
+}
+
 function AmountCell({
   value,
   valueFormat = "currency",
@@ -1045,7 +1551,12 @@ function AmountCell({
   toneBySign?: boolean;
   onClick?: () => void;
 }) {
-  const tone = toneBySign && Math.abs(value) > 0.01 ? (value > 0 ? "text-emerald-700" : "text-destructive") : "";
+  const tone =
+    toneBySign && Math.abs(value) > 0.01
+      ? value > 0
+        ? "text-emerald-700"
+        : "text-destructive"
+      : "";
   const className = `px-3 py-2 text-right tabular-nums ${strong ? "font-semibold" : ""} ${tone}`;
   const formatted = valueFormat === "percentage" ? formatPercentage(value) : formatEUR(value);
   if (!onClick) return <td className={className}>{formatted}</td>;
@@ -1068,7 +1579,11 @@ function formatPercentage(value: number) {
 }
 
 function EmptyDetails() {
-  return <div className="py-8 text-center text-sm text-muted-foreground">Geen onderliggende transacties gevonden.</div>;
+  return (
+    <div className="py-8 text-center text-sm text-muted-foreground">
+      Geen onderliggende transacties gevonden.
+    </div>
+  );
 }
 
 function yearOptions() {
@@ -1095,8 +1610,18 @@ function monthLabel(period: string) {
 }
 
 function formatGlDate(row: GlDetailRow) {
-  const rawDate = payloadValue(row.raw_payload, ["EntryDate", "entrydate", "entry_date", "Datum", "Boekdatum"]);
-  return formatLooseDate(rawDate) ?? formatLooseDate(row.transaction_date) ?? formatDateNL(row.transaction_date);
+  const rawDate = payloadValue(row.raw_payload, [
+    "EntryDate",
+    "entrydate",
+    "entry_date",
+    "Datum",
+    "Boekdatum",
+  ]);
+  return (
+    formatLooseDate(rawDate) ??
+    formatLooseDate(row.transaction_date) ??
+    formatDateNL(row.transaction_date)
+  );
 }
 
 function payloadValue(payload: Record<string, unknown> | null, keys: string[]) {
@@ -1110,7 +1635,10 @@ function payloadValue(payload: Record<string, unknown> | null, keys: string[]) {
 }
 
 function normalizeKey(value: string) {
-  return value.toLowerCase().replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "");
+  return value
+    .toLowerCase()
+    .replace(/[^\w]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function formatLooseDate(value: unknown) {

@@ -105,6 +105,26 @@ const resources = {
     columns: ["id", "revenue_cutoff_quarter", "created_at", "updated_at"],
     writable: true,
   },
+  pl_budget_lines: {
+    table: "public.pl_budget_lines",
+    columns: [
+      "id",
+      "period",
+      "budget_year",
+      "section",
+      "line_key",
+      "line_label",
+      "kind",
+      "amount",
+      "source_workbook",
+      "source_sheet",
+      "source_label",
+      "sort_order",
+      "created_at",
+      "updated_at",
+    ],
+    writable: true,
+  },
   machines: {
     table: "public.machines",
     columns: [
