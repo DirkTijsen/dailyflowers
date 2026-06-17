@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import zlib from "node:zlib";
 import pg from "pg";
 import {
   markSweepRunning,
@@ -35,6 +36,7 @@ const pool = new Pool({ connectionString: databaseUrl });
 const staticRoot = path.resolve(process.cwd(), "dist", "client");
 const builtServerEntry = path.resolve(process.cwd(), "dist", "server", "server.js");
 let builtAppServerPromise;
+let cachedDailyFlowersLogoPdfImage;
 
 const resources = {
   budgets: {
@@ -1244,6 +1246,13 @@ async function handleAfsRentalInvoiceFunction(req, res) {
       sendJson(res, 404, { message: "Factuur niet gevonden" });
       return;
     }
+    const missing = missingSelfBillingFields(context.landlord);
+    if (missing.length > 0) {
+      sendJson(res, 400, {
+        message: `Verhuurdergegevens incompleet voor self-billing: ${missing.join(", ")}`,
+      });
+      return;
+    }
 
     const pdf = buildAfsInvoicePdf(context);
     await markAfsInvoiceDocumentGenerated(invoiceId);
@@ -1259,6 +1268,13 @@ async function handleAfsRentalInvoiceFunction(req, res) {
     const context = await loadAfsRentalInvoiceContext(invoiceId);
     if (!context) {
       sendJson(res, 404, { message: "Factuur niet gevonden" });
+      return;
+    }
+    const missing = missingSelfBillingFields(context.landlord);
+    if (missing.length > 0) {
+      sendJson(res, 400, {
+        message: `Verhuurdergegevens incompleet voor self-billing: ${missing.join(", ")}`,
+      });
       return;
     }
 
@@ -1667,21 +1683,39 @@ function buildAfsInvoicePdf(context) {
   const { invoice, landlord, customer, machine } = context;
   const supplierName = landlord.invoice_name || landlord.name;
   const variableBase = Math.max(0, invoice.turnover_net - invoice.turnover_threshold_net);
+  const logo = dailyFlowersLogoPdfImage();
+  const logoLines = logo
+    ? [{ type: "image", name: "Logo", x: 50, y: 742, w: 145, h: 25 }]
+    : [{ text: "DAILY FLOWERS", size: 17, x: 50, y: 750, font: "bold" }];
   const lines = [
     { type: "rect", x: 0, y: 806, w: 595, h: 36, color: [23, 23, 23] },
     { type: "rect", x: 50, y: 781, w: 495, h: 7, color: [222, 165, 164] },
-    { text: "DAILY FLOWERS", size: 17, x: 50, y: 758, font: "bold" },
-    { text: "Always the right moment", size: 8, x: 50, y: 742, color: [105, 105, 105] },
+    ...logoLines,
     { text: "FACTUUR", size: 25, x: 390, y: 756, font: "bold" },
     { text: `Nr. ${invoice.invoice_number}`, size: 10, x: 391, y: 734 },
-    { type: "rect", x: 50, y: 656, w: 220, h: 54, color: [248, 244, 244] },
-    { type: "rect", x: 310, y: 656, w: 235, h: 54, color: [248, 244, 244] },
+    {
+      text: "Zelf-facturatie / self-billing",
+      size: 8,
+      x: 391,
+      y: 718,
+      font: "bold",
+      color: [105, 105, 105],
+    },
+    {
+      text: "Uitgereikt door afnemer namens leverancier",
+      size: 7,
+      x: 391,
+      y: 705,
+      color: [105, 105, 105],
+    },
+    { type: "rect", x: 50, y: 626, w: 220, h: 84, color: [248, 244, 244] },
+    { type: "rect", x: 310, y: 626, w: 235, h: 84, color: [248, 244, 244] },
     { text: "VAN", size: 8, x: 64, y: 694, font: "bold", color: [105, 105, 105] },
     { text: supplierName, size: 10, x: 64, y: 678, font: "bold" },
-    ...addressPdfLines(landlord, 64, 664, 11),
+    ...partyDetailsPdfLines(landlord, 64, 664, { includeIban: false }),
     { text: "AAN", size: 8, x: 324, y: 694, font: "bold", color: [105, 105, 105] },
     { text: customer.name, size: 10, x: 324, y: 678, font: "bold" },
-    ...addressPdfLines(customer, 324, 664, 11),
+    ...partyDetailsPdfLines(customer, 324, 664, { includeIban: false }),
     { text: "Factuurdatum", size: 8, x: 50, y: 610, color: [105, 105, 105] },
     { text: formatIsoDate(invoice.invoice_date), size: 10, x: 50, y: 594, font: "bold" },
     { text: "Vervaldatum", size: 8, x: 165, y: 610, color: [105, 105, 105] },
@@ -1732,6 +1766,13 @@ function buildAfsInvoicePdf(context) {
     { type: "line", x1: 355, y1: 364, x2: 530, y2: 364, color: [222, 165, 164] },
     { text: "Totaal incl btw", size: 12, x: 355, y: 345, font: "bold" },
     { text: formatMoney(invoice.total_gross), size: 12, x: 455, y: 345, font: "bold" },
+    {
+      text: "Factuur uitgereikt door afnemer namens leverancier (zelf-facturatie / self-billing).",
+      size: 8,
+      x: 50,
+      y: 290,
+      color: [105, 105, 105],
+    },
     { text: supplierMeta(landlord), size: 8, x: 50, y: 150, color: [105, 105, 105] },
     { text: customerMeta(customer), size: 8, x: 50, y: 136, color: [105, 105, 105] },
     { type: "line", x1: 50, y1: 116, x2: 545, y2: 116, color: [222, 165, 164] },
@@ -1773,9 +1814,9 @@ function buildAfsInvoiceUbl(context) {
   <cbc:ID>${xmlEscape(invoice.invoice_number)}</cbc:ID>
   <cbc:IssueDate>${xmlEscape(dateOnly(invoice.invoice_date))}</cbc:IssueDate>
   ${invoice.due_date ? `<cbc:DueDate>${xmlEscape(dateOnly(invoice.due_date))}</cbc:DueDate>` : ""}
-  <cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+  <cbc:InvoiceTypeCode>389</cbc:InvoiceTypeCode>
   <cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>
-  <cbc:Note>${xmlEscape(`AFS huur ${machine.display_name} - ${periodLabel(invoice.period)}`)}</cbc:Note>
+  <cbc:Note>${xmlEscape(`Factuur uitgereikt door afnemer namens leverancier (zelf-facturatie / self-billing). AFS huur ${machine.display_name} - ${periodLabel(invoice.period)}`)}</cbc:Note>
   <cac:AccountingSupplierParty>
     ${ublParty(landlord)}
   </cac:AccountingSupplierParty>
@@ -1807,6 +1848,11 @@ ${lines.map((line) => ublInvoiceLine(line, invoice.vat_rate)).join("\n")}
 }
 
 async function sendAfsRentalInvoiceEmail(context, { to, subject, message }) {
+  const missing = missingSelfBillingFields(context.landlord);
+  if (missing.length > 0) {
+    throw new Error(`Verhuurdergegevens incompleet voor self-billing: ${missing.join(", ")}`);
+  }
+
   const settings = await loadAfsMailSettings();
   const from =
     process.env.GMAIL_FROM_EMAIL ?? settings.from_email ?? process.env.AFS_INVOICE_FROM_EMAIL;
@@ -2187,16 +2233,24 @@ function ublInvoiceLine(line, vatRate) {
 }
 
 function createPdf(lines) {
+  const logo = lines.some((line) => line.type === "image" && line.name === "Logo")
+    ? dailyFlowersLogoPdfImage()
+    : null;
   const content = lines.map(renderPdfCommand).join("\n");
   const stream = `${content}\n`;
+  const logoMaskNumber = logo?.smask ? 7 : null;
+  const logoNumber = logo ? (logoMaskNumber ? 8 : 7) : null;
+  const xObjects = logoNumber ? `/XObject << /Logo ${logoNumber} 0 R >>` : "";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 5 0 R >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> ${xObjects} >> /Contents 5 0 R >>`,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     `<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}endstream`,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
   ];
+  if (logo?.smask) objects.push(pdfImageObject(logo.smask));
+  if (logo) objects.push(pdfImageObject(logo.image, logoMaskNumber));
 
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
@@ -2215,6 +2269,9 @@ function createPdf(lines) {
 }
 
 function renderPdfCommand(command) {
+  if (command.type === "image") {
+    return `q ${pdfNumber(command.w)} 0 0 ${pdfNumber(command.h)} ${pdfNumber(command.x)} ${pdfNumber(command.y)} cm /${command.name} Do Q`;
+  }
   if (command.type === "rect") {
     const [r, g, b] = rgb(command.color);
     return `${r} ${g} ${b} rg ${command.x} ${command.y} ${command.w} ${command.h} re f`;
@@ -2232,18 +2289,197 @@ function renderPdfCommand(command) {
   return `${r} ${g} ${b} rg BT /${font} ${size} Tf ${x} ${y} Td (${pdfEscape(command.text)}) Tj ET`;
 }
 
+function pdfImageObject(image, smaskNumber = null) {
+  const colorSpace =
+    image.colorSpace === "Indexed"
+      ? `[/Indexed /DeviceRGB ${image.maxPaletteIndex} <${image.palette.toString("hex")}>]`
+      : image.colorSpace;
+  const decodeParms = image.decodeParms
+    ? `/DecodeParms << /Predictor ${image.decodeParms.predictor} /Colors ${image.decodeParms.colors} /BitsPerComponent ${image.decodeParms.bitsPerComponent} /Columns ${image.decodeParms.columns} >>`
+    : "";
+  const smask = smaskNumber ? `/SMask ${smaskNumber} 0 R` : "";
+  return `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace ${colorSpace} /BitsPerComponent ${image.bitsPerComponent} /Filter /FlateDecode ${decodeParms} ${smask} /Length ${image.data.length} >>\nstream\n${image.data.toString("latin1")}\nendstream`;
+}
+
+function dailyFlowersLogoPdfImage() {
+  if (cachedDailyFlowersLogoPdfImage !== undefined) return cachedDailyFlowersLogoPdfImage;
+  const logoPath = path.resolve(process.cwd(), "local-supabase", "assets", "dailyflowers-logo.png");
+  if (!fs.existsSync(logoPath)) {
+    cachedDailyFlowersLogoPdfImage = null;
+    return cachedDailyFlowersLogoPdfImage;
+  }
+
+  const png = readIndexedPng(fs.readFileSync(logoPath));
+  const alpha = indexedPngAlphaMask(png);
+  cachedDailyFlowersLogoPdfImage = {
+    image: {
+      width: png.width,
+      height: png.height,
+      colorSpace: "Indexed",
+      maxPaletteIndex: Math.floor(png.palette.length / 3) - 1,
+      palette: png.palette,
+      bitsPerComponent: png.bitDepth,
+      data: png.idat,
+      decodeParms: {
+        predictor: 15,
+        colors: 1,
+        bitsPerComponent: png.bitDepth,
+        columns: png.width,
+      },
+    },
+    smask: alpha
+      ? {
+          width: png.width,
+          height: png.height,
+          colorSpace: "/DeviceGray",
+          bitsPerComponent: 8,
+          data: alpha,
+        }
+      : null,
+  };
+  return cachedDailyFlowersLogoPdfImage;
+}
+
+function readIndexedPng(buffer) {
+  if (buffer.slice(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+    throw new Error("Logo PNG heeft geen geldige PNG header");
+  }
+
+  let offset = 8;
+  const chunks = { idat: [] };
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.slice(offset + 4, offset + 8).toString("ascii");
+    const data = buffer.slice(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      chunks.width = data.readUInt32BE(0);
+      chunks.height = data.readUInt32BE(4);
+      chunks.bitDepth = data[8];
+      chunks.colorType = data[9];
+      chunks.interlace = data[12];
+    } else if (type === "PLTE") {
+      chunks.palette = data;
+    } else if (type === "tRNS") {
+      chunks.transparency = data;
+    } else if (type === "IDAT") {
+      chunks.idat.push(data);
+    }
+    offset += 12 + length;
+  }
+
+  if (chunks.colorType !== 3 || chunks.bitDepth !== 8 || chunks.interlace !== 0) {
+    throw new Error("Logo PNG moet een niet-geinterlacede indexed PNG met 8-bit palette zijn");
+  }
+  if (!chunks.palette || chunks.idat.length === 0) {
+    throw new Error("Logo PNG mist palette of beelddata");
+  }
+
+  return {
+    width: chunks.width,
+    height: chunks.height,
+    bitDepth: chunks.bitDepth,
+    palette: chunks.palette,
+    transparency: chunks.transparency ?? Buffer.alloc(0),
+    idat: Buffer.concat(chunks.idat),
+  };
+}
+
+function indexedPngAlphaMask(png) {
+  if (!png.transparency.length) return null;
+  const indices = decodeIndexedPngRows(png);
+  const alpha = Buffer.alloc(png.width * png.height);
+  let hasTransparency = false;
+
+  for (let index = 0; index < indices.length; index += 1) {
+    const paletteIndex = indices[index];
+    const value = png.transparency[paletteIndex] ?? 255;
+    alpha[index] = value;
+    if (value !== 255) hasTransparency = true;
+  }
+
+  return hasTransparency ? zlib.deflateSync(alpha) : null;
+}
+
+function decodeIndexedPngRows(png) {
+  const inflated = zlib.inflateSync(png.idat);
+  const stride = png.width;
+  const output = Buffer.alloc(png.width * png.height);
+  let sourceOffset = 0;
+  let targetOffset = 0;
+  let previous = Buffer.alloc(stride);
+
+  for (let row = 0; row < png.height; row += 1) {
+    const filter = inflated[sourceOffset];
+    sourceOffset += 1;
+    const current = Buffer.from(inflated.slice(sourceOffset, sourceOffset + stride));
+    sourceOffset += stride;
+
+    for (let column = 0; column < stride; column += 1) {
+      const left = column > 0 ? current[column - 1] : 0;
+      const up = previous[column] ?? 0;
+      const upLeft = column > 0 ? previous[column - 1] : 0;
+      if (filter === 1) current[column] = (current[column] + left) & 0xff;
+      else if (filter === 2) current[column] = (current[column] + up) & 0xff;
+      else if (filter === 3) current[column] = (current[column] + Math.floor((left + up) / 2)) & 0xff;
+      else if (filter === 4) current[column] = (current[column] + paeth(left, up, upLeft)) & 0xff;
+      else if (filter !== 0) throw new Error(`Onbekend PNG-filter ${filter}`);
+    }
+
+    current.copy(output, targetOffset);
+    targetOffset += stride;
+    previous = current;
+  }
+
+  return output;
+}
+
+function paeth(left, up, upLeft) {
+  const estimate = left + up - upLeft;
+  const distanceLeft = Math.abs(estimate - left);
+  const distanceUp = Math.abs(estimate - up);
+  const distanceUpLeft = Math.abs(estimate - upLeft);
+  if (distanceLeft <= distanceUp && distanceLeft <= distanceUpLeft) return left;
+  return distanceUp <= distanceUpLeft ? up : upLeft;
+}
+
+function pdfNumber(value) {
+  return Number(value).toFixed(2).replace(/\.?0+$/, "");
+}
+
 function rgb(value) {
   const [r, g, b] = value ?? [23, 23, 23];
   return [r / 255, g / 255, b / 255].map((part) => Number(part.toFixed(4)));
 }
 
-function addressPdfLines(party, x, startY, gap = 15) {
+function partyDetailsPdfLines(party, x, startY, options = {}) {
+  const { includeIban = false } = options;
   const lines = [
     party.address_line1,
     [party.postal_code, party.city].filter(Boolean).join(" "),
     party.country && party.country !== "NL" ? party.country : "",
+    party.vat_number ? `Btw ${party.vat_number}` : "",
+    party.kvk_number ? `KvK ${party.kvk_number}` : "",
+    includeIban && party.iban ? `IBAN ${party.iban}` : "",
   ].filter(Boolean);
-  return lines.map((text, index) => ({ text, size: 8, x, y: startY - index * gap }));
+  return lines.slice(0, 5).map((text, index) => ({
+    text,
+    size: 7.5,
+    x,
+    y: startY - index * 11,
+    color: [23, 23, 23],
+  }));
+}
+
+function missingSelfBillingFields(landlord) {
+  return [
+    [landlord.name || landlord.invoice_name, "naam"],
+    [landlord.address_line1, "adres"],
+    [landlord.postal_code, "postcode"],
+    [landlord.city, "plaats"],
+    [landlord.vat_number, "btw-nummer"],
+  ]
+    .filter(([value]) => !String(value ?? "").trim())
+    .map(([, label]) => label);
 }
 
 function supplierMeta(landlord) {

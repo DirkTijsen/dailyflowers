@@ -262,6 +262,7 @@ function AfsRentPage() {
   const period = `${year}-${month}`;
 
   const [landlordForm, setLandlordForm] = useState(emptyLandlordForm);
+  const [editingLandlordId, setEditingLandlordId] = useState("");
   const [agreementForm, setAgreementForm] = useState({
     machine_id: "",
     landlord_id: "",
@@ -423,7 +424,12 @@ function AfsRentPage() {
     () =>
       candidates.filter(
         (row) =>
-          row.machine.active && row.agreement && row.landlord && row.calculation && !row.invoice,
+          row.machine.active &&
+          row.agreement &&
+          row.landlord &&
+          row.calculation &&
+          !row.invoice &&
+          missingSelfBillingFields(row.landlord).length === 0,
       ),
     [candidates],
   );
@@ -480,14 +486,33 @@ function AfsRentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function addLandlord() {
+  function resetLandlordForm() {
+    setEditingLandlordId("");
+    setLandlordForm(emptyLandlordForm());
+  }
+
+  function selectLandlordForEdit(id: string) {
+    if (id === "new") {
+      resetLandlordForm();
+      return;
+    }
+    const landlord = landlordsById.get(id);
+    if (!landlord) return;
+    setEditingLandlordId(id);
+    setLandlordForm(landlordToForm(landlord));
+  }
+
+  async function saveLandlord() {
     const name = landlordForm.name.trim();
-    if (!name) {
-      toast.error("Naam verhuurder is verplicht");
+    const missing = missingSelfBillingFields(landlordForm);
+    if (missing.length > 0) {
+      toast.error("Verhuurdergegevens incompleet", {
+        description: `Vul voor self-billing in: ${missing.join(", ")}.`,
+      });
       return;
     }
 
-    const { error } = await db.from<unknown>("afs_landlords").insert({
+    const payload = {
       name,
       invoice_name: emptyToNull(landlordForm.invoice_name),
       email: emptyToNull(landlordForm.email),
@@ -500,17 +525,22 @@ function AfsRentPage() {
       vat_number: emptyToNull(landlordForm.vat_number),
       iban: emptyToNull(landlordForm.iban),
       notes: emptyToNull(landlordForm.notes),
-      active: true,
-    });
+    };
+
+    const { error } = editingLandlordId
+      ? await db.from<unknown>("afs_landlords").update(payload).eq("id", editingLandlordId)
+      : await db.from<unknown>("afs_landlords").insert({ ...payload, active: true });
 
     if (error) {
       toast.error("Verhuurder opslaan mislukt", { description: error.message });
       return;
     }
 
-    toast.success("Verhuurder toegevoegd");
-    setLandlordForm(emptyLandlordForm());
+    toast.success(editingLandlordId ? "Verhuurder bijgewerkt" : "Verhuurder toegevoegd");
+    resetLandlordForm();
     qc.invalidateQueries({ queryKey: ["afs-landlords"] });
+    qc.invalidateQueries({ queryKey: ["afs-rental-agreements"] });
+    qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
   }
 
   async function addAgreement() {
@@ -589,6 +619,15 @@ function AfsRentPage() {
 
   function openInvoiceDialog(candidate: CandidateRow) {
     if (!candidate.agreement || !candidate.calculation) return;
+    const missing = candidate.landlord
+      ? missingSelfBillingFields(candidate.landlord)
+      : ["verhuurder"];
+    if (missing.length > 0) {
+      toast.error("Verhuurdergegevens incompleet", {
+        description: `Vul voor self-billing in: ${missing.join(", ")}.`,
+      });
+      return;
+    }
     const invoiceDate = todayIso();
     setInvoiceDraft({
       candidate,
@@ -663,6 +702,15 @@ function AfsRentPage() {
   async function createSelectedInvoices() {
     if (selectedCandidates.length === 0) {
       toast.error("Selecteer minimaal een factuurconcept");
+      return;
+    }
+    const incomplete = selectedCandidates.find(
+      (candidate) => !candidate.landlord || missingSelfBillingFields(candidate.landlord).length > 0,
+    );
+    if (incomplete) {
+      toast.error("Verhuurdergegevens incompleet", {
+        description: `Controleer ${incomplete.landlord?.invoice_name || incomplete.landlord?.name || incomplete.machine.display_name}.`,
+      });
       return;
     }
 
@@ -1008,6 +1056,9 @@ function AfsRentPage() {
                       </tr>
                     )}
                     {candidates.map((row) => {
+                      const missingLandlordFields = row.landlord
+                        ? missingSelfBillingFields(row.landlord)
+                        : [];
                       const selectable = selectableCandidateIds.includes(row.machine.id);
                       return (
                         <tr key={row.machine.id} className="border-t hover:bg-muted/30">
@@ -1040,6 +1091,18 @@ function AfsRentPage() {
                                 {landlordAddressLine(row.landlord) && (
                                   <div className="mt-1 text-xs text-muted-foreground">
                                     {landlordAddressLine(row.landlord)}
+                                  </div>
+                                )}
+                                {row.landlord.vat_number && (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    Btw {row.landlord.vat_number}
+                                  </div>
+                                )}
+                                {missingLandlordFields.length > 0 && (
+                                  <div className="mt-2">
+                                    <Badge variant="destructive">
+                                      Mist {missingLandlordFields.join(", ")}
+                                    </Badge>
                                   </div>
                                 )}
                               </>
@@ -1106,7 +1169,7 @@ function AfsRentPage() {
                           <td className="px-3 py-2 text-right">
                             <Button
                               size="sm"
-                              disabled={!row.agreement || Boolean(row.invoice)}
+                              disabled={!row.agreement || Boolean(row.invoice) || !selectable}
                               onClick={() => openInvoiceDialog(row)}
                               variant="outline"
                             >
@@ -1127,14 +1190,35 @@ function AfsRentPage() {
         <TabsContent value="afspraken" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Verhuurder toevoegen</CardTitle>
+              <CardTitle className="text-base">Verhuurder toevoegen of bijwerken</CardTitle>
               <CardDescription>
-                Naam en optionele factuurgegevens voor factureren namens de verhuurder.
+                Naam, NAW en btw-nummer voor factureren namens de verhuurder.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
+                <Field label="Bestaande verhuurder">
+                  <Select value={editingLandlordId || "new"} onValueChange={selectLandlordForEdit}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="new">Nieuwe verhuurder</SelectItem>
+                      {(landlordsQ.data ?? []).map((landlord) => (
+                        <SelectItem key={landlord.id} value={landlord.id}>
+                          {landlord.invoice_name || landlord.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Button variant="outline" onClick={resetLandlordForm}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Nieuw
+                </Button>
+              </div>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Field label="Naam">
+                <Field label="Naam *">
                   <Input
                     value={landlordForm.name}
                     onChange={(event) =>
@@ -1173,7 +1257,7 @@ function AfsRentPage() {
                     }
                   />
                 </Field>
-                <Field label="Adres">
+                <Field label="Adres *">
                   <Input
                     value={landlordForm.address_line1}
                     onChange={(event) =>
@@ -1185,7 +1269,7 @@ function AfsRentPage() {
                     placeholder="Straat 1"
                   />
                 </Field>
-                <Field label="Postcode">
+                <Field label="Postcode *">
                   <Input
                     value={landlordForm.postal_code}
                     onChange={(event) =>
@@ -1196,7 +1280,7 @@ function AfsRentPage() {
                     }
                   />
                 </Field>
-                <Field label="Plaats">
+                <Field label="Plaats *">
                   <Input
                     value={landlordForm.city}
                     onChange={(event) =>
@@ -1223,7 +1307,7 @@ function AfsRentPage() {
                     }
                   />
                 </Field>
-                <Field label="Btw">
+                <Field label="Btw-nummer *">
                   <Input
                     value={landlordForm.vat_number}
                     onChange={(event) =>
@@ -1243,9 +1327,9 @@ function AfsRentPage() {
                   />
                 </Field>
                 <div className="flex items-end">
-                  <Button onClick={addLandlord} className="w-full">
-                    <Plus className="h-4 w-4 mr-1" />
-                    Toevoegen
+                  <Button onClick={saveLandlord} className="w-full">
+                    <Save className="h-4 w-4 mr-1" />
+                    {editingLandlordId ? "Bijwerken" : "Toevoegen"}
                   </Button>
                 </div>
               </div>
@@ -1931,6 +2015,40 @@ function emptyLandlordForm() {
     iban: "",
     notes: "",
   };
+}
+
+function landlordToForm(landlord: LandlordInvoiceDetails) {
+  return {
+    name: landlord.name ?? "",
+    invoice_name: landlord.invoice_name ?? "",
+    email: landlord.email ?? "",
+    phone: landlord.phone ?? "",
+    address_line1: landlord.address_line1 ?? "",
+    postal_code: landlord.postal_code ?? "",
+    city: landlord.city ?? "",
+    country: landlord.country ?? "NL",
+    kvk_number: landlord.kvk_number ?? "",
+    vat_number: landlord.vat_number ?? "",
+    iban: landlord.iban ?? "",
+    notes: landlord.notes ?? "",
+  };
+}
+
+function missingSelfBillingFields(
+  landlord: Pick<
+    LandlordInvoiceDetails,
+    "name" | "address_line1" | "postal_code" | "city" | "vat_number"
+  >,
+) {
+  return [
+    [landlord.name, "naam"],
+    [landlord.address_line1, "adres"],
+    [landlord.postal_code, "postcode"],
+    [landlord.city, "plaats"],
+    [landlord.vat_number, "btw-nummer"],
+  ]
+    .filter(([value]) => !String(value ?? "").trim())
+    .map(([, label]) => String(label));
 }
 
 function landlordAddressLine(landlord: LandlordInvoiceDetails | null | undefined) {
