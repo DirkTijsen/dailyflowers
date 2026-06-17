@@ -15,6 +15,16 @@ const MOLLIE_INCREMENTAL_OVERLAP_HOURS = Number(
 const MOLLIE_INITIAL_LOOKBACK_DAYS = Number(process.env.MOLLIE_INITIAL_LOOKBACK_DAYS ?? 7);
 const MOLLIE_FETCH_TIMEOUT_MS = Number(process.env.MOLLIE_FETCH_TIMEOUT_MS ?? 30000);
 const MOLLIE_VERBOSE_PARSE_ERRORS = process.env.MOLLIE_VERBOSE_PARSE_ERRORS === "true";
+const EXACT_SYNC_FROM = process.env.EXACT_SYNC_FROM ?? "2026-01-01T00:00:00Z";
+const EXACT_INCREMENTAL_OVERLAP_HOURS = Number(process.env.EXACT_INCREMENTAL_OVERLAP_HOURS ?? 48);
+const EXACT_FETCH_TIMEOUT_MS = Number(process.env.EXACT_FETCH_TIMEOUT_MS ?? 60000);
+const EXACT_PAGE_SIZE = Number(process.env.EXACT_PAGE_SIZE ?? 5000);
+const EXACT_REPLACE_MANUAL_GL = process.env.EXACT_REPLACE_MANUAL_GL !== "false";
+const EXACT_GL_ACCOUNTS_TABLE =
+  process.env.INVANTIVE_EXACT_GL_ACCOUNTS_TABLE ?? "ExactOnlineREST.Financial.GLAccounts@eol";
+const EXACT_TRANSACTION_LINES_TABLE =
+  process.env.INVANTIVE_EXACT_TRANSACTION_LINES_TABLE ??
+  "ExactOnlineREST.FinancialTransaction.TransactionLines@eol";
 
 const transactionColumns = [
   "external_id",
@@ -91,17 +101,35 @@ const mollieTransactionColumns = [
   "raw_payload",
 ];
 
+const exactGlTransactionColumns = [
+  "source",
+  "external_id",
+  "transaction_date",
+  "account_id",
+  "account_code",
+  "description",
+  "relation_name",
+  "document_number",
+  "amount",
+  "debit_amount",
+  "credit_amount",
+  "import_batch_id",
+  "raw_payload",
+];
+
 export async function markSweepRunning(pool) {
   await Promise.all([
     recordSweep(pool, "shopify_webshop", "running", "Sweep gestart...", 0),
     recordSweep(pool, "shopify_winkel", "running", "Sweep gestart...", 0),
     recordSweep(pool, "bold_afs", "running", "Sweep gestart...", 0),
+    recordSweep(pool, "exact_gl", "running", "Exact sync gestart...", 0),
   ]);
 }
 
 export async function runSweep(pool) {
   await sweepShopify(pool);
   await sweepMollie(pool);
+  await sweepExact(pool, { throwOnError: false });
 }
 
 export async function runShopifySweepFrom(pool, sinceIso, options = {}) {
@@ -452,6 +480,10 @@ export async function runMollieSweepFrom(pool, sinceIso) {
   }
 }
 
+export async function runExactSweepFrom(pool, sinceIso = null, options = {}) {
+  return sweepExact(pool, { ...options, sinceIso, throwOnError: options.throwOnError ?? true });
+}
+
 async function determineMollieSince(pool) {
   const lowerBound = new Date(MOLLIE_SYNC_FROM).getTime();
   const safeLowerBound = Number.isFinite(lowerBound) ? lowerBound : 0;
@@ -471,6 +503,471 @@ async function determineMollieSince(pool) {
     : Date.now() - MOLLIE_INITIAL_LOOKBACK_DAYS * 24 * 3600 * 1000;
 
   return new Date(Math.max(since, safeLowerBound)).toISOString();
+}
+
+async function sweepExact(pool, options = {}) {
+  const configured = hasInvantiveConfig();
+  if (!configured) {
+    await recordSweep(pool, "exact_gl", "skipped", "Invantive configuratie ontbreekt", 0);
+    return 0;
+  }
+
+  const sinceIso = options.sinceIso ?? (await determineExactSince(pool));
+  try {
+    await recordSweep(pool, "exact_gl", "running", `Exact sync gestart vanaf ${sinceIso}`, 0);
+    const result = await fetchExactGl(pool, sinceIso, options.untilIso);
+    await recordSweep(
+      pool,
+      "exact_gl",
+      "ok",
+      `Exact sync voltooid: ${result.accounts} rekeningen, ${result.transactions} regels`,
+      result.transactions,
+    );
+    return result.transactions;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordSweep(pool, "exact_gl", "error", message, 0);
+    if (options.throwOnError) throw error;
+    console.error("exact sync failed", error);
+    return 0;
+  }
+}
+
+async function determineExactSince(pool) {
+  const lowerBound = new Date(EXACT_SYNC_FROM).getTime();
+  const safeLowerBound = Number.isFinite(lowerBound) ? lowerBound : 0;
+  const result = await pool.query(
+    `
+      SELECT last_sweep_at
+      FROM public.sync_state
+      WHERE channel = 'exact_gl'
+        AND last_sweep_status = 'ok'
+        AND last_sweep_at IS NOT NULL
+      LIMIT 1
+    `,
+  );
+  const lastOk = result.rows[0]?.last_sweep_at;
+  const since = lastOk
+    ? new Date(lastOk).getTime() - EXACT_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
+    : safeLowerBound;
+
+  return new Date(Math.max(since, safeLowerBound)).toISOString();
+}
+
+async function fetchExactGl(pool, sinceIso, untilIso = null) {
+  const accountRows = await fetchExactGlAccounts();
+  const accountMap = await upsertExactGlAccounts(pool, accountRows);
+  const transactions = await syncExactTransactionLines(pool, sinceIso, accountMap, untilIso);
+  return { accounts: accountRows.length, transactions };
+}
+
+async function fetchExactGlAccounts() {
+  return fetchInvantiveODataRows(EXACT_GL_ACCOUNTS_TABLE, {
+    select: [
+      "ID",
+      "Division",
+      "Code",
+      "Description",
+      "BalanceType",
+      "BalanceSide",
+      "Type",
+      "TypeDescription",
+      "IsBlocked",
+      "Modified",
+      "DivisionCompanyName",
+      "DivisionLabel",
+    ],
+    orderBy: "Code",
+  });
+}
+
+async function fetchExactTransactionLines(sinceIso, untilIso = null) {
+  const start = startOfUtcDay(sinceIso);
+  const until = determineExactUntil(untilIso);
+  const rowsById = new Map();
+
+  if (!start || start >= until) return [];
+
+  const dateRows = await fetchExactTransactionLineChunks(start, until, "Date");
+  for (const row of dateRows) rowsById.set(exactTransactionKey(row), row);
+
+  const lowerBound = startOfUtcDay(EXACT_SYNC_FROM);
+  const isInitialSync = lowerBound ? start.getTime() <= lowerBound.getTime() + 60000 : false;
+  if (!isInitialSync) {
+    const modifiedRows = await fetchExactTransactionLineChunks(start, until, "Modified");
+    for (const row of modifiedRows) rowsById.set(exactTransactionKey(row), row);
+  }
+
+  return [...rowsById.values()].filter((row) => exactTransactionKey(row));
+}
+
+async function fetchExactTransactionLineChunks(start, until, field) {
+  const rows = [];
+  for (const [chunkStart, chunkEnd] of dailyRanges(start, until)) {
+    rows.push(...(await fetchExactTransactionLineRange(chunkStart, chunkEnd, field)));
+  }
+  return rows;
+}
+
+async function syncExactTransactionLines(pool, sinceIso, accountMap, untilIso = null) {
+  const start = startOfUtcDay(sinceIso);
+  const until = determineExactUntil(untilIso);
+  if (!start || start >= until) return 0;
+
+  const seen = new Set();
+  let total = 0;
+  let chunks = 0;
+
+  for (const [chunkStart, chunkEnd] of dailyRanges(start, until)) {
+    const rows = await fetchExactTransactionLineRange(chunkStart, chunkEnd, "Date");
+    const freshRows = [];
+    for (const row of rows) {
+      const key = exactTransactionKey(row);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      freshRows.push(row);
+    }
+
+    const mapped = mapExactTransactionRows(freshRows, accountMap);
+    await replaceManualGlRowsForExactDateChunk(pool, chunkStart, chunkEnd);
+    await upsertRows(pool, "public.gl_transactions", exactGlTransactionColumns, mapped, [
+      "source",
+      "external_id",
+    ]);
+
+    total += mapped.length;
+    chunks += 1;
+    if (chunks % 7 === 0) {
+      await recordSweep(
+        pool,
+        "exact_gl",
+        "running",
+        `Exact sync bezig: ${total} regels t/m ${chunkEnd.toISOString().slice(0, 10)}`,
+        total,
+      );
+    }
+  }
+
+  const lowerBound = startOfUtcDay(EXACT_SYNC_FROM);
+  const isInitialSync = lowerBound ? start.getTime() <= lowerBound.getTime() + 60000 : false;
+  if (!isInitialSync) {
+    const modifiedRows = await fetchExactTransactionLineChunks(start, until, "Modified");
+    const freshModifiedRows = [];
+    for (const row of modifiedRows) {
+      const key = exactTransactionKey(row);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      freshModifiedRows.push(row);
+    }
+    const mapped = mapExactTransactionRows(freshModifiedRows, accountMap);
+    await upsertRows(pool, "public.gl_transactions", exactGlTransactionColumns, mapped, [
+      "source",
+      "external_id",
+    ]);
+    total += mapped.length;
+  }
+
+  return total;
+}
+
+async function fetchExactTransactionLineRange(start, end, field) {
+  const filter = `${field} ge ${toODataDateTime(start)} and ${field} lt ${toODataDateTime(end)}`;
+  const rows = await fetchInvantiveODataRows(EXACT_TRANSACTION_LINES_TABLE, {
+    select: [
+      "ID",
+      "Division",
+      "Date",
+      "FinancialYear",
+      "FinancialPeriod",
+      "EntryID",
+      "EntryNumber",
+      "JournalCode",
+      "GLAccount",
+      "Description",
+      "InvoiceNumber",
+      "YourRef",
+      "Document",
+      "AmountDC",
+      "AmountFC",
+      "AmountVATFC",
+      "LineNumber",
+      "LineType",
+      "Modified",
+      "Account",
+      "PaymentReference",
+      "OrderNumber",
+    ],
+    filter,
+    orderBy: field === "Date" ? "Date,EntryNumber,LineNumber" : "Modified,EntryNumber,LineNumber",
+    top: EXACT_PAGE_SIZE,
+  });
+
+  if (rows.length >= EXACT_PAGE_SIZE) {
+    throw new Error(
+      `Exact ${field} ${start.toISOString().slice(0, 10)} raakt de limiet van ${EXACT_PAGE_SIZE} regels. Verhoog EXACT_PAGE_SIZE voordat deze dag wordt vervangen.`,
+    );
+  }
+
+  return rows;
+}
+
+function exactTransactionKey(row) {
+  const id = cleanText(pick(row, ["ID", "Id", "id"]));
+  const division = cleanText(pick(row, ["Division", "division"]));
+  return id && division ? `${division}:${id}` : id;
+}
+
+function determineExactUntil(untilIso = null) {
+  const configured = untilIso
+    ? startOfUtcDay(untilIso)
+    : process.env.EXACT_SYNC_UNTIL
+      ? startOfUtcDay(process.env.EXACT_SYNC_UNTIL)
+      : null;
+  if (configured) return configured;
+
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+}
+
+function dailyRanges(start, until) {
+  const ranges = [];
+  let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+
+  while (cursor < until) {
+    const nextDay = new Date(cursor.getTime() + 24 * 3600 * 1000);
+    const end = nextDay < until ? nextDay : until;
+    ranges.push([cursor, end]);
+    cursor = end;
+  }
+
+  return ranges;
+}
+
+async function upsertExactGlAccounts(pool, rows) {
+  const accountByExactId = new Map();
+
+  for (const row of rows) {
+    const accountCode = cleanText(pick(row, ["Code", "code"]));
+    if (!accountCode) continue;
+
+    const exactId = cleanText(pick(row, ["ID", "Id", "id"]));
+    const division = cleanText(pick(row, ["Division", "division"]));
+    const accountName = cleanText(pick(row, ["Description", "description"])) || accountCode;
+    const statementType = mapExactBalanceType(pick(row, ["BalanceType", "balanceType"]));
+    const debitCredit = mapExactBalanceSide(pick(row, ["BalanceSide", "balanceSide"]));
+    const typeDescription = cleanText(pick(row, ["TypeDescription", "typeDescription"]));
+    const blocked = Boolean(pick(row, ["IsBlocked", "isBlocked"]));
+
+    const result = await pool.query(
+      `
+        INSERT INTO public.gl_accounts (
+          account_code,
+          account_name,
+          account_type,
+          statement_type,
+          debit_credit,
+          classification,
+          active,
+          sort_order
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (account_code) DO UPDATE SET
+          account_name = EXCLUDED.account_name,
+          account_type = EXCLUDED.account_type,
+          statement_type = EXCLUDED.statement_type,
+          debit_credit = EXCLUDED.debit_credit,
+          classification = EXCLUDED.classification,
+          active = EXCLUDED.active
+        RETURNING id, account_code, account_name, pl_section, revenue_channel
+      `,
+      [
+        accountCode,
+        accountName,
+        typeDescription || cleanText(pick(row, ["Type", "type"])) || null,
+        statementType,
+        debitCredit,
+        cleanText(pick(row, ["DivisionLabel", "DivisionCompanyName"])) || null,
+        !blocked,
+        Number(accountCode) || 0,
+      ],
+    );
+
+    const account = result.rows[0];
+    if (exactId) accountByExactId.set(`${division}:${exactId}`.toLowerCase(), account);
+    if (exactId) accountByExactId.set(exactId.toLowerCase(), account);
+  }
+
+  return accountByExactId;
+}
+
+function mapExactTransactionRows(rows, accountMap) {
+  const mapped = [];
+  const importBatchId = `exact-invantive-${new Date().toISOString()}`;
+
+  for (const row of rows) {
+    const id = cleanText(pick(row, ["ID", "Id", "id"]));
+    const division = cleanText(pick(row, ["Division", "division"]));
+    const glAccountId = cleanText(pick(row, ["GLAccount", "glAccount"]));
+    const account = accountMap.get(`${division}:${glAccountId}`.toLowerCase()) ?? accountMap.get(glAccountId.toLowerCase());
+    const accountCode = account?.account_code ?? cleanText(pick(row, ["GLAccountCode", "glAccountCode"]));
+    const transactionDate = toIsoDate(pick(row, ["Date", "date"]));
+    const amount = roundMoney(Number(pick(row, ["AmountDC", "amountDC"]) ?? 0));
+
+    if (!id || !division || !accountCode || !transactionDate || !Number.isFinite(amount)) {
+      continue;
+    }
+
+    const documentId = cleanText(pick(row, ["Document", "document"]));
+    const entryNumber = cleanText(pick(row, ["EntryNumber", "entryNumber"]));
+    const invoiceNumber = cleanText(pick(row, ["InvoiceNumber", "invoiceNumber"]));
+    const journalCode = cleanText(pick(row, ["JournalCode", "journalCode"]));
+    const lineNumber = cleanText(pick(row, ["LineNumber", "lineNumber"]));
+    const documentNumber = invoiceNumber || entryNumber || null;
+    const exactDocumentUrl = buildExactDocumentUrl(documentId);
+
+    mapped.push({
+      source: "exact_invantive",
+      external_id: `${division}:${id}`,
+      transaction_date: transactionDate,
+      account_id: account?.id ?? null,
+      account_code: accountCode,
+      description: cleanText(pick(row, ["Description", "description", "Notes", "notes"])) || null,
+      relation_name: cleanText(pick(row, ["AccountName", "accountName", "YourRef", "yourRef"])) || null,
+      document_number: documentNumber,
+      amount,
+      debit_amount: amount > 0 ? amount : 0,
+      credit_amount: amount < 0 ? Math.abs(amount) : 0,
+      import_batch_id: importBatchId,
+      raw_payload: {
+        ...row,
+        source: "exact_invantive",
+        division,
+        entrynumber: entryNumber || null,
+        journalcode: journalCode || null,
+        linenumber: lineNumber || null,
+        exact_document_id: documentId || null,
+        exact_document_url: exactDocumentUrl,
+      },
+    });
+  }
+
+  return mapped;
+}
+
+async function replaceManualGlRowsForExactDateChunk(pool, start, end) {
+  if (!EXACT_REPLACE_MANUAL_GL) return;
+  await pool.query(
+    `
+      DELETE FROM public.gl_transactions
+      WHERE source = 'manual'
+        AND transaction_date >= $1
+        AND transaction_date < $2
+    `,
+    [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)],
+  );
+}
+
+async function fetchInvantiveODataRows(entitySet, options = {}) {
+  const rows = [];
+  let url = buildInvantiveUrl(entitySet, options);
+
+  while (url) {
+    const data = await fetchInvantiveJson(url);
+    const pageRows = Array.isArray(data.value) ? data.value : [];
+    rows.push(...pageRows);
+    url = data["@odata.nextLink"] ?? data["odata.nextLink"] ?? null;
+  }
+
+  return rows;
+}
+
+function buildInvantiveUrl(entitySet, options = {}) {
+  const base = getInvantiveBaseUrl();
+  const safeEntitySet = String(entitySet ?? "").replace(/^\/+|\/+$/g, "");
+  if (!safeEntitySet) throw new Error("Invantive tabelnaam ontbreekt");
+  const url = new URL(`${base}/${safeEntitySet}`);
+  if (options.select?.length) url.searchParams.set("$select", options.select.join(","));
+  if (options.filter) url.searchParams.set("$filter", options.filter);
+  if (options.orderBy) url.searchParams.set("$orderby", options.orderBy);
+  url.searchParams.set("$top", String(options.top ?? EXACT_PAGE_SIZE));
+  return url.toString();
+}
+
+async function fetchInvantiveJson(url) {
+  const response = await fetchWithRetry(
+    url,
+    {
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${process.env.INVANTIVE_BRIDGE_USERNAME}:${process.env.INVANTIVE_BRIDGE_PASSWORD}`,
+        ).toString("base64")}`,
+        Accept: "application/json",
+      },
+    },
+    3,
+    EXACT_FETCH_TIMEOUT_MS,
+  );
+
+  if (response.status === 503 && url.includes("bridge-online.invantive.com")) {
+    return fetchInvantiveJson(url.replace("bridge-online.invantive.com", "app-online.invantive.com"));
+  }
+
+  if (!response.ok) {
+    throw new Error(`Invantive ${response.status}: ${shorten(await response.text())}`);
+  }
+
+  return response.json();
+}
+
+function hasInvantiveConfig() {
+  return Boolean(
+    String(process.env.INVANTIVE_ODATA_URL ?? "").trim() &&
+      String(process.env.INVANTIVE_BRIDGE_USERNAME ?? "").trim() &&
+      String(process.env.INVANTIVE_BRIDGE_PASSWORD ?? "").trim(),
+  );
+}
+
+function getInvantiveBaseUrl() {
+  const raw = String(process.env.INVANTIVE_ODATA_URL ?? "").trim();
+  if (!raw) throw new Error("INVANTIVE_ODATA_URL ontbreekt");
+  return raw.replace(/\/$/, "");
+}
+
+function toODataDateTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function toIsoDate(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function startOfUtcDay(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function buildExactDocumentUrl(documentId) {
+  if (!documentId) return null;
+  return `https://start.exactonline.nl/docs/DocView.aspx?DocumentID=${encodeURIComponent(documentId)}`;
+}
+
+function mapExactBalanceType(value) {
+  const normalized = cleanText(value).toUpperCase();
+  if (normalized === "W") return "Winst & Verlies";
+  if (normalized === "B") return "Balans";
+  return cleanText(value) || null;
+}
+
+function mapExactBalanceSide(value) {
+  const normalized = cleanText(value).toUpperCase();
+  if (normalized === "D") return "Debit";
+  if (normalized === "C") return "Credit";
+  return cleanText(value) || null;
 }
 
 async function fetchMolliePayments(pool, sinceIso) {
@@ -1104,6 +1601,17 @@ function nullableMoney(value) {
 
 function moneyAmount(moneyBag) {
   return Number(moneyBag?.shopMoney?.amount ?? 0);
+}
+
+function pick(row, keys) {
+  for (const key of keys) {
+    if (row && row[key] !== undefined && row[key] !== null) return row[key];
+  }
+  return null;
+}
+
+function cleanText(value) {
+  return String(value ?? "").trim();
 }
 
 function gidTail(gid) {

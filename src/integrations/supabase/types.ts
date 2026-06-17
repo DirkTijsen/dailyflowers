@@ -276,7 +276,7 @@ export type Database = {
       }
       sync_state: {
         Row: {
-          channel: Database["public"]["Enums"]["tx_channel"]
+          channel: string
           last_sweep_at: string | null
           last_sweep_message: string | null
           last_sweep_status: string | null
@@ -284,7 +284,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          channel: Database["public"]["Enums"]["tx_channel"]
+          channel: string
           last_sweep_at?: string | null
           last_sweep_message?: string | null
           last_sweep_status?: string | null
@@ -292,7 +292,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          channel?: Database["public"]["Enums"]["tx_channel"]
+          channel?: string
           last_sweep_at?: string | null
           last_sweep_message?: string | null
           last_sweep_status?: string | null
