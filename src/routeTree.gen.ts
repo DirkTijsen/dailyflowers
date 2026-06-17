@@ -19,6 +19,7 @@ import { Route as AuthenticatedInstellingenRouteImport } from './routes/_authent
 import { Route as AuthenticatedImportCsvRouteImport } from './routes/_authenticated/import-csv'
 import { Route as AuthenticatedGrootboekRouteImport } from './routes/_authenticated/grootboek'
 import { Route as AuthenticatedGebruikersRouteImport } from './routes/_authenticated/gebruikers'
+import { Route as AuthenticatedExactTransactiesRouteImport } from './routes/_authenticated/exact-transacties'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedBudgettenRouteImport } from './routes/_authenticated/budgetten'
 import { Route as AuthenticatedBtwExportRouteImport } from './routes/_authenticated/btw-export'
@@ -79,6 +80,12 @@ const AuthenticatedGebruikersRoute = AuthenticatedGebruikersRouteImport.update({
   path: '/gebruikers',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedExactTransactiesRoute =
+  AuthenticatedExactTransactiesRouteImport.update({
+    id: '/exact-transacties',
+    path: '/exact-transacties',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -120,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/btw-export': typeof AuthenticatedBtwExportRoute
   '/budgetten': typeof AuthenticatedBudgettenRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/exact-transacties': typeof AuthenticatedExactTransactiesRoute
   '/gebruikers': typeof AuthenticatedGebruikersRoute
   '/grootboek': typeof AuthenticatedGrootboekRoute
   '/import-csv': typeof AuthenticatedImportCsvRoute
@@ -137,6 +145,7 @@ export interface FileRoutesByTo {
   '/btw-export': typeof AuthenticatedBtwExportRoute
   '/budgetten': typeof AuthenticatedBudgettenRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/exact-transacties': typeof AuthenticatedExactTransactiesRoute
   '/gebruikers': typeof AuthenticatedGebruikersRoute
   '/grootboek': typeof AuthenticatedGrootboekRoute
   '/import-csv': typeof AuthenticatedImportCsvRoute
@@ -156,6 +165,7 @@ export interface FileRoutesById {
   '/_authenticated/btw-export': typeof AuthenticatedBtwExportRoute
   '/_authenticated/budgetten': typeof AuthenticatedBudgettenRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/exact-transacties': typeof AuthenticatedExactTransactiesRoute
   '/_authenticated/gebruikers': typeof AuthenticatedGebruikersRoute
   '/_authenticated/grootboek': typeof AuthenticatedGrootboekRoute
   '/_authenticated/import-csv': typeof AuthenticatedImportCsvRoute
@@ -175,6 +185,7 @@ export interface FileRouteTypes {
     | '/btw-export'
     | '/budgetten'
     | '/dashboard'
+    | '/exact-transacties'
     | '/gebruikers'
     | '/grootboek'
     | '/import-csv'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
     | '/btw-export'
     | '/budgetten'
     | '/dashboard'
+    | '/exact-transacties'
     | '/gebruikers'
     | '/grootboek'
     | '/import-csv'
@@ -210,6 +222,7 @@ export interface FileRouteTypes {
     | '/_authenticated/btw-export'
     | '/_authenticated/budgetten'
     | '/_authenticated/dashboard'
+    | '/_authenticated/exact-transacties'
     | '/_authenticated/gebruikers'
     | '/_authenticated/grootboek'
     | '/_authenticated/import-csv'
@@ -298,6 +311,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedGebruikersRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/exact-transacties': {
+      id: '/_authenticated/exact-transacties'
+      path: '/exact-transacties'
+      fullPath: '/exact-transacties'
+      preLoaderRoute: typeof AuthenticatedExactTransactiesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
@@ -363,6 +383,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedBtwExportRoute: typeof AuthenticatedBtwExportRoute
   AuthenticatedBudgettenRoute: typeof AuthenticatedBudgettenRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedExactTransactiesRoute: typeof AuthenticatedExactTransactiesRoute
   AuthenticatedGebruikersRoute: typeof AuthenticatedGebruikersRoute
   AuthenticatedGrootboekRoute: typeof AuthenticatedGrootboekRoute
   AuthenticatedImportCsvRoute: typeof AuthenticatedImportCsvRoute
@@ -378,6 +399,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedBtwExportRoute: AuthenticatedBtwExportRoute,
   AuthenticatedBudgettenRoute: AuthenticatedBudgettenRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedExactTransactiesRoute: AuthenticatedExactTransactiesRoute,
   AuthenticatedGebruikersRoute: AuthenticatedGebruikersRoute,
   AuthenticatedGrootboekRoute: AuthenticatedGrootboekRoute,
   AuthenticatedImportCsvRoute: AuthenticatedImportCsvRoute,
