@@ -21,6 +21,10 @@ const MOLLIE_VERBOSE_PARSE_ERRORS = process.env.MOLLIE_VERBOSE_PARSE_ERRORS === 
 const EXACT_SYNC_FROM = process.env.EXACT_SYNC_FROM ?? "2026-01-01T00:00:00Z";
 const EXACT_INCREMENTAL_OVERLAP_HOURS = Number(process.env.EXACT_INCREMENTAL_OVERLAP_HOURS ?? 48);
 const EXACT_RESUME_OVERLAP_DAYS = Number(process.env.EXACT_RESUME_OVERLAP_DAYS ?? 1);
+const EXACT_RECHECK_OPEN_PERIODS = process.env.EXACT_RECHECK_OPEN_PERIODS !== "false";
+const EXACT_PREVIOUS_QUARTER_GRACE_DAYS = Number(
+  process.env.EXACT_PREVIOUS_QUARTER_GRACE_DAYS ?? 31,
+);
 const EXACT_FETCH_TIMEOUT_MS = Number(process.env.EXACT_FETCH_TIMEOUT_MS ?? 60000);
 const EXACT_PAGE_SIZE = Number(process.env.EXACT_PAGE_SIZE ?? 5000);
 const EXACT_REPLACE_MANUAL_GL = process.env.EXACT_REPLACE_MANUAL_GL !== "false";
@@ -145,6 +149,17 @@ const shopifyPaymentBalanceTransactionColumns = [
   "source_order_id",
   "source_order_transaction_id",
   "processed_at",
+  "order_name",
+  "checkout_id",
+  "payment_method_name",
+  "card_brand",
+  "card_source",
+  "available_on",
+  "presentment_amount",
+  "presentment_currency",
+  "vat_amount",
+  "import_source",
+  "import_batch_id",
   "raw_payload",
   "synced_at",
 ];
@@ -811,9 +826,17 @@ async function sweepExact(pool, options = {}) {
   }
 
   const sinceIso = options.sinceIso ?? (await determineExactSince(pool));
+  const until = determineExactUntil(options.untilIso);
+  const untilIso = until.toISOString();
   try {
-    await recordSweep(pool, "exact_gl", "running", `Exact sync gestart vanaf ${sinceIso}`, 0);
-    const result = await fetchExactGl(pool, sinceIso, options.untilIso);
+    await recordSweep(
+      pool,
+      "exact_gl",
+      "running",
+      `Exact sync gestart vanaf ${sinceIso.slice(0, 10)} t/m ${previousDayLabel(until)}`,
+      0,
+    );
+    const result = await fetchExactGl(pool, sinceIso, untilIso);
     await recordSweep(
       pool,
       "exact_gl",
@@ -845,24 +868,29 @@ async function determineExactSince(pool) {
     `,
   );
   const lastOk = result.rows[0]?.last_sweep_at;
+  let sinceTime = safeLowerBound;
   if (lastOk) {
-    const since = new Date(lastOk).getTime() - EXACT_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000;
-    return new Date(Math.max(since, safeLowerBound)).toISOString();
+    sinceTime = new Date(lastOk).getTime() - EXACT_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000;
+  } else {
+    const latestImported = await pool.query(
+      `
+        SELECT max(transaction_date) AS max_date
+        FROM public.gl_transactions
+        WHERE source = 'exact_invantive'
+      `,
+    );
+    const maxDate = latestImported.rows[0]?.max_date;
+    sinceTime = maxDate
+      ? new Date(maxDate).getTime() - EXACT_RESUME_OVERLAP_DAYS * 24 * 3600 * 1000
+      : safeLowerBound;
   }
 
-  const latestImported = await pool.query(
-    `
-      SELECT max(transaction_date) AS max_date
-      FROM public.gl_transactions
-      WHERE source = 'exact_invantive'
-    `,
-  );
-  const maxDate = latestImported.rows[0]?.max_date;
-  const resumeFrom = maxDate
-    ? new Date(maxDate).getTime() - EXACT_RESUME_OVERLAP_DAYS * 24 * 3600 * 1000
-    : safeLowerBound;
+  if (EXACT_RECHECK_OPEN_PERIODS) {
+    const openPeriodStart = determineExactOpenPeriodStart();
+    if (openPeriodStart) sinceTime = Math.min(sinceTime, openPeriodStart.getTime());
+  }
 
-  return new Date(Math.max(resumeFrom, safeLowerBound)).toISOString();
+  return new Date(Math.max(sinceTime, safeLowerBound)).toISOString();
 }
 
 async function fetchExactGl(pool, sinceIso, untilIso = null) {
@@ -1045,7 +1073,25 @@ function determineExactUntil(untilIso = null) {
   if (configured) return configured;
 
   const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return startOfNextUtcDay(now);
+}
+
+function determineExactOpenPeriodStart(now = new Date()) {
+  const today = startOfUtcDay(now);
+  if (!today) return null;
+
+  const currentQuarterStartMonth = Math.floor(today.getUTCMonth() / 3) * 3;
+  const currentQuarterStart = new Date(
+    Date.UTC(today.getUTCFullYear(), currentQuarterStartMonth, 1),
+  );
+  const daysSinceQuarterStart =
+    (today.getTime() - currentQuarterStart.getTime()) / (24 * 3600 * 1000);
+
+  if (daysSinceQuarterStart < EXACT_PREVIOUS_QUARTER_GRACE_DAYS) {
+    return addUtcMonths(currentQuarterStart, -3);
+  }
+
+  return currentQuarterStart;
 }
 
 function dailyRanges(start, until) {
@@ -1268,6 +1314,18 @@ function startOfUtcDay(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return null;
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function startOfNextUtcDay(value) {
+  const day = startOfUtcDay(value);
+  if (!day) return null;
+  return new Date(day.getTime() + 24 * 3600 * 1000);
+}
+
+function addUtcMonths(value, months) {
+  return new Date(
+    Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + months, value.getUTCDate()),
+  );
 }
 
 function buildExactDocumentUrl(documentId) {
