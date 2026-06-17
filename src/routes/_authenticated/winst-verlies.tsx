@@ -84,6 +84,7 @@ type PlRow = {
   section: string;
   level: 0 | 1;
   kind: "normal" | "subtotal" | "result";
+  valueFormat?: "currency" | "percentage";
   values: Record<string, number>;
   ytd: number;
   detailByPeriod?: Record<string, DetailBase>;
@@ -396,12 +397,13 @@ function ProfitLossPage() {
                         <AmountCell
                           key={`${row.key}-${period}`}
                           value={value}
+                          valueFormat={row.valueFormat}
                           strong={row.kind !== "normal"}
                           onClick={canOpen ? () => openDetail(row, period) : undefined}
                         />
                       );
                     })}
-                    <AmountCell value={row.ytd} strong />
+                    <AmountCell value={row.ytd} valueFormat={row.valueFormat} strong />
                   </tr>
                 ))}
                 {rows.length === 0 && (
@@ -584,6 +586,7 @@ function buildProfitLoss({
   rows.push(makeRow("revenue-total", "Omzet totaal", "revenue", 0, "subtotal", revenueTotal, months, revenueTotalDetails));
 
   const costTotal = blankValues(months);
+  const revenueYtd = sumValues(revenueTotal, months);
   const nonRevenueAccounts = new Map<string, { label: string; section: string; sort: number; values: Record<string, number>; accountCode: string }>();
   for (const row of glRows) {
     if (row.pl_section === "revenue") continue;
@@ -627,6 +630,32 @@ function buildProfitLoss({
       ]),
     );
     rows.push(makeRow(`subtotal-${currentSection}`, `${sectionLabel(currentSection)} totaal`, currentSection, 0, "subtotal", sectionValues, months, sectionDetails));
+    if (currentSection === "cost_of_goods") {
+      const grossMarginValues = blankValues(months);
+      const grossMarginPercentageValues = blankValues(months);
+      for (const period of months) {
+        grossMarginValues[period] = revenueTotal[period] - (sectionValues[period] ?? 0);
+        grossMarginPercentageValues[period] = percentage(grossMarginValues[period], revenueTotal[period]);
+      }
+
+      const grossMarginYtd = revenueYtd - sumValues(sectionValues, months);
+      const grossMarginPercentageYtd = percentage(grossMarginYtd, revenueYtd);
+      rows.push(makeRow("gross-margin", "Brutomarge", "cost_of_goods", 0, "result", grossMarginValues, months));
+      rows.push(
+        makeRow(
+          "gross-margin-percentage",
+          "Brutomarge %",
+          "cost_of_goods",
+          0,
+          "result",
+          grossMarginPercentageValues,
+          months,
+          undefined,
+          "percentage",
+          grossMarginPercentageYtd,
+        ),
+      );
+    }
     sectionValues = blankValues(months);
     sectionAccountCodes = [];
   };
@@ -958,8 +987,10 @@ function makeRow(
   values: Record<string, number>,
   months: string[],
   detailByPeriod?: Record<string, DetailBase>,
+  valueFormat?: PlRow["valueFormat"],
+  ytd?: number,
 ): PlRow {
-  return { key, label, section, level, kind, values, ytd: sumValues(values, months), detailByPeriod };
+  return { key, label, section, level, kind, valueFormat, values, ytd: ytd ?? sumValues(values, months), detailByPeriod };
 }
 
 function blankValues(months: string[]) {
@@ -968,6 +999,10 @@ function blankValues(months: string[]) {
 
 function sumValues(values: Record<string, number>, months: string[]) {
   return months.reduce((sum, period) => sum + Number(values[period] ?? 0), 0);
+}
+
+function percentage(value: number, total: number) {
+  return Math.abs(total) < 0.005 ? Number.NaN : (value / total) * 100;
 }
 
 function add(map: Map<string, number>, key: string, value: number) {
@@ -999,18 +1034,21 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function AmountCell({
   value,
+  valueFormat = "currency",
   strong = false,
   toneBySign = false,
   onClick,
 }: {
   value: number;
+  valueFormat?: "currency" | "percentage";
   strong?: boolean;
   toneBySign?: boolean;
   onClick?: () => void;
 }) {
   const tone = toneBySign && Math.abs(value) > 0.01 ? (value > 0 ? "text-emerald-700" : "text-destructive") : "";
   const className = `px-3 py-2 text-right tabular-nums ${strong ? "font-semibold" : ""} ${tone}`;
-  if (!onClick) return <td className={className}>{formatEUR(value)}</td>;
+  const formatted = valueFormat === "percentage" ? formatPercentage(value) : formatEUR(value);
+  if (!onClick) return <td className={className}>{formatted}</td>;
   return (
     <td className={className}>
       <button
@@ -1018,10 +1056,15 @@ function AmountCell({
         className="rounded px-1 text-right underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-ring"
         onClick={onClick}
       >
-        {formatEUR(value)}
+        {formatted}
       </button>
     </td>
   );
+}
+
+function formatPercentage(value: number) {
+  if (!Number.isFinite(value)) return "-";
+  return `${value.toLocaleString("nl-NL", { maximumFractionDigits: 2 })}%`;
 }
 
 function EmptyDetails() {
