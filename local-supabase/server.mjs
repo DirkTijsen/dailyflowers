@@ -33,6 +33,7 @@ const databaseUrl =
 const jwtSecret = process.env.LOCAL_JWT_SECRET ?? "daily-flowers-local-jwt-secret-change-me";
 const tokenTtlSeconds = Number(process.env.LOCAL_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 7);
 const exactRunningStaleMinutes = Number(process.env.EXACT_RUNNING_STALE_MINUTES ?? 5);
+const AFS_INVOICE_CC_EMAIL = "orders@dailyflowers.nl";
 const pool = new Pool({ connectionString: databaseUrl });
 const staticRoot = path.resolve(process.cwd(), "dist", "client");
 const builtServerEntry = path.resolve(process.cwd(), "dist", "server", "server.js");
@@ -1864,8 +1865,13 @@ function buildAfsInvoicePdf(context) {
       y: 290,
       color: [105, 105, 105],
     },
-    { text: supplierMeta(landlord), size: 8, x: 50, y: 150, color: [105, 105, 105] },
-    { text: customerMeta(customer), size: 8, x: 50, y: 136, color: [105, 105, 105] },
+    {
+      text: `Het factuurtotaal wordt overgemaakt naar IBAN ${landlord.iban}.`,
+      size: 8,
+      x: 50,
+      y: 150,
+      color: [105, 105, 105],
+    },
     { type: "line", x1: 50, y1: 116, x2: 545, y2: 116, color: [222, 165, 164] },
     {
       text: "dailyflowers.nl",
@@ -1914,6 +1920,12 @@ function buildAfsInvoiceUbl(context) {
   <cac:AccountingCustomerParty>
     ${ublParty(customer)}
   </cac:AccountingCustomerParty>
+  <cac:PaymentMeans>
+    <cbc:PaymentMeansCode>30</cbc:PaymentMeansCode>
+    <cac:PayeeFinancialAccount>
+      <cbc:ID>${xmlEscape(landlord.iban)}</cbc:ID>
+    </cac:PayeeFinancialAccount>
+  </cac:PaymentMeans>
   <cac:TaxTotal>
     <cbc:TaxAmount currencyID="EUR">${moneyXml(invoice.vat_amount)}</cbc:TaxAmount>
     <cac:TaxSubtotal>
@@ -1957,6 +1969,7 @@ async function sendAfsRentalInvoiceEmail(context, { to, subject, message }) {
   const raw = buildGmailRawMessage({
     from,
     to,
+    cc: AFS_INVOICE_CC_EMAIL,
     replyTo: process.env.AFS_INVOICE_REPLY_TO_EMAIL ?? from,
     subject,
     html,
@@ -2029,11 +2042,12 @@ async function getGmailAccessToken() {
   return responseJson.access_token;
 }
 
-function buildGmailRawMessage({ from, to, replyTo, subject, html, attachments }) {
+function buildGmailRawMessage({ from, to, cc, replyTo, subject, html, attachments }) {
   const boundary = `dailyflowers-${crypto.randomUUID()}`;
   const lines = [
     `From: ${mimeHeader(from)}`,
     `To: ${mimeHeader(to)}`,
+    ...(cc ? [`Cc: ${mimeHeader(cc)}`] : []),
     `Reply-To: ${mimeHeader(replyTo)}`,
     `Subject: ${mimeHeader(subject)}`,
     "MIME-Version: 1.0",
@@ -2511,7 +2525,8 @@ function decodeIndexedPngRows(png) {
       const upLeft = column > 0 ? previous[column - 1] : 0;
       if (filter === 1) current[column] = (current[column] + left) & 0xff;
       else if (filter === 2) current[column] = (current[column] + up) & 0xff;
-      else if (filter === 3) current[column] = (current[column] + Math.floor((left + up) / 2)) & 0xff;
+      else if (filter === 3)
+        current[column] = (current[column] + Math.floor((left + up) / 2)) & 0xff;
       else if (filter === 4) current[column] = (current[column] + paeth(left, up, upLeft)) & 0xff;
       else if (filter !== 0) throw new Error(`Onbekend PNG-filter ${filter}`);
     }
@@ -2534,7 +2549,9 @@ function paeth(left, up, upLeft) {
 }
 
 function pdfNumber(value) {
-  return Number(value).toFixed(2).replace(/\.?0+$/, "");
+  return Number(value)
+    .toFixed(2)
+    .replace(/\.?0+$/, "");
 }
 
 function rgb(value) {
@@ -2568,30 +2585,10 @@ function missingSelfBillingFields(landlord) {
     [landlord.postal_code, "postcode"],
     [landlord.city, "plaats"],
     [landlord.vat_number, "btw-nummer"],
+    [landlord.iban, "IBAN"],
   ]
     .filter(([value]) => !String(value ?? "").trim())
     .map(([, label]) => label);
-}
-
-function supplierMeta(landlord) {
-  return [
-    landlord.iban ? `IBAN ${landlord.iban}` : "",
-    landlord.vat_number ? `Btw ${landlord.vat_number}` : "",
-    landlord.kvk_number ? `KvK ${landlord.kvk_number}` : "",
-  ]
-    .filter(Boolean)
-    .join("   ");
-}
-
-function customerMeta(customer) {
-  return [
-    customer.address_line1,
-    [customer.postal_code, customer.city].filter(Boolean).join(" "),
-    customer.vat_number ? `Btw ${customer.vat_number}` : "",
-    customer.kvk_number ? `KvK ${customer.kvk_number}` : "",
-  ]
-    .filter(Boolean)
-    .join("   ");
 }
 
 function pdfEscape(value) {
