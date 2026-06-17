@@ -21,7 +21,7 @@ type UserRow = {
 
 function GebruikersPage() {
   const qc = useQueryClient();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -39,22 +39,22 @@ function GebruikersPage() {
 
   async function addUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const nextEmail = email.trim().toLowerCase();
-    if (!nextEmail || !password) {
-      toast.error("E-mail en wachtwoord zijn verplicht");
+    const nextUsername = username.trim().toLowerCase();
+    if (!nextUsername || !password) {
+      toast.error("Gebruikersnaam en wachtwoord zijn verplicht");
       return;
     }
 
     setSaving(true);
     try {
       const { error } = await (supabase as any).from("users").insert({
-        email: nextEmail,
+        email: nextUsername,
         password,
       });
       if (error) throw error;
 
       toast.success("Gebruiker toegevoegd");
-      setEmail("");
+      setUsername("");
       setPassword("");
       qc.invalidateQueries({ queryKey: ["users"] });
     } catch (error) {
@@ -78,16 +78,16 @@ function GebruikersPage() {
       <Card>
         <CardHeader>
           <CardTitle>Gebruiker toevoegen</CardTitle>
-          <CardDescription>Maak een login aan met e-mail en tijdelijk wachtwoord.</CardDescription>
+          <CardDescription>Maak een login aan met gebruikersnaam en tijdelijk wachtwoord.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(180px,0.8fr)_auto]" onSubmit={addUser}>
             <Input
-              type="email"
+              type="text"
               autoComplete="username"
-              placeholder="email@dailyflowers.nl"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              placeholder="dirk"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
             />
             <Input
               type="password"
@@ -107,14 +107,14 @@ function GebruikersPage() {
       <Card>
         <CardHeader>
           <CardTitle>Bestaande gebruikers</CardTitle>
-          <CardDescription>Wijzig e-mailadressen of zet een nieuw wachtwoord zonder het oude te tonen.</CardDescription>
+          <CardDescription>Wijzig gebruikersnamen of zet een nieuw wachtwoord zonder het oude te tonen.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">E-mail</th>
+                  <th className="px-4 py-3 text-left font-medium">Gebruikersnaam</th>
                   <th className="px-4 py-3 text-left font-medium">Aangemaakt</th>
                   <th className="px-4 py-3 text-left font-medium">Nieuw wachtwoord</th>
                   <th className="px-4 py-3 text-right font-medium">Acties</th>
@@ -149,15 +149,15 @@ function GebruikersPage() {
 
 function UserTableRow({ user }: { user: UserRow }) {
   const qc = useQueryClient();
-  const [email, setEmail] = useState(user.email);
+  const [username, setUsername] = useState(user.email);
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   async function saveUser() {
-    const nextEmail = email.trim().toLowerCase();
+    const nextUsername = username.trim().toLowerCase();
     const payload: Record<string, string> = {};
-    if (nextEmail && nextEmail !== user.email) payload.email = nextEmail;
+    if (nextUsername && nextUsername !== user.email) payload.email = nextUsername;
     if (password) payload.password = password;
 
     if (Object.keys(payload).length === 0) {
@@ -203,10 +203,10 @@ function UserTableRow({ user }: { user: UserRow }) {
     <tr className="border-t">
       <td className="px-4 py-3 align-middle">
         <Input
-          type="email"
+          type="text"
           autoComplete="username"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
         />
       </td>
       <td className="px-4 py-3 align-middle text-muted-foreground tabular-nums">

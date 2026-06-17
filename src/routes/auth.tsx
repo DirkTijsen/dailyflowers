@@ -9,13 +9,13 @@ import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 
 export const Route = createFileRoute("/auth")({
-  head: () => ({ meta: [{ title: "Inloggen — Daily Flowers" }] }),
+  head: () => ({ meta: [{ title: "Inloggen - Daily Flowers" }] }),
   component: AuthPage,
 });
 
 function AuthPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +28,10 @@ function AuthPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email: username.trim(),
+      password,
+    });
     setLoading(false);
     if (error) {
       toast.error("Inloggen mislukt", { description: error.message });
@@ -42,21 +45,35 @@ function AuthPage() {
       <Toaster richColors position="top-right" />
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Daily Flowers — Boekhouddashboard</CardTitle>
-          <CardDescription>Intern. Log in met je e-mail en wachtwoord.</CardDescription>
+          <CardTitle className="text-2xl">Daily Flowers - Boekhouddashboard</CardTitle>
+          <CardDescription>Intern. Log in met je gebruikersnaam en wachtwoord.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">E-mailadres</Label>
-              <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+              <Label htmlFor="username">Gebruikersnaam</Label>
+              <Input
+                id="username"
+                type="text"
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Wachtwoord</Label>
-              <Input id="password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+              <Input
+                id="password"
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+              />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Bezig…" : "Inloggen"}
+              {loading ? "Bezig..." : "Inloggen"}
             </Button>
             <p className="text-xs text-muted-foreground text-center">
               Geen account? Neem contact op met een beheerder. Accounts worden handmatig aangemaakt.

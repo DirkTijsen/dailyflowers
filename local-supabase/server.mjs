@@ -479,11 +479,11 @@ async function handleAuth(req, res, url) {
     }
 
     const body = await readJson(req);
-    const email = String(body.email ?? "")
+    const username = String(body.email ?? body.username ?? "")
       .trim()
       .toLowerCase();
     const password = String(body.password ?? "");
-    const user = await findLocalUser(email, password);
+    const user = await findLocalUser(username, password);
 
     if (!user) {
       sendJson(res, 400, {
@@ -596,10 +596,10 @@ async function insertUsers(req, res) {
   const returned = [];
 
   for (const row of rows) {
-    const email = normalizeUserEmail(row?.email);
+    const email = normalizeUserEmail(row?.email ?? row?.username);
     const password = String(row?.password ?? "");
     if (!email || !password) {
-      sendJson(res, 400, { message: "E-mail en wachtwoord zijn verplicht" });
+      sendJson(res, 400, { message: "Gebruikersnaam en wachtwoord zijn verplicht" });
       return;
     }
 
@@ -620,10 +620,13 @@ async function updateUsers(req, res, url) {
   const values = [];
   const setters = [];
 
-  if (Object.prototype.hasOwnProperty.call(body ?? {}, "email")) {
-    const email = normalizeUserEmail(body.email);
+  const hasUsername = Object.prototype.hasOwnProperty.call(body ?? {}, "username");
+  const hasEmail = Object.prototype.hasOwnProperty.call(body ?? {}, "email");
+
+  if (hasEmail || hasUsername) {
+    const email = normalizeUserEmail(hasUsername ? body.username : body.email);
     if (!email) {
-      sendJson(res, 400, { message: "E-mail is verplicht" });
+      sendJson(res, 400, { message: "Gebruikersnaam is verplicht" });
       return;
     }
     values.push(email);
