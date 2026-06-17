@@ -19,7 +19,10 @@ const { Pool } = pg;
 loadDotEnv(path.resolve(process.cwd(), ".env"));
 
 const port = Number(process.env.PORT ?? process.env.LOCAL_SUPABASE_PORT ?? 54321);
-const host = process.env.HOST ?? process.env.LOCAL_SUPABASE_HOST ?? (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
+const host =
+  process.env.HOST ??
+  process.env.LOCAL_SUPABASE_HOST ??
+  (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const hostedRuntime = isHostedRuntime();
 const databaseUrl =
   process.env.LOCAL_DATABASE_URL ??
@@ -176,6 +179,10 @@ const resources = {
       "total_gross",
       "status",
       "notes",
+      "sent_at",
+      "email_to",
+      "email_subject",
+      "email_last_error",
       "created_at",
       "updated_at",
     ],
@@ -791,7 +798,97 @@ async function handleFunction(req, res, url) {
     return;
   }
 
+  if (name === "afs-rental-invoice") {
+    await handleAfsRentalInvoiceFunction(req, res);
+    return;
+  }
+
   sendJson(res, 404, { message: `Function not implemented locally: ${name}` });
+}
+
+async function handleAfsRentalInvoiceFunction(req, res) {
+  const body = await readJson(req);
+  const action = String(body?.action ?? "");
+  const invoiceId = String(body?.invoice_id ?? "");
+
+  if (!invoiceId) {
+    sendJson(res, 400, { message: "invoice_id is verplicht" });
+    return;
+  }
+
+  const context = await loadAfsRentalInvoiceContext(invoiceId);
+  if (!context) {
+    sendJson(res, 404, { message: "Factuur niet gevonden" });
+    return;
+  }
+
+  if (action === "download_pdf") {
+    const pdf = buildAfsInvoicePdf(context);
+    await markAfsInvoiceDocumentGenerated(invoiceId);
+    sendJson(res, 200, {
+      filename: `${safeFileName(context.invoice.invoice_number)}.pdf`,
+      content_type: "application/pdf",
+      base64: pdf.toString("base64"),
+    });
+    return;
+  }
+
+  if (action === "download_ubl") {
+    const ubl = buildAfsInvoiceUbl(context);
+    await markAfsInvoiceDocumentGenerated(invoiceId);
+    sendJson(res, 200, {
+      filename: `${safeFileName(context.invoice.invoice_number)}.xml`,
+      content_type: "application/xml",
+      base64: Buffer.from(ubl, "utf8").toString("base64"),
+    });
+    return;
+  }
+
+  if (action === "send_email") {
+    const to = String(body?.to ?? context.customer.email ?? context.landlord.email ?? "").trim();
+    const subject =
+      String(body?.subject ?? "").trim() ||
+      `Factuur ${context.invoice.invoice_number} - ${periodLabel(context.invoice.period)}`;
+    const message = String(body?.message ?? "").trim();
+
+    if (!to) {
+      sendJson(res, 400, { message: "Ontvanger e-mailadres ontbreekt" });
+      return;
+    }
+
+    try {
+      const result = await sendAfsRentalInvoiceEmail(context, { to, subject, message });
+      await pool.query(
+        `
+          UPDATE public.afs_rental_invoices
+          SET status = 'sent',
+              sent_at = now(),
+              email_to = $2,
+              email_subject = $3,
+              email_last_error = NULL
+          WHERE id = $1
+        `,
+        [invoiceId, to, subject],
+      );
+      sendJson(res, 200, { ok: true, provider_id: result.id ?? null, to, subject });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await pool.query(
+        `
+          UPDATE public.afs_rental_invoices
+          SET email_to = $2,
+              email_subject = $3,
+              email_last_error = $4
+          WHERE id = $1
+        `,
+        [invoiceId, to, subject, errorMessage],
+      );
+      sendJson(res, 400, { message: errorMessage });
+    }
+    return;
+  }
+
+  sendJson(res, 400, { message: `Onbekende factuuractie: ${action || "-"}` });
 }
 
 async function selectRows(req, res, url, resource) {
@@ -909,6 +1006,468 @@ async function deleteRows(req, res, url, resource) {
     where.values,
   );
   sendJson(res, 200, result.rows);
+}
+
+async function loadAfsRentalInvoiceContext(invoiceId) {
+  const result = await pool.query(
+    `
+      SELECT
+        i.*,
+        m.display_name AS machine_display_name,
+        m.afs_number AS machine_afs_number,
+        m.machine_id AS machine_external_id,
+        l.name AS landlord_name,
+        l.invoice_name AS landlord_invoice_name,
+        l.email AS landlord_email,
+        l.phone AS landlord_phone,
+        l.address_line1 AS landlord_address_line1,
+        l.postal_code AS landlord_postal_code,
+        l.city AS landlord_city,
+        l.country AS landlord_country,
+        l.kvk_number AS landlord_kvk_number,
+        l.vat_number AS landlord_vat_number,
+        l.iban AS landlord_iban
+      FROM public.afs_rental_invoices i
+      LEFT JOIN public.machines m ON m.id = i.machine_id
+      LEFT JOIN public.afs_landlords l ON l.id = i.landlord_id
+      WHERE i.id = $1
+      LIMIT 1
+    `,
+    [invoiceId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    invoice: {
+      id: row.id,
+      period: row.period,
+      invoice_number: row.invoice_number,
+      invoice_date: row.invoice_date,
+      due_date: row.due_date,
+      turnover_net: moneyNumber(row.turnover_net),
+      fixed_fee_net: moneyNumber(row.fixed_fee_net),
+      turnover_rate_percent: Number(row.turnover_rate_percent ?? 0),
+      turnover_threshold_net: moneyNumber(row.turnover_threshold_net),
+      variable_fee_net: moneyNumber(row.variable_fee_net),
+      subtotal_net: moneyNumber(row.subtotal_net),
+      vat_rate: Number(row.vat_rate ?? 0),
+      vat_amount: moneyNumber(row.vat_amount),
+      total_gross: moneyNumber(row.total_gross),
+      notes: row.notes,
+    },
+    machine: {
+      display_name: row.machine_display_name ?? "Onbekende AFS-machine",
+      afs_number: row.machine_afs_number ?? "",
+      machine_id: row.machine_external_id ?? "",
+    },
+    landlord: {
+      name: row.landlord_name ?? "Onbekende verhuurder",
+      invoice_name: row.landlord_invoice_name ?? row.landlord_name ?? "Onbekende verhuurder",
+      email: row.landlord_email ?? "",
+      phone: row.landlord_phone ?? "",
+      address_line1: row.landlord_address_line1 ?? "",
+      postal_code: row.landlord_postal_code ?? "",
+      city: row.landlord_city ?? "",
+      country: row.landlord_country ?? "NL",
+      kvk_number: row.landlord_kvk_number ?? "",
+      vat_number: row.landlord_vat_number ?? "",
+      iban: row.landlord_iban ?? "",
+    },
+    customer: invoiceCustomerConfig(),
+  };
+}
+
+async function markAfsInvoiceDocumentGenerated(invoiceId) {
+  await pool.query(
+    `
+      UPDATE public.afs_rental_invoices
+      SET updated_at = now()
+      WHERE id = $1
+    `,
+    [invoiceId],
+  );
+}
+
+function buildAfsInvoicePdf(context) {
+  const { invoice, landlord, customer, machine } = context;
+  const lines = [
+    { text: "FACTUUR", size: 18, x: 50, y: 790 },
+    { text: `Factuurnummer: ${invoice.invoice_number}`, size: 10, x: 360, y: 790 },
+    { text: `Factuurdatum: ${formatIsoDate(invoice.invoice_date)}`, size: 10, x: 360, y: 775 },
+    { text: `Vervaldatum: ${formatIsoDate(invoice.due_date)}`, size: 10, x: 360, y: 760 },
+    { text: "Van", size: 12, x: 50, y: 735 },
+    { text: landlord.invoice_name || landlord.name, size: 10, x: 50, y: 720 },
+    ...addressPdfLines(landlord, 50, 705),
+    { text: landlord.vat_number ? `Btw: ${landlord.vat_number}` : "", size: 10, x: 50, y: 660 },
+    { text: landlord.kvk_number ? `KvK: ${landlord.kvk_number}` : "", size: 10, x: 50, y: 645 },
+    { text: landlord.iban ? `IBAN: ${landlord.iban}` : "", size: 10, x: 50, y: 630 },
+    { text: "Aan", size: 12, x: 330, y: 735 },
+    { text: customer.name, size: 10, x: 330, y: 720 },
+    ...addressPdfLines(customer, 330, 705),
+    { text: customer.vat_number ? `Btw: ${customer.vat_number}` : "", size: 10, x: 330, y: 660 },
+    { text: customer.kvk_number ? `KvK: ${customer.kvk_number}` : "", size: 10, x: 330, y: 645 },
+    { text: `Periode: ${periodLabel(invoice.period)}`, size: 11, x: 50, y: 585 },
+    { text: `Machine: ${machine.display_name}`, size: 11, x: 50, y: 570 },
+    {
+      text: `AFS: ${machine.afs_number || "-"}${machine.machine_id ? ` / ID ${machine.machine_id}` : ""}`,
+      size: 10,
+      x: 50,
+      y: 555,
+    },
+    { text: "Omschrijving", size: 10, x: 50, y: 520 },
+    { text: "Bedrag", size: 10, x: 475, y: 520 },
+    { text: "Vaste huur AFS-machine", size: 10, x: 50, y: 500 },
+    { text: formatMoney(invoice.fixed_fee_net), size: 10, x: 460, y: 500 },
+    {
+      text: `Variabele huur ${formatPercent(invoice.turnover_rate_percent)} over ${formatMoney(Math.max(0, invoice.turnover_net - invoice.turnover_threshold_net))}`,
+      size: 10,
+      x: 50,
+      y: 485,
+    },
+    { text: formatMoney(invoice.variable_fee_net), size: 10, x: 460, y: 485 },
+    { text: `Omzetbasis ex btw: ${formatMoney(invoice.turnover_net)}`, size: 9, x: 50, y: 470 },
+    {
+      text: `Drempel ex btw: ${formatMoney(invoice.turnover_threshold_net)}`,
+      size: 9,
+      x: 50,
+      y: 458,
+    },
+    { text: "Subtotaal ex btw", size: 10, x: 330, y: 425 },
+    { text: formatMoney(invoice.subtotal_net), size: 10, x: 460, y: 425 },
+    { text: `Btw ${formatPercent(invoice.vat_rate)}`, size: 10, x: 330, y: 410 },
+    { text: formatMoney(invoice.vat_amount), size: 10, x: 460, y: 410 },
+    { text: "Totaal incl btw", size: 12, x: 330, y: 390 },
+    { text: formatMoney(invoice.total_gross), size: 12, x: 460, y: 390 },
+    { text: invoice.notes ? `Notitie: ${invoice.notes}` : "", size: 9, x: 50, y: 350 },
+  ].filter((line) => line.text);
+
+  return createPdf(lines);
+}
+
+function buildAfsInvoiceUbl(context) {
+  const { invoice, landlord, customer, machine } = context;
+  const variableBase = Math.max(0, invoice.turnover_net - invoice.turnover_threshold_net);
+  const lines = [
+    {
+      id: "1",
+      name: "Vaste huur AFS-machine",
+      description: `${machine.display_name} - ${periodLabel(invoice.period)}`,
+      amount: invoice.fixed_fee_net,
+    },
+    {
+      id: "2",
+      name: `Variabele huur ${formatPercent(invoice.turnover_rate_percent)}`,
+      description: `Omzetbasis ${formatMoney(invoice.turnover_net)}, drempel ${formatMoney(invoice.turnover_threshold_net)}, grondslag ${formatMoney(variableBase)}`,
+      amount: invoice.variable_fee_net,
+    },
+  ].filter((line) => Math.abs(line.amount) > 0.004);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
+  <cbc:ID>${xmlEscape(invoice.invoice_number)}</cbc:ID>
+  <cbc:IssueDate>${xmlEscape(dateOnly(invoice.invoice_date))}</cbc:IssueDate>
+  ${invoice.due_date ? `<cbc:DueDate>${xmlEscape(dateOnly(invoice.due_date))}</cbc:DueDate>` : ""}
+  <cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>
+  <cbc:Note>${xmlEscape(`AFS huur ${machine.display_name} - ${periodLabel(invoice.period)}`)}</cbc:Note>
+  <cac:AccountingSupplierParty>
+    ${ublParty(landlord)}
+  </cac:AccountingSupplierParty>
+  <cac:AccountingCustomerParty>
+    ${ublParty(customer)}
+  </cac:AccountingCustomerParty>
+  <cac:TaxTotal>
+    <cbc:TaxAmount currencyID="EUR">${moneyXml(invoice.vat_amount)}</cbc:TaxAmount>
+    <cac:TaxSubtotal>
+      <cbc:TaxableAmount currencyID="EUR">${moneyXml(invoice.subtotal_net)}</cbc:TaxableAmount>
+      <cbc:TaxAmount currencyID="EUR">${moneyXml(invoice.vat_amount)}</cbc:TaxAmount>
+      <cac:TaxCategory>
+        <cbc:ID>S</cbc:ID>
+        <cbc:Percent>${numberXml(invoice.vat_rate)}</cbc:Percent>
+        <cac:TaxScheme>
+          <cbc:ID>VAT</cbc:ID>
+        </cac:TaxScheme>
+      </cac:TaxCategory>
+    </cac:TaxSubtotal>
+  </cac:TaxTotal>
+  <cac:LegalMonetaryTotal>
+    <cbc:LineExtensionAmount currencyID="EUR">${moneyXml(invoice.subtotal_net)}</cbc:LineExtensionAmount>
+    <cbc:TaxExclusiveAmount currencyID="EUR">${moneyXml(invoice.subtotal_net)}</cbc:TaxExclusiveAmount>
+    <cbc:TaxInclusiveAmount currencyID="EUR">${moneyXml(invoice.total_gross)}</cbc:TaxInclusiveAmount>
+    <cbc:PayableAmount currencyID="EUR">${moneyXml(invoice.total_gross)}</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+${lines.map((line) => ublInvoiceLine(line, invoice.vat_rate)).join("\n")}
+</Invoice>`;
+}
+
+async function sendAfsRentalInvoiceEmail(context, { to, subject, message }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.AFS_INVOICE_FROM_EMAIL;
+  if (!apiKey) throw new Error("RESEND_API_KEY ontbreekt in de Railway environment variables");
+  if (!from)
+    throw new Error("AFS_INVOICE_FROM_EMAIL ontbreekt in de Railway environment variables");
+
+  const pdf = buildAfsInvoicePdf(context);
+  const ubl = buildAfsInvoiceUbl(context);
+  const invoiceNumber = context.invoice.invoice_number;
+  const html = invoiceEmailHtml(context, message);
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      reply_to: context.landlord.email || undefined,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: `${safeFileName(invoiceNumber)}.pdf`,
+          content: pdf.toString("base64"),
+        },
+        {
+          filename: `${safeFileName(invoiceNumber)}.xml`,
+          content: Buffer.from(ubl, "utf8").toString("base64"),
+        },
+      ],
+    }),
+  });
+
+  const responseText = await response.text();
+  let responseJson = {};
+  try {
+    responseJson = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    responseJson = { message: responseText };
+  }
+
+  if (!response.ok) {
+    throw new Error(responseJson?.message ?? `Resend fout ${response.status}`);
+  }
+
+  return responseJson;
+}
+
+function invoiceCustomerConfig() {
+  return {
+    name: process.env.AFS_INVOICE_CUSTOMER_NAME ?? "Daily Flowers",
+    email: process.env.AFS_INVOICE_CUSTOMER_EMAIL ?? "",
+    phone: process.env.AFS_INVOICE_CUSTOMER_PHONE ?? "",
+    address_line1: process.env.AFS_INVOICE_CUSTOMER_ADDRESS_LINE1 ?? "",
+    postal_code: process.env.AFS_INVOICE_CUSTOMER_POSTAL_CODE ?? "",
+    city: process.env.AFS_INVOICE_CUSTOMER_CITY ?? "",
+    country: process.env.AFS_INVOICE_CUSTOMER_COUNTRY ?? "NL",
+    kvk_number: process.env.AFS_INVOICE_CUSTOMER_KVK_NUMBER ?? "",
+    vat_number: process.env.AFS_INVOICE_CUSTOMER_VAT_NUMBER ?? "",
+    iban: "",
+  };
+}
+
+function invoiceEmailHtml(context, customMessage) {
+  const { invoice, landlord, machine } = context;
+  const intro =
+    customMessage ||
+    `Bijgevoegd vind je factuur ${invoice.invoice_number} voor de AFS-huur van ${machine.display_name}.`;
+  return `
+    <div style="font-family: Arial, sans-serif; font-size: 14px; color: #222;">
+      <p>${htmlEscape(intro)}</p>
+      <table cellpadding="4" cellspacing="0" style="border-collapse: collapse;">
+        <tr><td><strong>Factuur</strong></td><td>${htmlEscape(invoice.invoice_number)}</td></tr>
+        <tr><td><strong>Periode</strong></td><td>${htmlEscape(periodLabel(invoice.period))}</td></tr>
+        <tr><td><strong>Verhuurder</strong></td><td>${htmlEscape(landlord.invoice_name || landlord.name)}</td></tr>
+        <tr><td><strong>Totaal incl. btw</strong></td><td>${htmlEscape(formatMoney(invoice.total_gross))}</td></tr>
+      </table>
+      <p>De PDF-factuur en UBL zijn als bijlage toegevoegd.</p>
+    </div>
+  `;
+}
+
+function ublParty(party) {
+  const displayName = party.invoice_name || party.name;
+  return `<cac:Party>
+      <cbc:Name>${xmlEscape(displayName)}</cbc:Name>
+      <cac:PostalAddress>
+        <cbc:StreetName>${xmlEscape(party.address_line1 ?? "")}</cbc:StreetName>
+        <cbc:PostalZone>${xmlEscape(party.postal_code ?? "")}</cbc:PostalZone>
+        <cbc:CityName>${xmlEscape(party.city ?? "")}</cbc:CityName>
+        <cac:Country>
+          <cbc:IdentificationCode>${xmlEscape(party.country || "NL")}</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:PostalAddress>
+      ${
+        party.vat_number
+          ? `<cac:PartyTaxScheme>
+        <cbc:CompanyID>${xmlEscape(party.vat_number)}</cbc:CompanyID>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:PartyTaxScheme>`
+          : ""
+      }
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>${xmlEscape(displayName)}</cbc:RegistrationName>
+        ${party.kvk_number ? `<cbc:CompanyID>${xmlEscape(party.kvk_number)}</cbc:CompanyID>` : ""}
+      </cac:PartyLegalEntity>
+      ${
+        party.email
+          ? `<cac:Contact>
+        <cbc:ElectronicMail>${xmlEscape(party.email)}</cbc:ElectronicMail>
+      </cac:Contact>`
+          : ""
+      }
+    </cac:Party>`;
+}
+
+function ublInvoiceLine(line, vatRate) {
+  return `  <cac:InvoiceLine>
+    <cbc:ID>${xmlEscape(line.id)}</cbc:ID>
+    <cbc:InvoicedQuantity unitCode="C62">1</cbc:InvoicedQuantity>
+    <cbc:LineExtensionAmount currencyID="EUR">${moneyXml(line.amount)}</cbc:LineExtensionAmount>
+    <cac:Item>
+      <cbc:Description>${xmlEscape(line.description)}</cbc:Description>
+      <cbc:Name>${xmlEscape(line.name)}</cbc:Name>
+      <cac:ClassifiedTaxCategory>
+        <cbc:ID>S</cbc:ID>
+        <cbc:Percent>${numberXml(vatRate)}</cbc:Percent>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:ClassifiedTaxCategory>
+    </cac:Item>
+    <cac:Price>
+      <cbc:PriceAmount currencyID="EUR">${moneyXml(line.amount)}</cbc:PriceAmount>
+    </cac:Price>
+  </cac:InvoiceLine>`;
+}
+
+function createPdf(lines) {
+  const content = lines
+    .map((line) => {
+      const size = Number(line.size ?? 10);
+      const x = Number(line.x ?? 50);
+      const y = Number(line.y ?? 750);
+      return `BT /F1 ${size} Tf ${x} ${y} Td (${pdfEscape(line.text)}) Tj ET`;
+    })
+    .join("\n");
+  const stream = `${content}\n`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}endstream`,
+  ];
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let i = 0; i < objects.length; i += 1) {
+    offsets.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`;
+  }
+  const xrefOffset = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let i = 1; i < offsets.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
+}
+
+function addressPdfLines(party, x, startY) {
+  const lines = [
+    party.address_line1,
+    [party.postal_code, party.city].filter(Boolean).join(" "),
+    party.country && party.country !== "NL" ? party.country : "",
+  ].filter(Boolean);
+  return lines.map((text, index) => ({ text, size: 10, x, y: startY - index * 15 }));
+}
+
+function pdfEscape(value) {
+  return asciiText(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function asciiText(value) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, "?");
+}
+
+function moneyNumber(value) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
+}
+
+function formatMoney(value) {
+  return `EUR ${moneyNumber(value).toLocaleString("nl-NL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function moneyXml(value) {
+  return moneyNumber(value).toFixed(2);
+}
+
+function numberXml(value) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? String(parsed) : "0";
+}
+
+function formatPercent(value) {
+  const parsed = Number(value ?? 0);
+  return `${Number.isFinite(parsed) ? parsed.toLocaleString("nl-NL", { maximumFractionDigits: 2 }) : "0"}%`;
+}
+
+function periodLabel(period) {
+  const [year, month] = String(period ?? "")
+    .split("-")
+    .map(Number);
+  if (!year || !month) return String(period ?? "");
+  return new Date(year, month - 1, 1).toLocaleDateString("nl-NL", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function formatIsoDate(value) {
+  const date = dateOnly(value);
+  if (!date) return "-";
+  const [year, month, day] = date.split("-");
+  return `${day}-${month}-${year}`;
+}
+
+function dateOnly(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.slice(0, 10);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
+}
+
+function safeFileName(value) {
+  return String(value ?? "factuur")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function xmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function htmlEscape(value) {
+  return xmlEscape(value);
 }
 
 async function attachMachines(rows, machineColumns) {
@@ -1152,7 +1711,9 @@ async function findLocalUser(email, password) {
 }
 
 function normalizeUserEmail(value) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function hashPassword(password) {
@@ -1191,10 +1752,10 @@ function redactConnectionString(value) {
 function isHostedRuntime() {
   return Boolean(
     process.env.RAILWAY_ENVIRONMENT_NAME ||
-      process.env.RAILWAY_ENVIRONMENT_ID ||
-      process.env.RAILWAY_PROJECT_ID ||
-      process.env.RAILWAY_SERVICE_ID ||
-      process.env.NODE_ENV === "production",
+    process.env.RAILWAY_ENVIRONMENT_ID ||
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    process.env.NODE_ENV === "production",
   );
 }
 
@@ -1468,7 +2029,9 @@ async function serveBuiltApp(req, res, url) {
 
 async function getBuiltAppServer() {
   if (!builtAppServerPromise) {
-    builtAppServerPromise = import(pathToFileURL(builtServerEntry).href).then((module) => module.default);
+    builtAppServerPromise = import(pathToFileURL(builtServerEntry).href).then(
+      (module) => module.default,
+    );
   }
   return builtAppServerPromise;
 }

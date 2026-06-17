@@ -18,7 +18,8 @@ const appUrl =
 const reset = process.argv.includes("--reset");
 const hostedRuntime = isHostedRuntime();
 const existingDb = process.argv.includes("--existing-db") || hostedRuntime;
-const adminEmail = process.env.LOCAL_ADMIN_EMAIL ?? (hostedRuntime ? "" : "admin@dailyflowers.local");
+const adminEmail =
+  process.env.LOCAL_ADMIN_EMAIL ?? (hostedRuntime ? "" : "admin@dailyflowers.local");
 const adminPassword = process.env.LOCAL_ADMIN_PASSWORD ?? (hostedRuntime ? "" : "dailyflowers");
 const appDbName = databaseName(appUrl);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -133,6 +134,7 @@ async function main() {
       "public.afs_rental_invoices",
       "20260617120000_add_afs_rental_invoicing.sql",
     );
+    await applyMigration(app, "20260617140000_add_afs_invoice_delivery.sql");
     await applyMigration(app, "20260617110000_add_exact_sync_state.sql");
 
     await app.query(localAuthSql);
@@ -151,7 +153,9 @@ async function main() {
 async function seedAdminUser(client) {
   if (!adminEmail || !adminPassword) {
     if (hostedRuntime) {
-      throw new Error("LOCAL_ADMIN_EMAIL en LOCAL_ADMIN_PASSWORD moeten gezet zijn voor Railway/productie.");
+      throw new Error(
+        "LOCAL_ADMIN_EMAIL en LOCAL_ADMIN_PASSWORD moeten gezet zijn voor Railway/productie.",
+      );
     }
     return;
   }
@@ -176,10 +180,10 @@ function hashPassword(password) {
 function isHostedRuntime() {
   return Boolean(
     process.env.RAILWAY_ENVIRONMENT_NAME ||
-      process.env.RAILWAY_ENVIRONMENT_ID ||
-      process.env.RAILWAY_PROJECT_ID ||
-      process.env.RAILWAY_SERVICE_ID ||
-      process.env.NODE_ENV === "production",
+    process.env.RAILWAY_ENVIRONMENT_ID ||
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    process.env.NODE_ENV === "production",
   );
 }
 
@@ -239,7 +243,9 @@ async function ensureEnumValue(client, schemaName, typeName, value) {
   if (exists.rowCount > 0) return;
 
   const typeIdent = `${quoteIdent(schemaName)}.${quoteIdent(typeName)}`;
-  await client.query(`ALTER TYPE ${typeIdent} ADD VALUE IF NOT EXISTS '${value.replace(/'/g, "''")}'`);
+  await client.query(
+    `ALTER TYPE ${typeIdent} ADD VALUE IF NOT EXISTS '${value.replace(/'/g, "''")}'`,
+  );
 }
 
 function databaseName(connectionString) {

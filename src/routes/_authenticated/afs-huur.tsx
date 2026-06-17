@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -26,13 +27,16 @@ import { toast } from "sonner";
 import {
   Building2,
   Calculator,
+  Download,
+  FileText,
   FilePlus2,
+  Mail,
   Plus,
   ReceiptText,
   Save,
   type LucideIcon,
 } from "lucide-react";
-import { currentMonth, formatDateNL, formatEUR, monthLabel } from "@/lib/format";
+import { currentMonth, formatDateNL, formatDateTimeNL, formatEUR, monthLabel } from "@/lib/format";
 
 export const Route = createFileRoute("/_authenticated/afs-huur")({
   head: () => ({ meta: [{ title: "AFS huurafspraken - Daily Flowers" }] }),
@@ -53,8 +57,33 @@ type Landlord = {
   invoice_name: string | null;
   email: string | null;
   phone: string | null;
+  address_line1: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country: string | null;
+  kvk_number: string | null;
+  vat_number: string | null;
+  iban: string | null;
+  notes: string | null;
   active: boolean;
 };
+
+type LandlordInvoiceDetails = Pick<
+  Landlord,
+  | "id"
+  | "name"
+  | "invoice_name"
+  | "email"
+  | "phone"
+  | "address_line1"
+  | "postal_code"
+  | "city"
+  | "country"
+  | "kvk_number"
+  | "vat_number"
+  | "iban"
+  | "notes"
+>;
 
 type Agreement = {
   id: string;
@@ -70,7 +99,7 @@ type Agreement = {
   status: "active" | "inactive";
   notes: string | null;
   machines?: Pick<Machine, "id" | "display_name" | "afs_number" | "machine_id"> | null;
-  afs_landlords?: Pick<Landlord, "id" | "name" | "invoice_name" | "email"> | null;
+  afs_landlords?: LandlordInvoiceDetails | null;
 };
 
 type RentalInvoice = {
@@ -93,8 +122,12 @@ type RentalInvoice = {
   total_gross: number | string;
   status: InvoiceStatus;
   notes: string | null;
+  sent_at: string | null;
+  email_to: string | null;
+  email_subject: string | null;
+  email_last_error: string | null;
   machines?: Pick<Machine, "id" | "display_name" | "afs_number" | "machine_id"> | null;
-  afs_landlords?: Pick<Landlord, "id" | "name" | "invoice_name" | "email"> | null;
+  afs_landlords?: LandlordInvoiceDetails | null;
 };
 
 type ActualRow = {
@@ -127,6 +160,13 @@ type CandidateRow = {
 };
 
 type InvoiceStatus = "draft" | "sent" | "paid" | "canceled";
+type InvoiceArtifactAction = "download_pdf" | "download_ubl";
+type InvoiceFunctionPayload = {
+  filename?: string;
+  content_type?: string;
+  base64?: string;
+  message?: string;
+};
 
 type DbError = { message: string };
 type QueryResult<T> = { data: T | null; error: DbError | null };
@@ -172,12 +212,7 @@ function AfsRentPage() {
   const [month, setMonth] = useState(initialMonth);
   const period = `${year}-${month}`;
 
-  const [landlordForm, setLandlordForm] = useState({
-    name: "",
-    invoice_name: "",
-    email: "",
-    phone: "",
-  });
+  const [landlordForm, setLandlordForm] = useState(emptyLandlordForm);
   const [agreementForm, setAgreementForm] = useState({
     machine_id: "",
     landlord_id: "",
@@ -198,6 +233,13 @@ function AfsRentPage() {
     status: InvoiceStatus;
     notes: string;
   } | null>(null);
+  const [invoiceActionId, setInvoiceActionId] = useState<string | null>(null);
+  const [sendDraft, setSendDraft] = useState<{
+    invoice: RentalInvoice;
+    to: string;
+    subject: string;
+    message: string;
+  } | null>(null);
 
   const machinesQ = useQuery({
     queryKey: ["machines-all"],
@@ -216,7 +258,9 @@ function AfsRentPage() {
     queryFn: async () => {
       const { data, error } = await db
         .from<Landlord[]>("afs_landlords")
-        .select("id,name,invoice_name,email,phone,active")
+        .select(
+          "id,name,invoice_name,email,phone,address_line1,postal_code,city,country,kvk_number,vat_number,iban,notes,active",
+        )
         .order("name");
       if (error) throw error;
       return (data ?? []) as Landlord[];
@@ -229,7 +273,7 @@ function AfsRentPage() {
       const { data, error } = await db
         .from<Agreement[]>("afs_rental_agreements")
         .select(
-          "*, machines(id,display_name,afs_number,machine_id), afs_landlords(id,name,invoice_name,email)",
+          "*, machines(id,display_name,afs_number,machine_id), afs_landlords(id,name,invoice_name,email,phone,address_line1,postal_code,city,country,kvk_number,vat_number,iban,notes)",
         )
         .order("start_period", { ascending: false });
       if (error) throw error;
@@ -243,7 +287,7 @@ function AfsRentPage() {
       const { data, error } = await db
         .from<RentalInvoice[]>("afs_rental_invoices")
         .select(
-          "*, machines(id,display_name,afs_number,machine_id), afs_landlords(id,name,invoice_name,email)",
+          "*, machines(id,display_name,afs_number,machine_id), afs_landlords(id,name,invoice_name,email,phone,address_line1,postal_code,city,country,kvk_number,vat_number,iban,notes)",
         )
         .gte("period", `${year}-01`)
         .lte("period", `${year}-12`)
@@ -345,6 +389,14 @@ function AfsRentPage() {
       invoice_name: emptyToNull(landlordForm.invoice_name),
       email: emptyToNull(landlordForm.email),
       phone: emptyToNull(landlordForm.phone),
+      address_line1: emptyToNull(landlordForm.address_line1),
+      postal_code: emptyToNull(landlordForm.postal_code),
+      city: emptyToNull(landlordForm.city),
+      country: landlordForm.country.trim() || "NL",
+      kvk_number: emptyToNull(landlordForm.kvk_number),
+      vat_number: emptyToNull(landlordForm.vat_number),
+      iban: emptyToNull(landlordForm.iban),
+      notes: emptyToNull(landlordForm.notes),
       active: true,
     });
 
@@ -354,7 +406,7 @@ function AfsRentPage() {
     }
 
     toast.success("Verhuurder toegevoegd");
-    setLandlordForm({ name: "", invoice_name: "", email: "", phone: "" });
+    setLandlordForm(emptyLandlordForm());
     qc.invalidateQueries({ queryKey: ["afs-landlords"] });
   }
 
@@ -492,6 +544,85 @@ function AfsRentPage() {
     else qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
   }
 
+  function landlordForInvoice(invoice: RentalInvoice) {
+    return (
+      invoice.afs_landlords ?? (invoice.landlord_id ? landlordsById.get(invoice.landlord_id) : null)
+    );
+  }
+
+  async function downloadInvoiceArtifact(invoice: RentalInvoice, action: InvoiceArtifactAction) {
+    const actionKey = `${invoice.id}:${action}`;
+    setInvoiceActionId(actionKey);
+    try {
+      const { data, error } = await supabase.functions.invoke<InvoiceFunctionPayload>(
+        "afs-rental-invoice",
+        {
+          body: { action, invoice_id: invoice.id },
+        },
+      );
+      if (error) throw error;
+      if (!data?.base64) throw new Error("Geen document ontvangen");
+
+      downloadBase64File(data);
+      toast.success(action === "download_pdf" ? "PDF aangemaakt" : "UBL aangemaakt");
+    } catch (error) {
+      toast.error("Document aanmaken mislukt", { description: errorMessage(error) });
+    } finally {
+      setInvoiceActionId(null);
+    }
+  }
+
+  function openSendDialog(invoice: RentalInvoice) {
+    const landlord = landlordForInvoice(invoice);
+    setSendDraft({
+      invoice,
+      to: invoice.email_to ?? landlord?.email ?? "",
+      subject:
+        invoice.email_subject ??
+        `Factuur ${invoice.invoice_number} - ${monthLabel(invoice.period)}`,
+      message: `Beste,\n\nBijgevoegd vind je factuur ${invoice.invoice_number} voor ${monthLabel(
+        invoice.period,
+      )}.\n\nMet vriendelijke groet,\nDaily Flowers`,
+    });
+  }
+
+  async function sendInvoiceEmail() {
+    if (!sendDraft) return;
+    const to = sendDraft.to.trim();
+    if (!to) {
+      toast.error("Ontvanger e-mailadres is verplicht");
+      return;
+    }
+
+    const actionKey = `${sendDraft.invoice.id}:send_email`;
+    setInvoiceActionId(actionKey);
+    try {
+      const { data, error } = await supabase.functions.invoke<InvoiceFunctionPayload>(
+        "afs-rental-invoice",
+        {
+          body: {
+            action: "send_email",
+            invoice_id: sendDraft.invoice.id,
+            to,
+            subject: sendDraft.subject.trim(),
+            message: sendDraft.message.trim(),
+          },
+        },
+      );
+      if (error) throw error;
+      if (data?.message) throw new Error(data.message);
+
+      toast.success("Factuur verzonden");
+      setSendDraft(null);
+      qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
+    } catch (error) {
+      toast.error("Factuur verzenden mislukt", { description: errorMessage(error) });
+      qc.invalidateQueries({ queryKey: ["afs-rental-invoices"] });
+    } finally {
+      setInvoiceActionId(null);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -577,7 +708,7 @@ function AfsRentPage() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1080px] text-sm">
+                <table className="w-full min-w-[1180px] text-sm">
                   <thead className="bg-muted/50">
                     <tr className="text-left">
                       <th className="px-3 py-2 font-medium">Machine</th>
@@ -622,6 +753,11 @@ function AfsRentPage() {
                               {row.landlord.email && (
                                 <div className="mt-1 text-xs text-muted-foreground">
                                   {row.landlord.email}
+                                </div>
+                              )}
+                              {landlordAddressLine(row.landlord) && (
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {landlordAddressLine(row.landlord)}
                                 </div>
                               )}
                             </>
@@ -710,47 +846,132 @@ function AfsRentPage() {
                 Naam en optionele factuurgegevens voor factureren namens de verhuurder.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_150px_auto] items-end">
-              <Field label="Naam">
+            <CardContent className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="Naam">
+                  <Input
+                    value={landlordForm.name}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({ ...current, name: event.target.value }))
+                    }
+                    placeholder="Verhuurder BV"
+                  />
+                </Field>
+                <Field label="Factuurnaam">
+                  <Input
+                    value={landlordForm.invoice_name}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({
+                        ...current,
+                        invoice_name: event.target.value,
+                      }))
+                    }
+                    placeholder="optioneel"
+                  />
+                </Field>
+                <Field label="E-mail">
+                  <Input
+                    type="email"
+                    value={landlordForm.email}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({ ...current, email: event.target.value }))
+                    }
+                    placeholder="facturen@..."
+                  />
+                </Field>
+                <Field label="Telefoon">
+                  <Input
+                    value={landlordForm.phone}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({ ...current, phone: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field label="Adres">
+                  <Input
+                    value={landlordForm.address_line1}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({
+                        ...current,
+                        address_line1: event.target.value,
+                      }))
+                    }
+                    placeholder="Straat 1"
+                  />
+                </Field>
+                <Field label="Postcode">
+                  <Input
+                    value={landlordForm.postal_code}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({
+                        ...current,
+                        postal_code: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="Plaats">
+                  <Input
+                    value={landlordForm.city}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({ ...current, city: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field label="Land">
+                  <Input
+                    value={landlordForm.country}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({ ...current, country: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field label="KvK">
+                  <Input
+                    value={landlordForm.kvk_number}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({
+                        ...current,
+                        kvk_number: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="Btw">
+                  <Input
+                    value={landlordForm.vat_number}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({
+                        ...current,
+                        vat_number: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="IBAN">
+                  <Input
+                    value={landlordForm.iban}
+                    onChange={(event) =>
+                      setLandlordForm((current) => ({ ...current, iban: event.target.value }))
+                    }
+                  />
+                </Field>
+                <div className="flex items-end">
+                  <Button onClick={addLandlord} className="w-full">
+                    <Plus className="h-4 w-4 mr-1" />
+                    Toevoegen
+                  </Button>
+                </div>
+              </div>
+              <Field label="Notitie">
                 <Input
-                  value={landlordForm.name}
+                  value={landlordForm.notes}
                   onChange={(event) =>
-                    setLandlordForm((current) => ({ ...current, name: event.target.value }))
-                  }
-                  placeholder="Verhuurder BV"
-                />
-              </Field>
-              <Field label="Factuurnaam">
-                <Input
-                  value={landlordForm.invoice_name}
-                  onChange={(event) =>
-                    setLandlordForm((current) => ({ ...current, invoice_name: event.target.value }))
+                    setLandlordForm((current) => ({ ...current, notes: event.target.value }))
                   }
                   placeholder="optioneel"
                 />
               </Field>
-              <Field label="E-mail">
-                <Input
-                  type="email"
-                  value={landlordForm.email}
-                  onChange={(event) =>
-                    setLandlordForm((current) => ({ ...current, email: event.target.value }))
-                  }
-                  placeholder="facturen@..."
-                />
-              </Field>
-              <Field label="Telefoon">
-                <Input
-                  value={landlordForm.phone}
-                  onChange={(event) =>
-                    setLandlordForm((current) => ({ ...current, phone: event.target.value }))
-                  }
-                />
-              </Field>
-              <Button onClick={addLandlord}>
-                <Plus className="h-4 w-4 mr-1" />
-                Toevoegen
-              </Button>
             </CardContent>
           </Card>
 
@@ -947,7 +1168,12 @@ function AfsRentPage() {
                             </div>
                           </td>
                           <td className="px-3 py-2">
-                            {landlord?.invoice_name || landlord?.name || "-"}
+                            <div>{landlord?.invoice_name || landlord?.name || "-"}</div>
+                            {landlordAddressLine(landlord) && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {landlordAddressLine(landlord)}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2 tabular-nums">
                             {agreement.start_period} t/m {agreement.end_period ?? "doorlopend"}
@@ -1009,19 +1235,20 @@ function AfsRentPage() {
                       <th className="px-3 py-2 font-medium text-right">Variabel ex</th>
                       <th className="px-3 py-2 font-medium text-right">Totaal incl</th>
                       <th className="px-3 py-2 font-medium">Status</th>
+                      <th className="px-3 py-2 font-medium">Documenten</th>
                     </tr>
                   </thead>
                   <tbody>
                     {invoicesQ.isLoading && (
                       <tr>
-                        <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
                           Laden...
                         </td>
                       </tr>
                     )}
                     {(invoicesQ.data ?? []).length === 0 && !invoicesQ.isLoading && (
                       <tr>
-                        <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
                           Geen facturen vastgelegd voor dit jaar.
                         </td>
                       </tr>
@@ -1048,7 +1275,17 @@ function AfsRentPage() {
                             </div>
                           </td>
                           <td className="px-3 py-2">
-                            {landlord?.invoice_name || landlord?.name || "-"}
+                            <div>{landlord?.invoice_name || landlord?.name || "-"}</div>
+                            {landlord?.email && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {landlord.email}
+                              </div>
+                            )}
+                            {landlordAddressLine(landlord) && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {landlordAddressLine(landlord)}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {formatEUR(invoice.turnover_net)}
@@ -1082,6 +1319,47 @@ function AfsRentPage() {
                                 )}
                               </SelectContent>
                             </Select>
+                            {invoice.sent_at && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                Mail {formatDateTimeNL(invoice.sent_at)}
+                              </div>
+                            )}
+                            {invoice.email_last_error && (
+                              <div className="mt-1 max-w-[220px] text-xs text-destructive">
+                                {invoice.email_last_error}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1">
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                title="PDF downloaden"
+                                disabled={invoiceActionId === `${invoice.id}:download_pdf`}
+                                onClick={() => downloadInvoiceArtifact(invoice, "download_pdf")}
+                              >
+                                <FileText className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                title="UBL downloaden"
+                                disabled={invoiceActionId === `${invoice.id}:download_ubl`}
+                                onClick={() => downloadInvoiceArtifact(invoice, "download_ubl")}
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                title="Mail versturen"
+                                disabled={invoiceActionId === `${invoice.id}:send_email`}
+                                onClick={() => openSendDialog(invoice)}
+                              >
+                                <Mail className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1248,6 +1526,78 @@ function AfsRentPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={Boolean(sendDraft)} onOpenChange={(open) => !open && setSendDraft(null)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Factuur mailen</DialogTitle>
+            <DialogDescription>
+              PDF en UBL worden opnieuw aangemaakt en als bijlage meegestuurd.
+            </DialogDescription>
+          </DialogHeader>
+          {sendDraft && (
+            <div className="space-y-3">
+              <div className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm md:grid-cols-2">
+                <div>
+                  <div className="text-xs text-muted-foreground">Factuur</div>
+                  <div className="font-mono text-xs">{sendDraft.invoice.invoice_number}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Periode</div>
+                  <div>{monthLabel(sendDraft.invoice.period)}</div>
+                </div>
+              </div>
+              <Field label="Ontvanger">
+                <Input
+                  type="email"
+                  value={sendDraft.to}
+                  onChange={(event) =>
+                    setSendDraft((current) =>
+                      current ? { ...current, to: event.target.value } : current,
+                    )
+                  }
+                  placeholder="facturen@..."
+                />
+              </Field>
+              <Field label="Onderwerp">
+                <Input
+                  value={sendDraft.subject}
+                  onChange={(event) =>
+                    setSendDraft((current) =>
+                      current ? { ...current, subject: event.target.value } : current,
+                    )
+                  }
+                />
+              </Field>
+              <Field label="Bericht">
+                <Textarea
+                  value={sendDraft.message}
+                  onChange={(event) =>
+                    setSendDraft((current) =>
+                      current ? { ...current, message: event.target.value } : current,
+                    )
+                  }
+                  rows={6}
+                />
+              </Field>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendDraft(null)}>
+              Annuleren
+            </Button>
+            <Button
+              onClick={sendInvoiceEmail}
+              disabled={Boolean(
+                sendDraft && invoiceActionId === `${sendDraft.invoice.id}:send_email`,
+              )}
+            >
+              <Mail className="h-4 w-4 mr-1" />
+              Versturen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1286,6 +1636,55 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </label>
   );
+}
+
+function emptyLandlordForm() {
+  return {
+    name: "",
+    invoice_name: "",
+    email: "",
+    phone: "",
+    address_line1: "",
+    postal_code: "",
+    city: "",
+    country: "NL",
+    kvk_number: "",
+    vat_number: "",
+    iban: "",
+    notes: "",
+  };
+}
+
+function landlordAddressLine(landlord: LandlordInvoiceDetails | null | undefined) {
+  if (!landlord) return "";
+  return [landlord.address_line1, [landlord.postal_code, landlord.city].filter(Boolean).join(" ")]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function downloadBase64File(payload: InvoiceFunctionPayload) {
+  if (!payload.base64) return;
+  const byteCharacters = atob(payload.base64);
+  const byteNumbers = new Uint8Array(byteCharacters.length);
+  for (let index = 0; index < byteCharacters.length; index += 1) {
+    byteNumbers[index] = byteCharacters.charCodeAt(index);
+  }
+
+  const blob = new Blob([byteNumbers], {
+    type: payload.content_type ?? "application/octet-stream",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = payload.filename ?? "factuur";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function AmountRow({
