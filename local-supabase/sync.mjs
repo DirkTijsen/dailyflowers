@@ -826,6 +826,12 @@ async function sweepExact(pool, options = {}) {
   }
 
   const sinceIso = options.sinceIso ?? (await determineExactSince(pool));
+  const modifiedSinceIso =
+    options.modifiedSinceIso === undefined
+      ? options.sinceIso
+        ? null
+        : await determineExactModifiedSince(pool)
+      : options.modifiedSinceIso;
   const until = determineExactUntil(options.untilIso);
   const untilIso = until.toISOString();
   try {
@@ -833,10 +839,12 @@ async function sweepExact(pool, options = {}) {
       pool,
       "exact_gl",
       "running",
-      `Exact sync gestart vanaf ${sinceIso.slice(0, 10)} t/m ${previousDayLabel(until)}`,
+      `Exact sync gestart vanaf ${sinceIso.slice(0, 10)} t/m ${previousDayLabel(until)}; wijzigingen vanaf ${
+        modifiedSinceIso ? modifiedSinceIso.slice(0, 10) : "n.v.t."
+      }`,
       0,
     );
-    const result = await fetchExactGl(pool, sinceIso, untilIso);
+    const result = await fetchExactGl(pool, sinceIso, untilIso, modifiedSinceIso);
     await recordSweep(
       pool,
       "exact_gl",
@@ -893,10 +901,36 @@ async function determineExactSince(pool) {
   return new Date(Math.max(sinceTime, safeLowerBound)).toISOString();
 }
 
-async function fetchExactGl(pool, sinceIso, untilIso = null) {
+async function determineExactModifiedSince(pool) {
+  const lowerBound = new Date(EXACT_SYNC_FROM).getTime();
+  const safeLowerBound = Number.isFinite(lowerBound) ? lowerBound : 0;
+  const result = await pool.query(
+    `
+      SELECT last_sweep_at
+      FROM public.sync_state
+      WHERE channel = 'exact_gl'
+        AND last_sweep_status = 'ok'
+        AND last_sweep_at IS NOT NULL
+      LIMIT 1
+    `,
+  );
+  const lastOk = result.rows[0]?.last_sweep_at;
+  if (!lastOk) return null;
+
+  const since = new Date(lastOk).getTime() - EXACT_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000;
+  return new Date(Math.max(since, safeLowerBound)).toISOString();
+}
+
+async function fetchExactGl(pool, sinceIso, untilIso = null, modifiedSinceIso = null) {
   const accountRows = await fetchExactGlAccounts();
   const accountMap = await upsertExactGlAccounts(pool, accountRows);
-  const transactions = await syncExactTransactionLines(pool, sinceIso, accountMap, untilIso);
+  const transactions = await syncExactTransactionLines(
+    pool,
+    sinceIso,
+    accountMap,
+    untilIso,
+    modifiedSinceIso,
+  );
   return { accounts: accountRows.length, transactions };
 }
 
@@ -948,7 +982,13 @@ async function fetchExactTransactionLineChunks(start, until, field) {
   return rows;
 }
 
-async function syncExactTransactionLines(pool, sinceIso, accountMap, untilIso = null) {
+async function syncExactTransactionLines(
+  pool,
+  sinceIso,
+  accountMap,
+  untilIso = null,
+  modifiedSinceIso = null,
+) {
   const start = startOfUtcDay(sinceIso);
   const until = determineExactUntil(untilIso);
   if (!start || start >= until) return 0;
@@ -991,10 +1031,9 @@ async function syncExactTransactionLines(pool, sinceIso, accountMap, untilIso = 
     );
   }
 
-  const lowerBound = startOfUtcDay(EXACT_SYNC_FROM);
-  const isInitialSync = lowerBound ? start.getTime() <= lowerBound.getTime() + 60000 : false;
-  if (!isInitialSync) {
-    const modifiedRows = await fetchExactTransactionLineChunks(start, until, "Modified");
+  const modifiedStart = modifiedSinceIso ? startOfUtcDay(modifiedSinceIso) : null;
+  if (modifiedStart && modifiedStart < until) {
+    const modifiedRows = await fetchExactTransactionLineChunks(modifiedStart, until, "Modified");
     const freshModifiedRows = [];
     for (const row of modifiedRows) {
       const key = exactTransactionKey(row);
@@ -1017,7 +1056,7 @@ function previousDayLabel(end) {
   return new Date(end.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-async function fetchExactTransactionLineRange(start, end, field) {
+async function fetchExactTransactionLineRange(start, end, field, depth = 0) {
   const filter = `${field} ge ${toODataDateTime(start)} and ${field} lt ${toODataDateTime(end)}`;
   const rows = await fetchInvantiveODataRows(EXACT_TRANSACTION_LINES_TABLE, {
     select: [
@@ -1049,13 +1088,27 @@ async function fetchExactTransactionLineRange(start, end, field) {
     top: EXACT_PAGE_SIZE,
   });
 
-  if (rows.length >= EXACT_PAGE_SIZE) {
+  if (rows.length < EXACT_PAGE_SIZE) {
+    return rows;
+  }
+
+  const durationMs = end.getTime() - start.getTime();
+  if (durationMs > 1000 && depth < 24) {
+    const midpoint = new Date(start.getTime() + Math.floor(durationMs / 2));
+    const left = await fetchExactTransactionLineRange(start, midpoint, field, depth + 1);
+    const right = await fetchExactTransactionLineRange(midpoint, end, field, depth + 1);
+    return [...left, ...right];
+  }
+
+  if (field === "Modified") {
     throw new Error(
-      `Exact ${field} ${start.toISOString().slice(0, 10)} raakt de limiet van ${EXACT_PAGE_SIZE} regels. Verhoog EXACT_PAGE_SIZE voordat deze dag wordt vervangen.`,
+      `Exact ${field} ${toODataDateTime(start)}-${toODataDateTime(end)} blijft de limiet van ${EXACT_PAGE_SIZE} regels raken. Verfijn de Modified-sync verder voordat deze veilig compleet is.`,
     );
   }
 
-  return rows;
+  throw new Error(
+    `Exact ${field} ${start.toISOString().slice(0, 10)} raakt de limiet van ${EXACT_PAGE_SIZE} regels. Deze datum is niet veilig compleet op te halen via alleen de dagfilter.`,
+  );
 }
 
 function exactTransactionKey(row) {
