@@ -512,7 +512,7 @@ export type Database = {
     }
     Enums: {
       parse_status: "ok" | "parse_error"
-      tx_channel: "shopify_webshop" | "shopify_winkel" | "bold_afs"
+      tx_channel: "shopify_webshop" | "shopify_winkel" | "bold_afs" | "mollie_facturen"
       tx_source: "shopify" | "mollie"
       tx_status:
         | "paid"
@@ -653,7 +653,7 @@ export const Constants = {
   public: {
     Enums: {
       parse_status: ["ok", "parse_error"],
-      tx_channel: ["shopify_webshop", "shopify_winkel", "bold_afs"],
+      tx_channel: ["shopify_webshop", "shopify_winkel", "bold_afs", "mollie_facturen"],
       tx_source: ["shopify", "mollie"],
       tx_status: [
         "paid",

@@ -174,6 +174,7 @@ type SalesDetailRow = {
   paid_at: string | null;
   description_raw: string | null;
   parse_status: string | null;
+  invoice_url?: string | null;
 };
 
 type ShopifyOrderDetailRow = {
@@ -192,6 +193,21 @@ type ShopifyOrderDetailRow = {
   total_shipping: number | string | null;
   total_refunded: number | string | null;
   raw_payload: Record<string, unknown> | null;
+};
+
+type MollieSalesInvoiceDetailRow = {
+  id: string;
+  sales_invoice_id: string;
+  reference: string | null;
+  status: string | null;
+  issued_at: string | null;
+  paid_at: string | null;
+  recipient_name: string | null;
+  recipient_email: string | null;
+  amount_gross: number | string | null;
+  amount_net: number | string | null;
+  vat_amount: number | string | null;
+  invoice_url: string | null;
 };
 
 type SupabaseError = { message: string };
@@ -1136,6 +1152,7 @@ function TransactionDetailDialog({
         detail.channel === "shopify_webshop" ||
         detail.channel === "shopify_winkel";
       const wantsTransactions = !detail.channel || detail.channel === "bold_afs";
+      const wantsMollieInvoices = !detail.channel || detail.channel === "mollie_facturen";
       const rows: SalesDetailRow[] = [];
 
       if (wantsShopify) {
@@ -1170,6 +1187,21 @@ function TransactionDetailDialog({
         const { data, error } = await q;
         if (error) throw error;
         rows.push(...((data ?? []) as SalesDetailRow[]));
+      }
+
+      if (wantsMollieInvoices) {
+        const { data, error } = await (supabase as any)
+          .from("mollie_sales_invoices")
+          .select(
+            "id,sales_invoice_id,reference,status,issued_at,paid_at,recipient_name,recipient_email,amount_gross,amount_net,vat_amount,invoice_url",
+          )
+          .eq("status", "paid")
+          .gte("paid_at", range.startIso)
+          .lt("paid_at", range.endIso)
+          .order("paid_at", { ascending: false, nullsFirst: false })
+          .limit(5000);
+        if (error) throw error;
+        rows.push(...((data ?? []) as MollieSalesInvoiceDetailRow[]).map(mapMollieInvoiceDetail));
       }
 
       return rows.sort(
@@ -1312,7 +1344,19 @@ function SalesDetailTable({ rows }: { rows: SalesDetailRow[] }) {
             </td>
             <td className="whitespace-nowrap px-3 py-2">{channelLabel(row.channel)}</td>
             <td className="whitespace-nowrap px-3 py-2">
-              {row.invoice_number || row.external_id || "-"}
+              {row.invoice_url ? (
+                <a
+                  href={row.invoice_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary underline"
+                >
+                  {row.invoice_number || row.external_id || "Open"}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                row.invoice_number || row.external_id || "-"
+              )}
             </td>
             <td className="whitespace-nowrap px-3 py-2">{row.article_number || "-"}</td>
             <td className="px-3 py-2">{row.product_name || row.description_raw || "-"}</td>
@@ -1357,6 +1401,27 @@ function mapShopifyOrderDetail(row: ShopifyOrderDetailRow): SalesDetailRow {
       .filter(Boolean)
       .join(" | "),
     parse_status: "ok",
+  };
+}
+
+function mapMollieInvoiceDetail(row: MollieSalesInvoiceDetailRow): SalesDetailRow {
+  return {
+    id: row.id,
+    external_id: row.sales_invoice_id,
+    source: "mollie_sales_invoice",
+    channel: "mollie_facturen",
+    article_number: null,
+    product_name: row.recipient_name || row.recipient_email || "Mollie factuur",
+    amount_gross: row.amount_gross,
+    amount_net: row.amount_net,
+    vat_amount: row.vat_amount,
+    vat_rate: null,
+    invoice_number: row.reference ?? row.sales_invoice_id,
+    status: row.status,
+    paid_at: row.paid_at ?? row.issued_at,
+    description_raw: row.recipient_email,
+    parse_status: "ok",
+    invoice_url: row.invoice_url,
   };
 }
 

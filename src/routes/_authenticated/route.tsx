@@ -35,6 +35,7 @@ import {
   HandCoins,
   WalletCards,
   Banknote,
+  ReceiptText,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -54,6 +55,7 @@ const nav = [
   { to: "/winst-verlies", label: "W&V", icon: BarChart3 },
   { to: "/btw-export", label: "Btw-export", icon: FileSpreadsheet },
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
+  { to: "/mollie-facturen", label: "Mollie facturen", icon: ReceiptText },
   { to: "/openstaand-klanten", label: "Openstaand klanten", icon: Users },
   { to: "/instellingen", label: "Instellingen", icon: Settings },
 ] as const;

@@ -17,8 +17,15 @@ const SHOPIFY_CASH_SYNC_FROM =
   process.env.SHOPIFY_CASH_SYNC_FROM ?? process.env.SHOPIFY_SYNC_FROM ?? "2026-01-01T00:00:00Z";
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-04";
 const MOLLIE_SYNC_FROM = process.env.MOLLIE_SYNC_FROM ?? "2026-01-01T00:00:00Z";
+const MOLLIE_SALES_INVOICE_SYNC_FROM =
+  process.env.MOLLIE_SALES_INVOICE_SYNC_FROM ?? process.env.MOLLIE_SYNC_FROM ?? "2026-01-01T00:00:00Z";
 const MOLLIE_INCREMENTAL_OVERLAP_HOURS = Number(
   process.env.MOLLIE_INCREMENTAL_OVERLAP_HOURS ?? 72,
+);
+const MOLLIE_SALES_INVOICE_INCREMENTAL_OVERLAP_HOURS = Number(
+  process.env.MOLLIE_SALES_INVOICE_INCREMENTAL_OVERLAP_HOURS ??
+    process.env.MOLLIE_INCREMENTAL_OVERLAP_HOURS ??
+    72,
 );
 const MOLLIE_INITIAL_LOOKBACK_DAYS = Number(process.env.MOLLIE_INITIAL_LOOKBACK_DAYS ?? 7);
 const MOLLIE_FETCH_TIMEOUT_MS = Number(process.env.MOLLIE_FETCH_TIMEOUT_MS ?? 30000);
@@ -117,6 +124,27 @@ const mollieTransactionColumns = [
   "sales_action",
   "sales_transaction_id",
   "raw_payload",
+];
+
+const mollieSalesInvoiceColumns = [
+  "sales_invoice_id",
+  "reference",
+  "status",
+  "issued_at",
+  "paid_at",
+  "due_at",
+  "profile_id",
+  "customer_id",
+  "recipient_name",
+  "recipient_email",
+  "currency",
+  "amount_gross",
+  "amount_net",
+  "vat_amount",
+  "discount_amount",
+  "invoice_url",
+  "raw_payload",
+  "synced_at",
 ];
 
 const shopifyPaymentPayoutColumns = [
@@ -260,6 +288,7 @@ export async function markSweepRunning(pool) {
     recordSweep(pool, "shopify_payments", "running", "Shopify Payments sync gestart...", 0),
     recordSweep(pool, "shopify_cash", "running", "Shopify kassasessies sync gestart...", 0),
     recordSweep(pool, "bold_afs", "running", "Sweep gestart...", 0),
+    recordSweep(pool, "mollie_facturen", "running", "Mollie facturen sync gestart...", 0),
     recordSweep(pool, "exact_gl", "running", "Exact sync gestart...", 0),
   ]);
 }
@@ -267,6 +296,7 @@ export async function markSweepRunning(pool) {
 export async function runSweep(pool) {
   await sweepShopify(pool);
   await sweepMollie(pool);
+  await sweepMollieSalesInvoices(pool);
   await sweepExact(pool, { throwOnError: false });
 }
 
@@ -1303,6 +1333,37 @@ export async function runMollieSweepFrom(pool, sinceIso) {
   }
 }
 
+async function sweepMollieSalesInvoices(pool) {
+  const sinceIso = await determineMollieSalesInvoiceSince(pool);
+  await runMollieSalesInvoicesSweepFrom(pool, sinceIso);
+}
+
+export async function runMollieSalesInvoicesSweepFrom(pool, sinceIso = null) {
+  const startIso = sinceIso ?? (await determineMollieSalesInvoiceSince(pool));
+  try {
+    await recordSweep(
+      pool,
+      "mollie_facturen",
+      "running",
+      `Mollie facturen sync vanaf ${startIso}`,
+      0,
+    );
+    const count = await fetchMollieSalesInvoices(pool, startIso);
+    await recordSweep(
+      pool,
+      "mollie_facturen",
+      "ok",
+      `Mollie facturen sync voltooid vanaf ${startIso}`,
+      count,
+    );
+    return count;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordSweep(pool, "mollie_facturen", "error", message, 0);
+    throw error;
+  }
+}
+
 export async function runExactSweepFrom(pool, sinceIso = null, options = {}) {
   return sweepExact(pool, { ...options, sinceIso, throwOnError: options.throwOnError ?? true });
 }
@@ -1324,6 +1385,27 @@ async function determineMollieSince(pool) {
   const since = lastOk
     ? new Date(lastOk).getTime() - MOLLIE_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
     : Date.now() - MOLLIE_INITIAL_LOOKBACK_DAYS * 24 * 3600 * 1000;
+
+  return new Date(Math.max(since, safeLowerBound)).toISOString();
+}
+
+async function determineMollieSalesInvoiceSince(pool) {
+  const lowerBound = new Date(MOLLIE_SALES_INVOICE_SYNC_FROM).getTime();
+  const safeLowerBound = Number.isFinite(lowerBound) ? lowerBound : 0;
+  const result = await pool.query(
+    `
+      SELECT last_sweep_at
+      FROM public.sync_state
+      WHERE channel = 'mollie_facturen'
+        AND last_sweep_status = 'ok'
+        AND last_sweep_at IS NOT NULL
+      LIMIT 1
+    `,
+  );
+  const lastOk = result.rows[0]?.last_sweep_at;
+  const since = lastOk
+    ? new Date(lastOk).getTime() - MOLLIE_SALES_INVOICE_INCREMENTAL_OVERLAP_HOURS * 3600 * 1000
+    : safeLowerBound;
 
   return new Date(Math.max(since, safeLowerBound)).toISOString();
 }
@@ -1961,6 +2043,212 @@ async function fetchMolliePayments(pool, sinceIso) {
   }
 
   return count;
+}
+
+async function fetchMollieSalesInvoices(pool, sinceIso) {
+  const apiKey = await getMollieApiKey(pool);
+  const since = new Date(sinceIso).getTime();
+  let url = "https://api.mollie.com/v2/sales-invoices?limit=100";
+  let count = 0;
+  let page = 0;
+
+  while (url) {
+    const response = await fetchWithRetry(
+      url,
+      {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/hal+json" },
+      },
+      3,
+      MOLLIE_FETCH_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      throw new Error(`Mollie Sales Invoices ${response.status}: ${shorten(await response.text())}`);
+    }
+
+    page += 1;
+    const data = await response.json();
+    const invoices = mollieEmbeddedList(data, [
+      "salesInvoices",
+      "sales_invoices",
+      "sales-invoices",
+      "invoices",
+    ]);
+    let reachedEnd = false;
+
+    for (const invoice of invoices) {
+      const invoiceTime = new Date(
+        invoice.paidAt ?? invoice.issuedAt ?? invoice.createdAt ?? invoice.created_at ?? 0,
+      ).getTime();
+      if (Number.isFinite(invoiceTime) && invoiceTime < since) {
+        reachedEnd = true;
+        continue;
+      }
+
+      await processMollieSalesInvoice(pool, invoice);
+      count += 1;
+    }
+
+    if (page % 10 === 0) {
+      console.log(`mollie sales invoices progress: ${count} invoices processed, page ${page}`);
+    }
+
+    if (reachedEnd) break;
+    url = data._links?.next?.href ?? null;
+  }
+
+  return count;
+}
+
+function mollieEmbeddedList(data, keys) {
+  const embedded = data?._embedded ?? {};
+  for (const key of keys) {
+    const value = embedded[key] ?? data?.[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+async function processMollieSalesInvoice(pool, invoice) {
+  const row = mapMollieSalesInvoice(invoice);
+  if (!row.sales_invoice_id) return false;
+
+  await upsertRows(pool, "public.mollie_sales_invoices", mollieSalesInvoiceColumns, [row], [
+    "sales_invoice_id",
+  ]);
+  return true;
+}
+
+function mapMollieSalesInvoice(invoice) {
+  const gross =
+    firstMollieMoney([
+      invoice.amount,
+      invoice.totalAmount,
+      invoice.totalAmountIncludingVat,
+      invoice.totalAmountIncludingVAT,
+      invoice.amountDue,
+      invoice.amountPaid,
+      invoice.total,
+    ]) ?? sumInvoiceLineAmounts(invoice, ["totalAmount", "amount", "price"]);
+  const vat =
+    firstMollieMoney([
+      invoice.vatAmount,
+      invoice.totalVatAmount,
+      invoice.totalVATAmount,
+      invoice.taxAmount,
+    ]) ?? sumInvoiceLineAmounts(invoice, ["vatAmount", "taxAmount"]);
+  const net =
+    firstMollieMoney([
+      invoice.totalAmountExcludingVat,
+      invoice.totalAmountExcludingVAT,
+      invoice.subtotalAmount,
+      invoice.netAmount,
+    ]) ?? roundMoney(Number(gross ?? 0) - Number(vat ?? 0));
+  const discount =
+    firstMollieMoney([invoice.discount?.amount, invoice.discountAmount]) ??
+    sumInvoiceLineAmounts(invoice, ["discountAmount"]);
+  const recipient = invoice.recipient ?? invoice.customer ?? invoice.consumer ?? {};
+  const recipientName =
+    cleanText(
+      recipient.organizationName ??
+        recipient.companyName ??
+        recipient.name ??
+        [recipient.givenName, recipient.familyName].filter(Boolean).join(" "),
+    ) || null;
+  const currency =
+    moneyCurrencyFromAny(invoice.amount) ??
+    moneyCurrencyFromAny(invoice.totalAmount) ??
+    (cleanText(invoice.currency) || "EUR");
+
+  return {
+    sales_invoice_id: cleanText(invoice.id),
+    reference:
+      cleanText(invoice.reference ?? invoice.invoiceNumber ?? invoice.number ?? invoice.recipientIdentifier) ||
+      null,
+    status: cleanText(invoice.status).toLowerCase() || "unknown",
+    issued_at: parseNullableIso(invoice.issuedAt ?? invoice.createdAt ?? invoice.created_at),
+    paid_at: parseNullableIso(invoice.paidAt ?? invoice.paid_at),
+    due_at: parseNullableDate(invoice.dueAt ?? invoice.dueDate ?? invoice.paymentTerm?.dueAt),
+    profile_id: cleanText(invoice.profileId ?? invoice.profile_id) || null,
+    customer_id: cleanText(invoice.customerId ?? invoice.customer_id ?? recipient.customerId) || null,
+    recipient_name: recipientName,
+    recipient_email: cleanText(recipient.email ?? invoice.email) || null,
+    currency,
+    amount_gross: roundMoney(gross ?? 0),
+    amount_net: roundMoney(net ?? 0),
+    vat_amount: roundMoney(vat ?? 0),
+    discount_amount: roundMoney(discount ?? 0),
+    invoice_url: mollieInvoiceUrl(invoice),
+    raw_payload: invoice,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+function firstMollieMoney(values) {
+  for (const value of values) {
+    const amount = mollieMoneyValue(value);
+    if (amount !== null) return amount;
+  }
+  return null;
+}
+
+function mollieMoneyValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return roundMoney(value);
+  if (typeof value === "string") {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? roundMoney(numeric) : null;
+  }
+  const nested = value.value ?? value.amount ?? value.price;
+  if (nested === null || nested === undefined || nested === "") return null;
+  const numeric = Number(nested);
+  return Number.isFinite(numeric) ? roundMoney(numeric) : null;
+}
+
+function moneyCurrencyFromAny(value) {
+  if (!value || typeof value !== "object") return null;
+  return cleanText(value.currency ?? value.currencyCode) || null;
+}
+
+function sumInvoiceLineAmounts(invoice, keys) {
+  const lines = Array.isArray(invoice.lines) ? invoice.lines : [];
+  let sum = 0;
+  let found = false;
+  for (const line of lines) {
+    for (const key of keys) {
+      const amount = mollieMoneyValue(line?.[key]);
+      if (amount !== null) {
+        sum += amount;
+        found = true;
+        break;
+      }
+    }
+  }
+  return found ? roundMoney(sum) : null;
+}
+
+function mollieInvoiceUrl(invoice) {
+  const links = invoice._links ?? {};
+  const candidate =
+    links.dashboard?.href ??
+    links.pdf?.href ??
+    links.self?.href ??
+    invoice.dashboardUrl ??
+    invoice.invoiceUrl ??
+    invoice.pdfUrl;
+  const url = cleanText(candidate);
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+function parseNullableIso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function parseNullableDate(value) {
+  const iso = parseNullableIso(value);
+  return iso ? iso.slice(0, 10) : null;
 }
 
 export async function processShopifyOrder(pool, order, options = {}) {

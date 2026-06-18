@@ -13,6 +13,7 @@ import {
   processShopifyWebhook,
   runShopifyCashSweepFrom,
   runExactSweepFrom,
+  runMollieSalesInvoicesSweepFrom,
   runShopifyPaymentsSweepFrom,
   runShopifySweep,
   runSweep,
@@ -464,6 +465,46 @@ const resources = {
       "updated_at",
     ],
     writable: true,
+  },
+  mollie_sales_invoices: {
+    table: "public.mollie_sales_invoices",
+    columns: [
+      "id",
+      "sales_invoice_id",
+      "reference",
+      "status",
+      "issued_at",
+      "paid_at",
+      "due_at",
+      "profile_id",
+      "customer_id",
+      "recipient_name",
+      "recipient_email",
+      "currency",
+      "amount_gross",
+      "amount_net",
+      "vat_amount",
+      "discount_amount",
+      "invoice_url",
+      "raw_payload",
+      "synced_at",
+      "created_at",
+      "updated_at",
+    ],
+    writable: true,
+  },
+  vw_mollie_sales_invoices_monthly: {
+    table: "public.vw_mollie_sales_invoices_monthly",
+    columns: [
+      "period",
+      "invoice_count",
+      "paid_count",
+      "open_count",
+      "gross_total",
+      "net_total",
+      "vat_total",
+    ],
+    writable: false,
   },
   users: {
     table: "(SELECT id, email, created_at FROM local_auth.users) AS users",
@@ -1436,6 +1477,31 @@ async function handleFunction(req, res, url) {
     const paymentId = await readMolliePaymentId(req);
     await processMollieWebhook(pool, paymentId);
     sendJson(res, 200, { ok: true, local: true });
+    return;
+  }
+
+  if (name === "mollie-sales-invoices-sync") {
+    const since = url.searchParams.get("since");
+    await pool.query(
+      `
+        INSERT INTO public.sync_state (channel, last_sweep_at, last_sweep_status, last_sweep_message, records_processed, updated_at)
+        VALUES ('mollie_facturen', now(), 'running', 'Mollie facturen sync gestart...', 0, now())
+        ON CONFLICT (channel) DO UPDATE SET
+          last_sweep_at = EXCLUDED.last_sweep_at,
+          last_sweep_status = EXCLUDED.last_sweep_status,
+          last_sweep_message = EXCLUDED.last_sweep_message,
+          records_processed = EXCLUDED.records_processed,
+          updated_at = now()
+      `,
+    );
+    runMollieSalesInvoicesSweepFrom(pool, since).catch((error) =>
+      console.error("local mollie-sales-invoices-sync failed", error),
+    );
+    sendJson(res, 202, {
+      status: "started",
+      local: true,
+      message: "Mollie facturen sync draait op de achtergrond.",
+    });
     return;
   }
 

@@ -13,7 +13,7 @@ export const PL_SECTIONS = [
   { value: "other", label: "Overig" },
 ] as const;
 
-export const CHANNELS = ["shopify_webshop", "shopify_winkel", "bold_afs"] as const;
+export const CHANNELS = ["shopify_webshop", "shopify_winkel", "bold_afs", "mollie_facturen"] as const;
 
 export type PlSection = (typeof PL_SECTIONS)[number]["value"];
 export type SalesChannel = (typeof CHANNELS)[number];

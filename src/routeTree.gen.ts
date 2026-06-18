@@ -17,6 +17,7 @@ import { Route as AuthenticatedTransactiesRouteImport } from './routes/_authenti
 import { Route as AuthenticatedShopifyBetalingenRouteImport } from './routes/_authenticated/shopify-betalingen'
 import { Route as AuthenticatedOpenstaandKlantenRouteImport } from './routes/_authenticated/openstaand-klanten'
 import { Route as AuthenticatedMollieTransactiesRouteImport } from './routes/_authenticated/mollie-transacties'
+import { Route as AuthenticatedMollieFacturenRouteImport } from './routes/_authenticated/mollie-facturen'
 import { Route as AuthenticatedKassaAansluitingRouteImport } from './routes/_authenticated/kassa-aansluiting'
 import { Route as AuthenticatedInstellingenRouteImport } from './routes/_authenticated/instellingen'
 import { Route as AuthenticatedImportCsvRouteImport } from './routes/_authenticated/import-csv'
@@ -72,6 +73,12 @@ const AuthenticatedMollieTransactiesRoute =
   AuthenticatedMollieTransactiesRouteImport.update({
     id: '/mollie-transacties',
     path: '/mollie-transacties',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedMollieFacturenRoute =
+  AuthenticatedMollieFacturenRouteImport.update({
+    id: '/mollie-facturen',
+    path: '/mollie-facturen',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedKassaAansluitingRoute =
@@ -154,6 +161,7 @@ export interface FileRoutesByFullPath {
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
   '/kassa-aansluiting': typeof AuthenticatedKassaAansluitingRoute
+  '/mollie-facturen': typeof AuthenticatedMollieFacturenRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
@@ -175,6 +183,7 @@ export interface FileRoutesByTo {
   '/import-csv': typeof AuthenticatedImportCsvRoute
   '/instellingen': typeof AuthenticatedInstellingenRoute
   '/kassa-aansluiting': typeof AuthenticatedKassaAansluitingRoute
+  '/mollie-facturen': typeof AuthenticatedMollieFacturenRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
@@ -198,6 +207,7 @@ export interface FileRoutesById {
   '/_authenticated/import-csv': typeof AuthenticatedImportCsvRoute
   '/_authenticated/instellingen': typeof AuthenticatedInstellingenRoute
   '/_authenticated/kassa-aansluiting': typeof AuthenticatedKassaAansluitingRoute
+  '/_authenticated/mollie-facturen': typeof AuthenticatedMollieFacturenRoute
   '/_authenticated/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/_authenticated/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/_authenticated/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
@@ -221,6 +231,7 @@ export interface FileRouteTypes {
     | '/import-csv'
     | '/instellingen'
     | '/kassa-aansluiting'
+    | '/mollie-facturen'
     | '/mollie-transacties'
     | '/openstaand-klanten'
     | '/shopify-betalingen'
@@ -242,6 +253,7 @@ export interface FileRouteTypes {
     | '/import-csv'
     | '/instellingen'
     | '/kassa-aansluiting'
+    | '/mollie-facturen'
     | '/mollie-transacties'
     | '/openstaand-klanten'
     | '/shopify-betalingen'
@@ -264,6 +276,7 @@ export interface FileRouteTypes {
     | '/_authenticated/import-csv'
     | '/_authenticated/instellingen'
     | '/_authenticated/kassa-aansluiting'
+    | '/_authenticated/mollie-facturen'
     | '/_authenticated/mollie-transacties'
     | '/_authenticated/openstaand-klanten'
     | '/_authenticated/shopify-betalingen'
@@ -334,6 +347,13 @@ declare module '@tanstack/react-router' {
       path: '/mollie-transacties'
       fullPath: '/mollie-transacties'
       preLoaderRoute: typeof AuthenticatedMollieTransactiesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/mollie-facturen': {
+      id: '/_authenticated/mollie-facturen'
+      path: '/mollie-facturen'
+      fullPath: '/mollie-facturen'
+      preLoaderRoute: typeof AuthenticatedMollieFacturenRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/kassa-aansluiting': {
@@ -449,6 +469,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedImportCsvRoute: typeof AuthenticatedImportCsvRoute
   AuthenticatedInstellingenRoute: typeof AuthenticatedInstellingenRoute
   AuthenticatedKassaAansluitingRoute: typeof AuthenticatedKassaAansluitingRoute
+  AuthenticatedMollieFacturenRoute: typeof AuthenticatedMollieFacturenRoute
   AuthenticatedMollieTransactiesRoute: typeof AuthenticatedMollieTransactiesRoute
   AuthenticatedOpenstaandKlantenRoute: typeof AuthenticatedOpenstaandKlantenRoute
   AuthenticatedShopifyBetalingenRoute: typeof AuthenticatedShopifyBetalingenRoute
@@ -468,6 +489,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedImportCsvRoute: AuthenticatedImportCsvRoute,
   AuthenticatedInstellingenRoute: AuthenticatedInstellingenRoute,
   AuthenticatedKassaAansluitingRoute: AuthenticatedKassaAansluitingRoute,
+  AuthenticatedMollieFacturenRoute: AuthenticatedMollieFacturenRoute,
   AuthenticatedMollieTransactiesRoute: AuthenticatedMollieTransactiesRoute,
   AuthenticatedOpenstaandKlantenRoute: AuthenticatedOpenstaandKlantenRoute,
   AuthenticatedShopifyBetalingenRoute: AuthenticatedShopifyBetalingenRoute,
