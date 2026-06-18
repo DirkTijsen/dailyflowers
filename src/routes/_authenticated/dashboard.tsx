@@ -10,6 +10,25 @@ import { formatEUR, channelLabels, currentMonth, monthLabel, formatDateTimeNL } 
 import { toast } from "sonner";
 import { FileText, RefreshCw, Store, ShoppingCart, Cpu, ReceiptText } from "lucide-react";
 
+type RevenueActualRow = {
+  period: string;
+  channel: string;
+  tx_count: number;
+  gross_total: number;
+  net_total: number;
+  vat_total: number;
+};
+
+type WefactDashboardInvoice = {
+  id: string;
+  category: string | null;
+  amount_gross: number | string | null;
+  amount_net: number | string | null;
+  vat_amount: number | string | null;
+};
+
+const WEFACT_NON_CUSTOMER_CATEGORIES = new Set(["omzethuur", "facilitair", "energie"]);
+
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Daily Flowers" }] }),
   component: Dashboard,
@@ -20,6 +39,7 @@ function Dashboard() {
   const [year, setYear] = useState<string>(initialYear);
   const [month, setMonth] = useState<string>(initialMonth);
   const period = `${year}-${month}`;
+  const nextPeriod = nextMonth(period);
 
   const channelQ = useQuery({
     queryKey: ["vw_monthly_revenue_actuals", period],
@@ -29,7 +49,24 @@ function Dashboard() {
         .select("*")
         .eq("period", period);
       if (error) throw error;
-      return data as Array<{ period: string; channel: string; tx_count: number; gross_total: number; net_total: number; vat_total: number }>;
+      return data as RevenueActualRow[];
+    },
+  });
+
+  const wefactCustomerInvoicesQ = useQuery({
+    queryKey: ["dashboard-wefact-customer-invoices", period],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("wefact_invoices")
+        .select("id,category,amount_gross,amount_net,vat_amount")
+        .neq("status", "canceled")
+        .gte("invoice_date", `${period}-01`)
+        .lt("invoice_date", `${nextPeriod}-01`)
+        .limit(1000);
+      if (error) throw error;
+      return ((data ?? []) as WefactDashboardInvoice[]).filter(
+        (invoice) => !WEFACT_NON_CUSTOMER_CATEGORIES.has(invoice.category ?? ""),
+      );
     },
   });
 
@@ -67,7 +104,10 @@ function Dashboard() {
   }
 
 
-  const byChannel = (c: string) => channelQ.data?.find((x) => x.channel === c);
+  const byChannel = (c: string) => {
+    if (c === "wefact_facturen") return wefactCustomerInvoiceTotals(wefactCustomerInvoicesQ.data ?? []);
+    return channelQ.data?.find((x) => x.channel === c);
+  };
   const cards = [
     { key: "shopify_webshop", icon: ShoppingCart },
     { key: "shopify_winkel", icon: Store },
@@ -129,7 +169,7 @@ function Dashboard() {
                     : key === "mollie_facturen"
                       ? "betaalde facturen"
                       : key === "wefact_facturen"
-                        ? "facturen"
+                        ? "klantfacturen"
                         : "btw-factuurorders"}
                 </CardDescription>
               </CardHeader>
@@ -232,4 +272,30 @@ function monthOptions() {
       label: monthLabel(`2000-${month}`).replace(" 2000", ""),
     };
   });
+}
+
+function nextMonth(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const date = new Date(year, month, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function wefactCustomerInvoiceTotals(invoices: WefactDashboardInvoice[]): RevenueActualRow {
+  return invoices.reduce(
+    (sum, invoice) => ({
+      ...sum,
+      tx_count: sum.tx_count + 1,
+      gross_total: sum.gross_total + Number(invoice.amount_gross ?? 0),
+      net_total: sum.net_total + Number(invoice.amount_net ?? 0),
+      vat_total: sum.vat_total + Number(invoice.vat_amount ?? 0),
+    }),
+    {
+      period: "",
+      channel: "wefact_facturen",
+      tx_count: 0,
+      gross_total: 0,
+      net_total: 0,
+      vat_total: 0,
+    },
+  );
 }
