@@ -55,8 +55,6 @@ const nav = [
   { to: "/winst-verlies", label: "W&V", icon: BarChart3 },
   { to: "/btw-export", label: "Btw-export", icon: FileSpreadsheet },
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
-  { to: "/mollie-facturen", label: "Mollie facturen", icon: ReceiptText },
-  { to: "/wefact-facturen", label: "WeFact facturen", icon: FileText },
   { to: "/openstaand-klanten", label: "Openstaand klanten", icon: Users },
   { to: "/instellingen", label: "Instellingen", icon: Settings },
 ] as const;
@@ -64,9 +62,12 @@ const nav = [
 const beheerNav = [
   { to: "/transacties", label: "Verkooptransacties", icon: ListOrdered },
   { to: "/mollie-transacties", label: "Mollie transacties", icon: CreditCard },
+  { to: "/mollie-facturen", label: "Mollie facturen", icon: ReceiptText },
+  { to: "/wefact-facturen", label: "WeFact facturen", icon: FileText },
   { to: "/shopify-betalingen", label: "Shopify betalingen", icon: WalletCards },
   { to: "/kassa-aansluiting", label: "Kassa aansluiting", icon: Banknote },
   { to: "/exact-transacties", label: "Exact transacties", icon: FileText },
+  { to: "/omzetaansluiting", label: "Omzetaansluiting Exact <> App Data", icon: Scale },
   { to: "/bold-afs-aansluiting", label: "Bold <> Mollie aansluiting", icon: Scale },
   { to: "/grootboek", label: "Grootboek", icon: BookOpen },
   { to: "/import-csv", label: "CSV import", icon: Upload },

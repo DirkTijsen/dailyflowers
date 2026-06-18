@@ -62,13 +62,6 @@ type SalesPeriodRow = {
   vat_total: number;
 };
 
-type GlRevenueSourceRow = {
-  period: string;
-  revenue_source: "shopify" | "mollie_journal";
-  tx_count: number;
-  net_total: number;
-};
-
 type PlBudgetLine = {
   period: string;
   section: string;
@@ -104,7 +97,6 @@ type DetailBase = {
   channel?: string;
   accountCodes?: string[];
   invertGlSign?: boolean;
-  revenueSource?: GlRevenueSourceRow["revenue_source"];
 };
 
 type DetailSelection = DetailBase & {
@@ -126,23 +118,6 @@ type PlRow = {
   budgetYtd?: number;
   budgetOnly?: boolean;
   detailByPeriod?: Record<string, DetailBase>;
-};
-
-type ReconciliationRow = {
-  key: string;
-  period: string;
-  gl: number;
-  own: number;
-  diff: number;
-  shopifyDiff: number;
-  mollieDiff: number;
-  glMollie: number;
-  ownMollie: number;
-  source: "Grootboek" | "Eigen data";
-  glDetail: DetailBase;
-  ownDetail: DetailBase;
-  glMollieDetail: DetailBase;
-  ownMollieDetail: DetailBase;
 };
 
 type GlDetailRow = {
@@ -309,19 +284,6 @@ function ProfitLossPage() {
     enabled: months.length > 0,
   });
 
-  const glRevenueSourceQ = useQuery({
-    queryKey: ["wv-gl-revenue-source-monthly", months],
-    queryFn: async () => {
-      const { data, error } = await db
-        .from<GlRevenueSourceRow>("vw_gl_revenue_source_monthly")
-        .select("*")
-        .in("period", months);
-      if (error) throw error;
-      return (data ?? []) as GlRevenueSourceRow[];
-    },
-    enabled: months.length > 0,
-  });
-
   const budgetsQ = useQuery({
     queryKey: ["wv-pl-budget-lines", months],
     queryFn: async () => {
@@ -352,13 +314,12 @@ function ProfitLossPage() {
     enabled: months.length > 0,
   });
 
-  const { rows, reconciliation } = useMemo(
+  const { rows } = useMemo(
     () =>
       buildProfitLoss({
         months,
         glRows: glQ.data ?? [],
         salesRows: salesQ.data ?? [],
-        glRevenueSourceRows: glRevenueSourceQ.data ?? [],
         budgetLines: budgetsQ.data ?? [],
         revenueBudgets: revenueBudgetsQ.data ?? [],
         accounts: accountsQ.data ?? [],
@@ -367,7 +328,6 @@ function ProfitLossPage() {
       accountsQ.data,
       budgetsQ.data,
       glQ.data,
-      glRevenueSourceQ.data,
       months,
       revenueBudgetsQ.data,
       salesQ.data,
@@ -393,16 +353,6 @@ function ProfitLossPage() {
       period,
       amount,
       title: `${row.label} - ${monthLabel(period)}`,
-    });
-  }
-
-  function openReconciliationDetail(base: DetailBase, period: string, amount: number) {
-    if (Math.abs(amount) < 0.005) return;
-    setDetail({
-      ...base,
-      period,
-      amount,
-      title: `${base.label} - ${monthLabel(period)}`,
     });
   }
 
@@ -697,46 +647,6 @@ function ProfitLossPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Omzetaansluiting GL versus eigen data</CardTitle>
-          <CardDescription>
-            Grootboekomzet tegenover dezelfde eigen omzetactuals die hierboven in de W&V als
-            omzetregels worden gebruikt.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="bg-muted/50 text-left">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Maand</th>
-                  <th className="px-3 py-2 text-right font-medium">Grootboek omzet</th>
-                  <th className="px-3 py-2 text-right font-medium">Eigen omzet ex btw</th>
-                  <th className="px-3 py-2 text-right font-medium">Totaal verschil</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reconciliation.map((row) => (
-                  <tr key={row.key} className="border-t hover:bg-muted/30">
-                    <td className="px-3 py-2 tabular-nums">{monthLabel(row.period)}</td>
-                    <AmountCell
-                      value={row.gl}
-                      onClick={() => openReconciliationDetail(row.glDetail, row.period, row.gl)}
-                    />
-                    <AmountCell
-                      value={row.own}
-                      onClick={() => openReconciliationDetail(row.ownDetail, row.period, row.own)}
-                    />
-                    <AmountCell value={row.diff} toneBySign />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
       <TransactionDetailDialog detail={detail} onOpenChange={(open) => !open && setDetail(null)} />
     </div>
   );
@@ -746,7 +656,6 @@ function buildProfitLoss({
   months,
   glRows,
   salesRows,
-  glRevenueSourceRows,
   budgetLines,
   revenueBudgets,
   accounts,
@@ -754,43 +663,19 @@ function buildProfitLoss({
   months: string[];
   glRows: GlPeriodRow[];
   salesRows: SalesPeriodRow[];
-  glRevenueSourceRows: GlRevenueSourceRow[];
   budgetLines: PlBudgetLine[];
   revenueBudgets: RevenueBudgetRow[];
   accounts: GlAccount[];
 }) {
   const accountsByCode = new Map(accounts.map((account) => [account.account_code, account]));
-  const glRevenueTotal = new Map<string, number>();
-  const glAllRevenueCodes = new Map<string, Set<string>>();
   const ownRevenue = new Map<string, number>();
-  const ownRevenueTotal = new Map<string, number>();
-  const glRevenueBySource = new Map<string, number>();
   const rows: PlRow[] = [];
-  const reconciliation: ReconciliationRow[] = [];
   const revenueBudgetByChannel = revenueBudgetValuesByChannel(revenueBudgets, budgetLines, months);
   const budgetBySection = budgetLinesBySection(budgetLines, months);
   const budgetRowsBySection = budgetOnlyRowsBySection(budgetLines, months);
 
-  for (const row of glRows) {
-    const account = accountsByCode.get(row.account_code);
-    if (account && account.active === false) continue;
-    const statement = String(account?.statement_type ?? "").toLowerCase();
-    if (statement && !statement.includes("winst")) continue;
-    const amount = Number(row.amount ?? 0);
-    if (row.pl_section === "revenue") {
-      const normalized = -amount;
-      addSet(glAllRevenueCodes, row.period, row.account_code);
-      add(glRevenueTotal, row.period, normalized);
-    }
-  }
-
   for (const row of salesRows) {
     add(ownRevenue, `${row.period}|${row.channel}`, Number(row.net_total ?? 0));
-    add(ownRevenueTotal, row.period, Number(row.net_total ?? 0));
-  }
-
-  for (const row of glRevenueSourceRows) {
-    add(glRevenueBySource, `${row.period}|${row.revenue_source}`, Number(row.net_total ?? 0));
   }
 
   const revenueTotal = blankValues(months);
@@ -833,51 +718,6 @@ function buildProfitLoss({
       source: "sales",
       label: "Omzet totaal verkooptransacties",
     };
-  }
-
-  for (const period of months) {
-    const gl = glRevenueTotal.get(period) ?? 0;
-    const own = ownRevenueTotal.get(period) ?? 0;
-    const glMollie = glRevenueBySource.get(`${period}|mollie_journal`) ?? 0;
-    const ownShopify =
-      (ownRevenue.get(`${period}|shopify_webshop`) ?? 0) +
-      (ownRevenue.get(`${period}|shopify_winkel`) ?? 0);
-    const ownMollie = ownRevenue.get(`${period}|bold_afs`) ?? 0;
-    const mollieDelta = glMollie - ownMollie;
-    reconciliation.push({
-      key: period,
-      period,
-      gl,
-      own,
-      diff: gl - own,
-      shopifyDiff: mollieDelta - ownShopify,
-      mollieDiff: mollieDelta,
-      glMollie,
-      ownMollie,
-      source: "Eigen data",
-      glDetail: {
-        source: "gl",
-        label: "Totale grootboekomzet",
-        accountCodes: [...(glAllRevenueCodes.get(period) ?? new Set<string>())],
-        invertGlSign: true,
-      },
-      ownDetail: {
-        source: "sales",
-        label: "Totale verkooptransacties",
-      },
-      glMollieDetail: {
-        source: "gl",
-        label: "Exact Mollie dagboek omzet",
-        accountCodes: [...(glAllRevenueCodes.get(period) ?? new Set<string>())],
-        invertGlSign: true,
-        revenueSource: "mollie_journal",
-      },
-      ownMollieDetail: {
-        source: "sales",
-        label: "AFS verkooptransacties",
-        channel: "bold_afs",
-      },
-    });
   }
 
   rows.push(
@@ -1095,7 +935,7 @@ function buildProfitLoss({
     ),
   );
 
-  return { rows, reconciliation };
+  return { rows };
 }
 
 function TransactionDetailDialog({
@@ -1119,24 +959,12 @@ function TransactionDetailDialog({
           .gte("transaction_date", range.startDate)
           .lt("transaction_date", range.endDate)
           .order("transaction_date", { ascending: false })
-          .limit(detail.revenueSource ? 30000 : 10000);
-        if (!detail.revenueSource && detail.accountCodes && detail.accountCodes.length > 0)
+          .limit(10000);
+        if (detail.accountCodes && detail.accountCodes.length > 0)
           q = q.in("account_code", detail.accountCodes);
         const { data, error } = await q;
         if (error) throw error;
-        const rows = (data ?? []) as GlDetailRow[];
-        if (!detail.revenueSource) return rows;
-
-        const accountSet = new Set((detail.accountCodes ?? []).map(String));
-        const mollieEntryNumbers = new Set(
-          rows
-            .map((row) => (isMollieClearingGlRow(row) ? glEntryNumber(row) : null))
-            .filter(Boolean) as string[],
-        );
-        return rows.filter((row) => {
-          if (accountSet.size > 0 && !accountSet.has(String(row.account_code ?? ""))) return false;
-          return classifyGlRevenueSource(row, mollieEntryNumbers) === detail.revenueSource;
-        });
+        return (data ?? []) as GlDetailRow[];
       }
 
       const wantsShopify =
@@ -1467,29 +1295,6 @@ function hasShopifyInvoiceData(row: ShopifyOrderDetailRow) {
   );
 }
 
-function classifyGlRevenueSource(
-  row: GlDetailRow,
-  mollieEntryNumbers: Set<string> = new Set(),
-): GlRevenueSourceRow["revenue_source"] {
-  const entryNumber = glEntryNumber(row);
-  if (entryNumber && mollieEntryNumbers.has(entryNumber)) {
-    return "mollie_journal";
-  }
-
-  return "shopify";
-}
-
-function glEntryNumber(row: GlDetailRow) {
-  const raw = payloadValue(row.raw_payload, [
-    "entrynumber",
-    "entry_number",
-    "EntryNumber",
-    "Boekstuk",
-  ]);
-  const value = String(raw ?? "").trim();
-  return value || null;
-}
-
 function exactDocumentUrl(row: GlDetailRow) {
   const rawUrl = payloadValue(row.raw_payload, [
     "exact_document_url",
@@ -1508,18 +1313,6 @@ function exactDocumentUrl(row: GlDetailRow) {
   const documentId = String(rawDocumentId ?? "").trim();
   if (!documentId) return null;
   return `https://start.exactonline.nl/docs/DocView.aspx?DocumentID=${encodeURIComponent(documentId)}`;
-}
-
-function isMollieClearingGlRow(row: GlDetailRow) {
-  const accountCode = String(row.account_code ?? "");
-  const accountDescription = String(
-    payloadValue(row.raw_payload, [
-      "glaccountcodedescriptiondescription",
-      "gl_account_code_description_description",
-      "grootboekrekening_omschrijving",
-    ]) ?? "",
-  ).toLowerCase();
-  return accountCode === "1258" || accountDescription.includes("mollie");
 }
 
 function shopifyInvoiceAmounts(row: ShopifyOrderDetailRow) {
@@ -1703,11 +1496,6 @@ function add(map: Map<string, number>, key: string, value: number) {
   map.set(key, (map.get(key) ?? 0) + value);
 }
 
-function addSet(map: Map<string, Set<string>>, key: string, value: string) {
-  if (!map.has(key)) map.set(key, new Set());
-  map.get(key)!.add(value);
-}
-
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border bg-muted/20 px-3 py-2">
@@ -1861,41 +1649,6 @@ function BudgetValueCell({
   if (!onClick || !hasValue) return <td className={classes}>{formatted}</td>;
   return (
     <td className={classes}>
-      <button
-        type="button"
-        className="rounded px-1 text-right underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-ring"
-        onClick={onClick}
-      >
-        {formatted}
-      </button>
-    </td>
-  );
-}
-
-function AmountCell({
-  value,
-  valueFormat = "currency",
-  strong = false,
-  toneBySign = false,
-  onClick,
-}: {
-  value: number;
-  valueFormat?: "currency" | "percentage";
-  strong?: boolean;
-  toneBySign?: boolean;
-  onClick?: () => void;
-}) {
-  const tone =
-    toneBySign && Math.abs(value) > 0.01
-      ? value > 0
-        ? "text-emerald-700"
-        : "text-destructive"
-      : "";
-  const className = `px-3 py-2 text-right tabular-nums ${strong ? "font-semibold" : ""} ${tone}`;
-  const formatted = valueFormat === "percentage" ? formatPercentage(value) : formatEUR(value);
-  if (!onClick) return <td className={className}>{formatted}</td>;
-  return (
-    <td className={className}>
       <button
         type="button"
         className="rounded px-1 text-right underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-ring"
