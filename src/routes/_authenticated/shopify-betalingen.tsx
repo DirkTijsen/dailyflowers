@@ -7,7 +7,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { channelLabels, formatDateNL, formatDateTimeNL, formatEUR, monthLabel } from "@/lib/format";
 
 export const Route = createFileRoute("/_authenticated/shopify-betalingen")({
@@ -147,6 +153,14 @@ type OrderPaymentIssueRow = {
   last_payment_at: string | null;
 };
 
+const paymentSections = [
+  { id: "betaalcontrole-orders", label: "Betaalcontrole alle Shopify orders" },
+  { id: "open-order-betaalpunten", label: "Open Shopify order-betaalpunten" },
+  { id: "maandaansluiting-payments", label: "Maandaansluiting Shopify Payments" },
+  { id: "payouts-exact", label: "Payouts naar Exact" },
+  { id: "open-punten", label: "Open punten" },
+] as const;
+
 function ShopifyPaymentsPage() {
   const qc = useQueryClient();
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -163,7 +177,9 @@ function ShopifyPaymentsPage() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("sync_state")
-        .select("channel,last_sweep_at,last_sweep_status,last_sweep_message,records_processed,updated_at")
+        .select(
+          "channel,last_sweep_at,last_sweep_status,last_sweep_message,records_processed,updated_at",
+        )
         .eq("channel", "shopify_payments")
         .maybeSingle();
       if (error) throw error;
@@ -288,7 +304,14 @@ function ShopifyPaymentsPage() {
         missingOrders: acc.missingOrders + Number(row.missing_order_count ?? 0),
         missingExact: acc.missingExact + Number(row.exact_missing_payout_count ?? 0),
       }),
-      { payoutAmount: 0, exactAmount: 0, exactDiff: 0, balanceDiff: 0, missingOrders: 0, missingExact: 0 },
+      {
+        payoutAmount: 0,
+        exactAmount: 0,
+        exactDiff: 0,
+        balanceDiff: 0,
+        missingOrders: 0,
+        missingExact: 0,
+      },
     );
   }, [monthlyQ.data]);
 
@@ -395,18 +418,41 @@ function ShopifyPaymentsPage() {
         </CardContent>
       </Card>
 
+      <nav className="sticky top-14 z-10 -mx-1 overflow-x-auto bg-background/95 px-1 py-2 backdrop-blur">
+        <div className="flex min-w-max gap-2">
+          {paymentSections.map((section) => (
+            <a
+              key={section.id}
+              href={`#${section.id}`}
+              className="rounded-md border bg-background px-3 py-2 text-sm font-medium text-muted-foreground shadow-sm transition hover:border-primary/40 hover:text-foreground"
+            >
+              {section.label}
+            </a>
+          ))}
+        </div>
+      </nav>
+
       <div className="grid gap-3 md:grid-cols-4">
         <SummaryCard title="Shopify orders" value={String(orderCoverageTotals.orders)} />
         <SummaryCard title="Betaald rondgelopen" value={String(orderCoverageTotals.paidOrders)} />
-        <SummaryCard title="Open orders" value={String(orderCoverageTotals.openOrders)} tone={orderCoverageTotals.openOrders} />
-        <SummaryCard title="Verschil order <> betaald" value={formatEUR(orderCoverageTotals.difference)} tone={orderCoverageTotals.difference} />
+        <SummaryCard
+          title="Open orders"
+          value={String(orderCoverageTotals.openOrders)}
+          tone={orderCoverageTotals.openOrders}
+        />
+        <SummaryCard
+          title="Verschil order <> betaald"
+          value={formatEUR(orderCoverageTotals.difference)}
+          tone={orderCoverageTotals.difference}
+        />
       </div>
 
-      <Card>
+      <Card id="betaalcontrole-orders" className="scroll-mt-28">
         <CardHeader>
           <CardTitle className="text-base">Betaalcontrole alle Shopify orders</CardTitle>
           <CardDescription>
-            Orderbedrag vergeleken met succesvolle Shopify ordertransacties: Shopify Payments, contant en overige gateways.
+            Orderbedrag vergeleken met succesvolle Shopify ordertransacties: Shopify Payments,
+            contant en overige gateways.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -429,9 +475,13 @@ function ShopifyPaymentsPage() {
               </thead>
               <tbody>
                 {orderCoverageMonthlyQ.isLoading && <EmptyRow colSpan={11} text="Laden..." />}
-                {!orderCoverageMonthlyQ.isLoading && (orderCoverageMonthlyQ.data ?? []).length === 0 && (
-                  <EmptyRow colSpan={11} text="Geen Shopify ordertransacties gevonden. Start de Shopify Payments sync." />
-                )}
+                {!orderCoverageMonthlyQ.isLoading &&
+                  (orderCoverageMonthlyQ.data ?? []).length === 0 && (
+                    <EmptyRow
+                      colSpan={11}
+                      text="Geen Shopify ordertransacties gevonden. Start de Shopify Payments sync."
+                    />
+                  )}
                 {(orderCoverageMonthlyQ.data ?? []).map((row) => (
                   <tr key={`${row.period}-${row.channel}`} className="border-t hover:bg-muted/30">
                     <td className="whitespace-nowrap px-3 py-2">{monthLabel(row.period)}</td>
@@ -439,12 +489,24 @@ function ShopifyPaymentsPage() {
                     <td className="px-3 py-2 text-right tabular-nums">{row.order_count}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{row.paid_order_count}</td>
                     <td className={diffClass(row.open_order_count)}>{row.open_order_count}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.order_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.paid_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.shopify_payments_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.cash_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.other_payment_amount)}</td>
-                    <td className={diffClass(row.payment_difference)}>{formatEUR(row.payment_difference)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.order_amount)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.paid_amount)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.shopify_payments_amount)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.cash_amount)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.other_payment_amount)}
+                    </td>
+                    <td className={diffClass(row.payment_difference)}>
+                      {formatEUR(row.payment_difference)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -453,10 +515,12 @@ function ShopifyPaymentsPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="open-order-betaalpunten" className="scroll-mt-28">
         <CardHeader>
           <CardTitle className="text-base">Open Shopify order-betaalpunten</CardTitle>
-          <CardDescription>Orders waarvan bedrag, betaalstatus of ordertransacties nog niet helemaal rondlopen.</CardDescription>
+          <CardDescription>
+            Orders waarvan bedrag, betaalstatus of ordertransacties nog niet helemaal rondlopen.
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -476,27 +540,45 @@ function ShopifyPaymentsPage() {
               </thead>
               <tbody>
                 {orderPaymentIssuesQ.isLoading && <EmptyRow colSpan={9} text="Laden..." />}
-                {!orderPaymentIssuesQ.isLoading && (orderPaymentIssuesQ.data ?? []).length === 0 && (
-                  <EmptyRow colSpan={9} text="Geen open Shopify order-betaalpunten." />
-                )}
+                {!orderPaymentIssuesQ.isLoading &&
+                  (orderPaymentIssuesQ.data ?? []).length === 0 && (
+                    <EmptyRow colSpan={9} text="Geen open Shopify order-betaalpunten." />
+                  )}
                 {(orderPaymentIssuesQ.data ?? []).map((row, index) => (
-                  <tr key={`${row.issue_type}-${row.order_number ?? index}`} className="border-t align-top hover:bg-muted/30">
+                  <tr
+                    key={`${row.issue_type}-${row.order_number ?? index}`}
+                    className="border-t align-top hover:bg-muted/30"
+                  >
                     <td className="px-3 py-2">
                       <TraceBadge status={row.issue_type} />
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{formatDateTimeNL(row.occurred_at)}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      {formatDateTimeNL(row.occurred_at)}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{row.order_name ?? "-"}</div>
-                      <div className="text-xs text-muted-foreground">{row.transaction_count} transactie(s)</div>
+                      <div className="text-xs text-muted-foreground">
+                        {row.transaction_count} transactie(s)
+                      </div>
                     </td>
-                    <td className="px-3 py-2">{row.channel ? channelLabels[row.channel] ?? row.channel : "-"}</td>
+                    <td className="px-3 py-2">
+                      {row.channel ? (channelLabels[row.channel] ?? row.channel) : "-"}
+                    </td>
                     <td className="px-3 py-2">{row.payment_gateways ?? "-"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.order_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.paid_amount)}</td>
-                    <td className={diffClass(row.payment_difference)}>{formatEUR(row.payment_difference)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.order_amount)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.paid_amount)}
+                    </td>
+                    <td className={diffClass(row.payment_difference)}>
+                      {formatEUR(row.payment_difference)}
+                    </td>
                     <td className="px-3 py-2">
                       <Badge variant="outline">{row.financial_status ?? "-"}</Badge>
-                      <div className="mt-1 text-xs text-muted-foreground">{formatDateTimeNL(row.last_payment_at)}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {formatDateTimeNL(row.last_payment_at)}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -509,11 +591,19 @@ function ShopifyPaymentsPage() {
       <div className="grid gap-3 md:grid-cols-4">
         <SummaryCard title="Shopify payouts" value={formatEUR(totals.payoutAmount)} />
         <SummaryCard title="Exact ontvangsten" value={formatEUR(totals.exactAmount)} />
-        <SummaryCard title="Verschil payout <> Exact" value={formatEUR(totals.exactDiff)} tone={totals.exactDiff} />
-        <SummaryCard title="Open order/payout checks" value={String(totals.missingOrders + totals.missingExact)} tone={totals.missingOrders + totals.missingExact} />
+        <SummaryCard
+          title="Verschil payout <> Exact"
+          value={formatEUR(totals.exactDiff)}
+          tone={totals.exactDiff}
+        />
+        <SummaryCard
+          title="Open order/payout checks"
+          value={String(totals.missingOrders + totals.missingExact)}
+          tone={totals.missingOrders + totals.missingExact}
+        />
       </div>
 
-      <Card>
+      <Card id="maandaansluiting-payments" className="scroll-mt-28">
         <CardHeader>
           <CardTitle className="text-base">Maandaansluiting Shopify Payments</CardTitle>
           <CardDescription>
@@ -546,19 +636,31 @@ function ShopifyPaymentsPage() {
                   <tr key={row.period} className="border-t hover:bg-muted/30">
                     <td className="whitespace-nowrap px-3 py-2">{monthLabel(row.period)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{row.payout_count}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.payout_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.payout_amount)}
+                    </td>
                     <td className={diffClass(row.payout_balance_diff)}>
                       {formatEUR(row.balance_net_amount)}
                       <div className="text-[11px] text-muted-foreground">
                         diff {formatEUR(row.payout_balance_diff)}
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.balance_fee_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.exact_amount)}</td>
-                    <td className={diffClass(row.exact_amount_diff)}>{formatEUR(row.exact_amount_diff)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.balance_fee_amount)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.exact_amount)}
+                    </td>
+                    <td className={diffClass(row.exact_amount_diff)}>
+                      {formatEUR(row.exact_amount_diff)}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums">{row.matched_order_count}</td>
-                    <td className={diffClass(row.missing_order_count)}>{row.missing_order_count}</td>
-                    <td className={diffClass(row.exact_missing_payout_count)}>{row.exact_missing_payout_count}</td>
+                    <td className={diffClass(row.missing_order_count)}>
+                      {row.missing_order_count}
+                    </td>
+                    <td className={diffClass(row.exact_missing_payout_count)}>
+                      {row.exact_missing_payout_count}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -567,7 +669,7 @@ function ShopifyPaymentsPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="payouts-exact" className="scroll-mt-28">
         <CardHeader>
           <CardTitle className="text-base">Payouts naar Exact</CardTitle>
           <CardDescription>
@@ -604,25 +706,41 @@ function ShopifyPaymentsPage() {
                       key={`${row.shop_domain}-${row.payout_id}`}
                       className={`border-t hover:bg-muted/30 ${selected ? "bg-muted/40" : ""}`}
                     >
-                      <td className="whitespace-nowrap px-3 py-2">{formatDateNL(row.payout_date)}</td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        {formatDateNL(row.payout_date)}
+                      </td>
                       <td className="px-3 py-2 font-mono text-xs">{row.payout_id}</td>
                       <td className="px-3 py-2">
                         <Badge variant="outline">{row.payout_status ?? "-"}</Badge>
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.payout_amount)}</td>
-                      <td className={diffClass(row.payout_balance_diff)}>{formatEUR(row.balance_net_amount)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.balance_fee_amount)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatEUR(row.payout_amount)}
+                      </td>
+                      <td className={diffClass(row.payout_balance_diff)}>
+                        {formatEUR(row.balance_net_amount)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatEUR(row.balance_fee_amount)}
+                      </td>
                       <td className="px-3 py-2 text-right tabular-nums">
                         {row.matched_order_count}/{row.order_reference_count}
                         {row.missing_order_count > 0 && (
-                          <div className="text-[11px] text-destructive">{row.missing_order_count} mist</div>
+                          <div className="text-[11px] text-destructive">
+                            {row.missing_order_count} mist
+                          </div>
                         )}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           <MatchBadge status={row.exact_match_status} />
                           {documentUrl && (
-                            <Button asChild variant="ghost" size="icon" className="h-7 w-7" title="Open Exact-document">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="Open Exact-document"
+                            >
                               <a href={documentUrl} target="_blank" rel="noreferrer">
                                 <ExternalLink className="h-4 w-4" />
                               </a>
@@ -633,9 +751,15 @@ function ShopifyPaymentsPage() {
                           {row.exact_document_number || row.exact_description || "-"}
                         </div>
                       </td>
-                      <td className={diffClass(row.exact_amount_diff ?? 0)}>{formatEUR(row.exact_amount_diff)}</td>
+                      <td className={diffClass(row.exact_amount_diff ?? 0)}>
+                        {formatEUR(row.exact_amount_diff)}
+                      </td>
                       <td className="px-3 py-2 text-right">
-                        <Button variant={selected ? "secondary" : "outline"} size="sm" onClick={() => setSelectedPayoutId(row.payout_id)}>
+                        <Button
+                          variant={selected ? "secondary" : "outline"}
+                          size="sm"
+                          onClick={() => setSelectedPayoutId(row.payout_id)}
+                        >
                           Trace
                         </Button>
                       </td>
@@ -654,7 +778,8 @@ function ShopifyPaymentsPage() {
             Ordertrace {selectedPayout ? `voor payout ${selectedPayout.payout_id}` : ""}
           </CardTitle>
           <CardDescription>
-            Elke regel komt uit Shopify Payments balance transactions en linkt terug naar de Shopify order.
+            Elke regel komt uit Shopify Payments balance transactions en linkt terug naar de Shopify
+            order.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -683,7 +808,9 @@ function ShopifyPaymentsPage() {
                   const documentUrl = exactDocumentUrl(row.exact_raw_payload);
                   return (
                     <tr key={row.balance_row_id} className="border-t align-top hover:bg-muted/30">
-                      <td className="whitespace-nowrap px-3 py-2">{formatDateTimeNL(row.balance_processed_at)}</td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        {formatDateTimeNL(row.balance_processed_at)}
+                      </td>
                       <td className="px-3 py-2">
                         <Badge variant="outline">{row.balance_type ?? "-"}</Badge>
                       </td>
@@ -693,11 +820,21 @@ function ShopifyPaymentsPage() {
                           {row.source_order_id ?? row.balance_transaction_id}
                         </div>
                       </td>
-                      <td className="px-3 py-2">{row.channel ? channelLabels[row.channel] ?? row.channel : "-"}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.order_current_total_price)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.balance_amount)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.balance_fee)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.balance_net)}</td>
+                      <td className="px-3 py-2">
+                        {row.channel ? (channelLabels[row.channel] ?? row.channel) : "-"}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatEUR(row.order_current_total_price)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatEUR(row.balance_amount)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatEUR(row.balance_fee)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatEUR(row.balance_net)}
+                      </td>
                       <td className="px-3 py-2">
                         <TraceBadge status={row.trace_status} />
                       </td>
@@ -705,14 +842,22 @@ function ShopifyPaymentsPage() {
                         <div className="flex items-center gap-2">
                           <MatchBadge status={row.exact_match_status ?? "exact_missing"} />
                           {documentUrl && (
-                            <Button asChild variant="ghost" size="icon" className="h-7 w-7" title="Open Exact-document">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="Open Exact-document"
+                            >
                               <a href={documentUrl} target="_blank" rel="noreferrer">
                                 <ExternalLink className="h-4 w-4" />
                               </a>
                             </Button>
                           )}
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">{row.exact_document_number ?? "-"}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {row.exact_document_number ?? "-"}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -723,7 +868,7 @@ function ShopifyPaymentsPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="open-punten" className="scroll-mt-28">
         <CardHeader>
           <CardTitle className="text-base">Open punten</CardTitle>
           <CardDescription>Ontbrekende order-, payout- of Exact-koppelingen.</CardDescription>
@@ -747,23 +892,34 @@ function ShopifyPaymentsPage() {
                   <EmptyRow colSpan={6} text="Geen open punten." />
                 )}
                 {(issuesQ.data ?? []).map((row, index) => (
-                  <tr key={`${row.issue_type}-${row.balance_transaction_id ?? row.source_order_id ?? index}`} className="border-t">
+                  <tr
+                    key={`${row.issue_type}-${row.balance_transaction_id ?? row.source_order_id ?? index}`}
+                    className="border-t"
+                  >
                     <td className="px-3 py-2">
                       <TraceBadge status={row.issue_type} />
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{formatDateTimeNL(row.occurred_at)}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      {formatDateTimeNL(row.occurred_at)}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.amount)}</td>
                     <td className="px-3 py-2">
                       <div>{row.order_name ?? "-"}</div>
-                      <div className="font-mono text-[11px] text-muted-foreground">{row.source_order_id ?? row.order_number ?? ""}</div>
+                      <div className="font-mono text-[11px] text-muted-foreground">
+                        {row.source_order_id ?? row.order_number ?? ""}
+                      </div>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs">
                       {row.payout_id ?? row.balance_transaction_id ?? "-"}
                     </td>
                     <td className="px-3 py-2">
-                      <div className="max-w-xl truncate">{row.exact_description ?? row.note ?? "-"}</div>
+                      <div className="max-w-xl truncate">
+                        {row.exact_description ?? row.note ?? "-"}
+                      </div>
                       {row.exact_document_number && (
-                        <div className="text-xs text-muted-foreground">{row.exact_document_number}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {row.exact_document_number}
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -863,7 +1019,9 @@ function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
 function diffClass(value: number | string | null | undefined) {
   const numeric = Number(value ?? 0);
   const base = "px-3 py-2 text-right tabular-nums";
-  return Math.abs(numeric) > 0.01 ? `${base} text-destructive font-medium` : `${base} text-muted-foreground`;
+  return Math.abs(numeric) > 0.01
+    ? `${base} text-destructive font-medium`
+    : `${base} text-muted-foreground`;
 }
 
 function syncStatusLabel(state: SyncStateRow | null | undefined) {
@@ -877,7 +1035,9 @@ function syncStatusLabel(state: SyncStateRow | null | undefined) {
 
 function yearOptions() {
   const current = new Date().getFullYear();
-  return Array.from(new Set([current, current - 1, current - 2, current + 1].map(String))).sort((a, b) => Number(b) - Number(a));
+  return Array.from(new Set([current, current - 1, current - 2, current + 1].map(String))).sort(
+    (a, b) => Number(b) - Number(a),
+  );
 }
 
 function monthName(index: number) {
@@ -885,7 +1045,12 @@ function monthName(index: number) {
 }
 
 function exactDocumentUrl(raw: Record<string, unknown> | null | undefined) {
-  const direct = rawText(raw, ["exact_document_url", "ExactDocumentUrl", "document_url", "DocumentUrl"]);
+  const direct = rawText(raw, [
+    "exact_document_url",
+    "ExactDocumentUrl",
+    "document_url",
+    "DocumentUrl",
+  ]);
   if (/^https?:\/\//i.test(direct)) return direct;
   const documentId = rawText(raw, ["exact_document_id", "Document", "document"]);
   if (!documentId) return null;
