@@ -57,7 +57,8 @@ SELECT
   c.last_payment_at
 FROM public.vw_shopify_order_payment_coverage c
 JOIN public.shopify_order_summaries os ON os.id = c.order_summary_id
-WHERE c.payment_difference > 0.01;
+WHERE c.payment_difference > 0.01
+  AND lower(coalesce(c.financial_status, '')) NOT IN ('canceled', 'cancelled', 'voided');
 
 CREATE OR REPLACE VIEW public.vw_shopify_open_by_customer AS
 SELECT
