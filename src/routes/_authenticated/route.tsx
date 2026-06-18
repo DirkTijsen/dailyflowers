@@ -56,6 +56,7 @@ const nav = [
   { to: "/btw-export", label: "Btw-export", icon: FileSpreadsheet },
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
   { to: "/mollie-facturen", label: "Mollie facturen", icon: ReceiptText },
+  { to: "/wefact-facturen", label: "WeFact facturen", icon: FileText },
   { to: "/openstaand-klanten", label: "Openstaand klanten", icon: Users },
   { to: "/instellingen", label: "Instellingen", icon: Settings },
 ] as const;

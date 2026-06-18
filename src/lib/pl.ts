@@ -13,7 +13,13 @@ export const PL_SECTIONS = [
   { value: "other", label: "Overig" },
 ] as const;
 
-export const CHANNELS = ["shopify_webshop", "shopify_winkel", "bold_afs", "mollie_facturen"] as const;
+export const CHANNELS = [
+  "shopify_webshop",
+  "shopify_winkel",
+  "bold_afs",
+  "mollie_facturen",
+  "wefact_facturen",
+] as const;
 
 export type PlSection = (typeof PL_SECTIONS)[number]["value"];
 export type SalesChannel = (typeof CHANNELS)[number];
@@ -573,6 +579,7 @@ function normalizeChannel(raw: string): SalesChannel | null {
   if (value.includes("webshop") || value === "shopify") return "shopify_webshop";
   if (value.includes("winkel") || value.includes("pos")) return "shopify_winkel";
   if (value.includes("bold") || value.includes("afs")) return "bold_afs";
+  if (value.includes("wefact")) return "wefact_facturen";
   return null;
 }
 

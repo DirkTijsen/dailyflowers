@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
 import { formatEUR, channelLabels, currentMonth, monthLabel, formatDateTimeNL } from "@/lib/format";
 import { toast } from "sonner";
-import { RefreshCw, Store, ShoppingCart, Cpu, ReceiptText } from "lucide-react";
+import { FileText, RefreshCw, Store, ShoppingCart, Cpu, ReceiptText } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Daily Flowers" }] }),
@@ -73,6 +73,7 @@ function Dashboard() {
     { key: "shopify_winkel", icon: Store },
     { key: "bold_afs", icon: Cpu },
     { key: "mollie_facturen", icon: ReceiptText },
+    { key: "wefact_facturen", icon: FileText },
   ] as const;
 
   return (
@@ -111,7 +112,7 @@ function Dashboard() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {cards.map(({ key, icon: Icon }) => {
           const row = byChannel(key);
           return (
@@ -127,7 +128,9 @@ function Dashboard() {
                     ? "omzetrecords"
                     : key === "mollie_facturen"
                       ? "betaalde facturen"
-                      : "btw-factuurorders"}
+                      : key === "wefact_facturen"
+                        ? "facturen"
+                        : "btw-factuurorders"}
                 </CardDescription>
               </CardHeader>
               <CardContent>

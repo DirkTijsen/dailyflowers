@@ -22,7 +22,13 @@ export const Route = createFileRoute("/_authenticated/budgetten")({
   component: BudgetsPage,
 });
 
-const CHANNELS = ["shopify_webshop", "shopify_winkel", "bold_afs", "mollie_facturen"] as const;
+const CHANNELS = [
+  "shopify_webshop",
+  "shopify_winkel",
+  "bold_afs",
+  "mollie_facturen",
+  "wefact_facturen",
+] as const;
 
 type BudgetRow = {
   id: string;

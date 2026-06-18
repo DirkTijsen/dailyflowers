@@ -13,6 +13,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedWinstVerliesRouteImport } from './routes/_authenticated/winst-verlies'
+import { Route as AuthenticatedWefactFacturenRouteImport } from './routes/_authenticated/wefact-facturen'
 import { Route as AuthenticatedTransactiesRouteImport } from './routes/_authenticated/transacties'
 import { Route as AuthenticatedShopifyBetalingenRouteImport } from './routes/_authenticated/shopify-betalingen'
 import { Route as AuthenticatedOpenstaandKlantenRouteImport } from './routes/_authenticated/openstaand-klanten'
@@ -49,6 +50,12 @@ const AuthenticatedWinstVerliesRoute =
   AuthenticatedWinstVerliesRouteImport.update({
     id: '/winst-verlies',
     path: '/winst-verlies',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedWefactFacturenRoute =
+  AuthenticatedWefactFacturenRouteImport.update({
+    id: '/wefact-facturen',
+    path: '/wefact-facturen',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedTransactiesRoute =
@@ -166,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/transacties': typeof AuthenticatedTransactiesRouteWithChildren
+  '/wefact-facturen': typeof AuthenticatedWefactFacturenRoute
   '/winst-verlies': typeof AuthenticatedWinstVerliesRoute
   '/transacties/$id': typeof AuthenticatedTransactiesIdRoute
 }
@@ -188,6 +196,7 @@ export interface FileRoutesByTo {
   '/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/transacties': typeof AuthenticatedTransactiesRouteWithChildren
+  '/wefact-facturen': typeof AuthenticatedWefactFacturenRoute
   '/winst-verlies': typeof AuthenticatedWinstVerliesRoute
   '/transacties/$id': typeof AuthenticatedTransactiesIdRoute
 }
@@ -212,6 +221,7 @@ export interface FileRoutesById {
   '/_authenticated/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/_authenticated/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
   '/_authenticated/transacties': typeof AuthenticatedTransactiesRouteWithChildren
+  '/_authenticated/wefact-facturen': typeof AuthenticatedWefactFacturenRoute
   '/_authenticated/winst-verlies': typeof AuthenticatedWinstVerliesRoute
   '/_authenticated/transacties/$id': typeof AuthenticatedTransactiesIdRoute
 }
@@ -236,6 +246,7 @@ export interface FileRouteTypes {
     | '/openstaand-klanten'
     | '/shopify-betalingen'
     | '/transacties'
+    | '/wefact-facturen'
     | '/winst-verlies'
     | '/transacties/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '/openstaand-klanten'
     | '/shopify-betalingen'
     | '/transacties'
+    | '/wefact-facturen'
     | '/winst-verlies'
     | '/transacties/$id'
   id:
@@ -281,6 +293,7 @@ export interface FileRouteTypes {
     | '/_authenticated/openstaand-klanten'
     | '/_authenticated/shopify-betalingen'
     | '/_authenticated/transacties'
+    | '/_authenticated/wefact-facturen'
     | '/_authenticated/winst-verlies'
     | '/_authenticated/transacties/$id'
   fileRoutesById: FileRoutesById
@@ -319,6 +332,13 @@ declare module '@tanstack/react-router' {
       path: '/winst-verlies'
       fullPath: '/winst-verlies'
       preLoaderRoute: typeof AuthenticatedWinstVerliesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/wefact-facturen': {
+      id: '/_authenticated/wefact-facturen'
+      path: '/wefact-facturen'
+      fullPath: '/wefact-facturen'
+      preLoaderRoute: typeof AuthenticatedWefactFacturenRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/transacties': {
@@ -474,6 +494,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedOpenstaandKlantenRoute: typeof AuthenticatedOpenstaandKlantenRoute
   AuthenticatedShopifyBetalingenRoute: typeof AuthenticatedShopifyBetalingenRoute
   AuthenticatedTransactiesRoute: typeof AuthenticatedTransactiesRouteWithChildren
+  AuthenticatedWefactFacturenRoute: typeof AuthenticatedWefactFacturenRoute
   AuthenticatedWinstVerliesRoute: typeof AuthenticatedWinstVerliesRoute
 }
 
@@ -494,6 +515,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedOpenstaandKlantenRoute: AuthenticatedOpenstaandKlantenRoute,
   AuthenticatedShopifyBetalingenRoute: AuthenticatedShopifyBetalingenRoute,
   AuthenticatedTransactiesRoute: AuthenticatedTransactiesRouteWithChildren,
+  AuthenticatedWefactFacturenRoute: AuthenticatedWefactFacturenRoute,
   AuthenticatedWinstVerliesRoute: AuthenticatedWinstVerliesRoute,
 }
 

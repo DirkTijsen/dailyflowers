@@ -210,6 +210,22 @@ type MollieSalesInvoiceDetailRow = {
   invoice_url: string | null;
 };
 
+type WefactInvoiceDetailRow = {
+  id: string;
+  invoice_number: string;
+  invoice_date: string | null;
+  due_date: string | null;
+  status: string | null;
+  customer_number: string | null;
+  customer_name: string | null;
+  reference: string | null;
+  category: string | null;
+  amount_gross: number | string | null;
+  amount_net: number | string | null;
+  vat_amount: number | string | null;
+  source_filename: string | null;
+};
+
 type SupabaseError = { message: string };
 type SupabaseResult<T> = { data: T[] | null; error: SupabaseError | null };
 type SupabaseQuery<T> = PromiseLike<SupabaseResult<T>> & {
@@ -1153,6 +1169,7 @@ function TransactionDetailDialog({
         detail.channel === "shopify_winkel";
       const wantsTransactions = !detail.channel || detail.channel === "bold_afs";
       const wantsMollieInvoices = !detail.channel || detail.channel === "mollie_facturen";
+      const wantsWefactInvoices = !detail.channel || detail.channel === "wefact_facturen";
       const rows: SalesDetailRow[] = [];
 
       if (wantsShopify) {
@@ -1202,6 +1219,21 @@ function TransactionDetailDialog({
           .limit(5000);
         if (error) throw error;
         rows.push(...((data ?? []) as MollieSalesInvoiceDetailRow[]).map(mapMollieInvoiceDetail));
+      }
+
+      if (wantsWefactInvoices) {
+        const { data, error } = await (supabase as any)
+          .from("wefact_invoices")
+          .select(
+            "id,invoice_number,invoice_date,due_date,status,customer_number,customer_name,reference,category,amount_gross,amount_net,vat_amount,source_filename",
+          )
+          .neq("status", "canceled")
+          .gte("invoice_date", range.startDate)
+          .lt("invoice_date", range.endDate)
+          .order("invoice_date", { ascending: false })
+          .limit(5000);
+        if (error) throw error;
+        rows.push(...((data ?? []) as WefactInvoiceDetailRow[]).map(mapWefactInvoiceDetail));
       }
 
       return rows.sort(
@@ -1422,6 +1454,32 @@ function mapMollieInvoiceDetail(row: MollieSalesInvoiceDetailRow): SalesDetailRo
     description_raw: row.recipient_email,
     parse_status: "ok",
     invoice_url: row.invoice_url,
+  };
+}
+
+function mapWefactInvoiceDetail(row: WefactInvoiceDetailRow): SalesDetailRow {
+  return {
+    id: row.id,
+    external_id: row.invoice_number,
+    source: "wefact_invoice_pdf",
+    channel: "wefact_facturen",
+    article_number: row.category,
+    product_name: row.customer_name || row.reference || "WeFact factuur",
+    amount_gross: row.amount_gross,
+    amount_net: row.amount_net,
+    vat_amount: row.vat_amount,
+    vat_rate: null,
+    invoice_number: row.invoice_number,
+    status: row.status,
+    paid_at: row.invoice_date,
+    description_raw: [
+      row.reference ? `Referentie: ${row.reference}` : null,
+      row.customer_number ? `Klant: ${row.customer_number}` : null,
+      row.source_filename,
+    ]
+      .filter(Boolean)
+      .join(" | "),
+    parse_status: "ok",
   };
 }
 

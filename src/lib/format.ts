@@ -37,6 +37,7 @@ export const channelLabels: Record<string, string> = {
   shopify_winkel: "Shopify winkel",
   bold_afs: "Bold/AFS",
   mollie_facturen: "Mollie facturen",
+  wefact_facturen: "WeFact facturen",
 };
 
 export const statusLabels: Record<string, string> = {
