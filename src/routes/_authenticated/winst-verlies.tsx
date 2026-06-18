@@ -701,24 +701,19 @@ function ProfitLossPage() {
         <CardHeader>
           <CardTitle className="text-base">Omzetaansluiting GL versus eigen data</CardTitle>
           <CardDescription>
-            Exact Mollie-dagboek wordt aangesloten op de AFS-transacties in de app. De resterende
-            Exact-omzet vormt de Shopify-delta.
+            Grootboekomzet tegenover dezelfde eigen omzetactuals die hierboven in de W&V als
+            omzetregels worden gebruikt.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1320px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-muted/50 text-left">
                 <tr>
                   <th className="px-3 py-2 font-medium">Maand</th>
                   <th className="px-3 py-2 text-right font-medium">Grootboek omzet</th>
                   <th className="px-3 py-2 text-right font-medium">Eigen omzet ex btw</th>
                   <th className="px-3 py-2 text-right font-medium">Totaal verschil</th>
-                  <th className="px-3 py-2 text-right font-medium">Exact Mollie dagboek</th>
-                  <th className="px-3 py-2 text-right font-medium">AFS app</th>
-                  <th className="px-3 py-2 text-right font-medium">Mollie dagboek &lt;&gt; AFS</th>
-                  <th className="px-3 py-2 text-right font-medium">Delta &lt;&gt; Shopify</th>
-                  <th className="px-3 py-2 font-medium">Bron W&V</th>
                 </tr>
               </thead>
               <tbody>
@@ -734,25 +729,6 @@ function ProfitLossPage() {
                       onClick={() => openReconciliationDetail(row.ownDetail, row.period, row.own)}
                     />
                     <AmountCell value={row.diff} toneBySign />
-                    <AmountCell
-                      value={row.glMollie}
-                      onClick={() =>
-                        openReconciliationDetail(row.glMollieDetail, row.period, row.glMollie)
-                      }
-                    />
-                    <AmountCell
-                      value={row.ownMollie}
-                      onClick={() =>
-                        openReconciliationDetail(row.ownMollieDetail, row.period, row.ownMollie)
-                      }
-                    />
-                    <AmountCell value={row.mollieDiff} />
-                    <AmountCell value={row.shopifyDiff} toneBySign />
-                    <td className="px-3 py-2">
-                      <Badge variant={row.source === "Eigen data" ? "secondary" : "outline"}>
-                        {row.source}
-                      </Badge>
-                    </td>
                   </tr>
                 ))}
               </tbody>
