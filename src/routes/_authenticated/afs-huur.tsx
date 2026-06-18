@@ -95,6 +95,7 @@ type Agreement = {
   start_period: string;
   end_period: string | null;
   fixed_fee_net: number | string;
+  energy_cost_net: number | string;
   turnover_rate_percent: number | string;
   turnover_threshold_net: number | string;
   invoice_vat_rate: number | string;
@@ -116,6 +117,7 @@ type RentalInvoice = {
   due_date: string | null;
   turnover_net: number | string;
   fixed_fee_net: number | string;
+  energy_cost_net: number | string;
   turnover_rate_percent: number | string;
   turnover_threshold_net: number | string;
   variable_fee_net: number | string;
@@ -150,6 +152,7 @@ type ActualRow = {
 type RentCalculation = {
   turnoverNet: number;
   fixedFeeNet: number;
+  energyCostNet: number;
   thresholdNet: number;
   variableBaseNet: number;
   ratePercent: number;
@@ -269,6 +272,7 @@ function AfsRentPage() {
     start_period: period,
     end_period: "",
     fixed_fee_net: "",
+    energy_cost_net: "",
     turnover_rate_percent: "",
     turnover_threshold_net: "0",
     invoice_vat_rate: "21",
@@ -451,11 +455,12 @@ function AfsRentPage() {
       if (!row.calculation) return sum;
       sum.turnoverNet += row.calculation.turnoverNet;
       sum.fixedFeeNet += row.calculation.fixedFeeNet;
+      sum.energyCostNet += row.calculation.energyCostNet;
       sum.variableFeeNet += row.calculation.variableFeeNet;
       sum.toInvoiceNet += row.invoice ? 0 : row.calculation.subtotalNet;
       return sum;
     },
-    { turnoverNet: 0, fixedFeeNet: 0, variableFeeNet: 0, toInvoiceNet: 0 },
+    { turnoverNet: 0, fixedFeeNet: 0, energyCostNet: 0, variableFeeNet: 0, toInvoiceNet: 0 },
   );
   const invoicedNet = periodInvoices.reduce(
     (sum, invoice) => sum + Number(invoice.subtotal_net ?? 0),
@@ -582,6 +587,7 @@ function AfsRentPage() {
       start_period: agreementForm.start_period,
       end_period: emptyToNull(agreementForm.end_period),
       fixed_fee_net: parseMoneyInput(agreementForm.fixed_fee_net),
+      energy_cost_net: parseMoneyInput(agreementForm.energy_cost_net),
       turnover_rate_percent: parseNumberInput(agreementForm.turnover_rate_percent),
       turnover_threshold_net: parseMoneyInput(agreementForm.turnover_threshold_net),
       invoice_vat_rate: parseNumberInput(agreementForm.invoice_vat_rate) || 21,
@@ -600,6 +606,7 @@ function AfsRentPage() {
       ...current,
       machine_id: "",
       fixed_fee_net: "",
+      energy_cost_net: "",
       turnover_rate_percent: "",
       turnover_threshold_net: "0",
       invoice_reference: "",
@@ -659,6 +666,7 @@ function AfsRentPage() {
       due_date: emptyToNull(invoiceDraft.due_date),
       turnover_net: calculation.turnoverNet,
       fixed_fee_net: calculation.fixedFeeNet,
+      energy_cost_net: calculation.energyCostNet,
       turnover_rate_percent: calculation.ratePercent,
       turnover_threshold_net: calculation.thresholdNet,
       variable_fee_net: calculation.variableFeeNet,
@@ -738,6 +746,7 @@ function AfsRentPage() {
         due_date: dueDate,
         turnover_net: calculation.turnoverNet,
         fixed_fee_net: calculation.fixedFeeNet,
+        energy_cost_net: calculation.energyCostNet,
         turnover_rate_percent: calculation.ratePercent,
         turnover_threshold_net: calculation.thresholdNet,
         variable_fee_net: calculation.variableFeeNet,
@@ -961,7 +970,7 @@ function AfsRentPage() {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard
           title="Omzetbasis ex btw"
           value={formatEUR(totals.turnoverNet)}
@@ -971,6 +980,11 @@ function AfsRentPage() {
           title="Vaste huur ex btw"
           value={formatEUR(totals.fixedFeeNet)}
           icon={Building2}
+        />
+        <MetricCard
+          title="Energiekosten ex btw"
+          value={formatEUR(totals.energyCostNet)}
+          icon={Unplug}
         />
         <MetricCard
           title="Variabel ex btw"
@@ -1013,7 +1027,7 @@ function AfsRentPage() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1220px] text-sm">
+                <table className="w-full min-w-[1320px] text-sm">
                   <thead className="bg-muted/50">
                     <tr className="text-left">
                       <th className="px-3 py-2 font-medium w-[44px]">
@@ -1033,6 +1047,7 @@ function AfsRentPage() {
                       <th className="px-3 py-2 font-medium">Verhuurder</th>
                       <th className="px-3 py-2 font-medium text-right">Omzet ex</th>
                       <th className="px-3 py-2 font-medium text-right">Vast ex</th>
+                      <th className="px-3 py-2 font-medium text-right">Energie ex</th>
                       <th className="px-3 py-2 font-medium text-right">Variabel</th>
                       <th className="px-3 py-2 font-medium text-right">Totaal ex</th>
                       <th className="px-3 py-2 font-medium text-right">Totaal incl</th>
@@ -1043,14 +1058,14 @@ function AfsRentPage() {
                   <tbody>
                     {(machinesQ.isLoading || agreementsQ.isLoading || actualsQ.isLoading) && (
                       <tr>
-                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">
                           Laden...
                         </td>
                       </tr>
                     )}
                     {candidates.length === 0 && !machinesQ.isLoading && (
                       <tr>
-                        <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">
                           Geen AFS-machines gevonden.
                         </td>
                       </tr>
@@ -1118,6 +1133,9 @@ function AfsRentPage() {
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {formatEUR(row.calculation?.fixedFeeNet ?? null)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {formatEUR(row.calculation?.energyCostNet ?? null)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {row.calculation ? (
@@ -1432,6 +1450,19 @@ function AfsRentPage() {
                     className="tabular-nums"
                   />
                 </Field>
+                <Field label="Energiekosten ex btw">
+                  <Input
+                    value={agreementForm.energy_cost_net}
+                    onChange={(event) =>
+                      setAgreementForm((current) => ({
+                        ...current,
+                        energy_cost_net: event.target.value,
+                      }))
+                    }
+                    placeholder="0,00"
+                    className="tabular-nums"
+                  />
+                </Field>
                 <Field label="Omzet %">
                   <Input
                     value={agreementForm.turnover_rate_percent}
@@ -1507,13 +1538,14 @@ function AfsRentPage() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px] text-sm">
+                <table className="w-full min-w-[1020px] text-sm">
                   <thead className="bg-muted/50">
                     <tr className="text-left">
                       <th className="px-3 py-2 font-medium">Machine</th>
                       <th className="px-3 py-2 font-medium">Verhuurder</th>
                       <th className="px-3 py-2 font-medium">Looptijd</th>
                       <th className="px-3 py-2 font-medium text-right">Vast ex</th>
+                      <th className="px-3 py-2 font-medium text-right">Energie ex</th>
                       <th className="px-3 py-2 font-medium text-right">Variabel</th>
                       <th className="px-3 py-2 font-medium">Status</th>
                     </tr>
@@ -1521,7 +1553,7 @@ function AfsRentPage() {
                   <tbody>
                     {(agreementsQ.data ?? []).length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
                           Nog geen huurafspraken.
                         </td>
                       </tr>
@@ -1550,6 +1582,9 @@ function AfsRentPage() {
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {formatEUR(agreement.fixed_fee_net)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {formatEUR(agreement.energy_cost_net)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {formatPercent(Number(agreement.turnover_rate_percent ?? 0))}
@@ -1643,7 +1678,7 @@ function AfsRentPage() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1240px] text-sm">
+                <table className="w-full min-w-[1320px] text-sm">
                   <thead className="bg-muted/50">
                     <tr className="text-left">
                       <th className="px-3 py-2 font-medium">Factuur</th>
@@ -1652,6 +1687,7 @@ function AfsRentPage() {
                       <th className="px-3 py-2 font-medium">Verhuurder</th>
                       <th className="px-3 py-2 font-medium text-right">Omzet ex</th>
                       <th className="px-3 py-2 font-medium text-right">Vast ex</th>
+                      <th className="px-3 py-2 font-medium text-right">Energie ex</th>
                       <th className="px-3 py-2 font-medium text-right">Variabel ex</th>
                       <th className="px-3 py-2 font-medium text-right">Totaal incl</th>
                       <th className="px-3 py-2 font-medium">Status</th>
@@ -1662,14 +1698,14 @@ function AfsRentPage() {
                   <tbody>
                     {invoicesQ.isLoading && (
                       <tr>
-                        <td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">
                           Laden...
                         </td>
                       </tr>
                     )}
                     {(invoicesQ.data ?? []).length === 0 && !invoicesQ.isLoading && (
                       <tr>
-                        <td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">
                           Geen facturen vastgelegd voor dit jaar.
                         </td>
                       </tr>
@@ -1713,6 +1749,9 @@ function AfsRentPage() {
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {formatEUR(invoice.fixed_fee_net)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {formatEUR(invoice.energy_cost_net)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {formatEUR(invoice.variable_fee_net)}
@@ -1913,6 +1952,10 @@ function AfsRentPage() {
                     <AmountRow
                       label="Vaste huur ex btw"
                       value={invoiceDraft.candidate.calculation?.fixedFeeNet ?? 0}
+                    />
+                    <AmountRow
+                      label="Energiekosten ex btw"
+                      value={invoiceDraft.candidate.calculation?.energyCostNet ?? 0}
                     />
                     <AmountRow
                       label={`Variabel (${formatPercent(invoiceDraft.candidate.calculation?.ratePercent ?? 0)})`}
@@ -2118,16 +2161,18 @@ function activeAgreementForPeriod(agreements: Agreement[], machineId: string, pe
 
 function calculateRent(agreement: Agreement, turnoverNet: number): RentCalculation {
   const fixedFeeNet = roundMoney(Number(agreement.fixed_fee_net ?? 0));
+  const energyCostNet = roundMoney(Number(agreement.energy_cost_net ?? 0));
   const ratePercent = Number(agreement.turnover_rate_percent ?? 0);
   const thresholdNet = roundMoney(Number(agreement.turnover_threshold_net ?? 0));
   const variableBaseNet = Math.max(0, roundMoney(turnoverNet) - thresholdNet);
   const variableFeeNet = roundMoney((variableBaseNet * ratePercent) / 100);
-  const subtotalNet = roundMoney(fixedFeeNet + variableFeeNet);
+  const subtotalNet = roundMoney(fixedFeeNet + energyCostNet + variableFeeNet);
   const vatRate = Number(agreement.invoice_vat_rate ?? 21);
   const vatAmount = roundMoney((subtotalNet * vatRate) / 100);
   return {
     turnoverNet: roundMoney(turnoverNet),
     fixedFeeNet,
+    energyCostNet,
     thresholdNet,
     variableBaseNet,
     ratePercent,

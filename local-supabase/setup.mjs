@@ -143,6 +143,7 @@ async function main() {
     await applyMigration(app, "20260617170000_add_afs_invoice_email_queue.sql");
     await applyMigration(app, "20260617200000_add_afs_invoice_mail_settings.sql");
     await applyMigration(app, "20260617214000_clear_afs_huur_test_data.sql");
+    await applyMigration(app, "20260618123000_add_afs_rental_energy_costs.sql");
     await applyMigration(app, "20260617110000_add_exact_sync_state.sql");
     await applyMigration(app, "20260617183000_add_shopify_payments_reconciliation.sql");
     await applyMigration(app, "20260617190000_add_shopify_payment_csv_import.sql");
