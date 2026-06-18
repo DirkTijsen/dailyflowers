@@ -23,11 +23,11 @@ export const Route = createFileRoute("/_authenticated/budgetten")({
 });
 
 const CHANNELS = [
+  "wefact_facturen",
+  "mollie_facturen",
   "shopify_webshop",
   "shopify_winkel",
   "bold_afs",
-  "mollie_facturen",
-  "wefact_facturen",
 ] as const;
 
 type BudgetRow = {
