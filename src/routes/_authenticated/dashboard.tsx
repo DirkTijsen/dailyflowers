@@ -115,6 +115,17 @@ function Dashboard() {
     { key: "mollie_facturen", icon: ReceiptText },
     { key: "wefact_facturen", icon: FileText },
   ] as const;
+  const totalRevenue = cards
+    .map(({ key }) => byChannel(key))
+    .reduce(
+      (sum, row) => ({
+        tx_count: sum.tx_count + Number(row?.tx_count ?? 0),
+        gross_total: sum.gross_total + Number(row?.gross_total ?? 0),
+        net_total: sum.net_total + Number(row?.net_total ?? 0),
+        vat_total: sum.vat_total + Number(row?.vat_total ?? 0),
+      }),
+      { tx_count: 0, gross_total: 0, net_total: 0, vat_total: 0 },
+    );
 
   return (
     <div className="space-y-6">
@@ -151,6 +162,27 @@ function Dashboard() {
           <Button onClick={runSweep} variant="outline" disabled={sweeping}><RefreshCw className={`h-4 w-4 mr-2 ${sweeping ? "animate-spin" : ""}`} />{sweeping ? "Bezig…" : "Sweep nu"}</Button>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Totale omzet</CardTitle>
+              <CardDescription>{totalRevenue.tx_count} omzetregels</CardDescription>
+            </div>
+            <ReceiptText className="h-5 w-5 text-muted-foreground" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="text-3xl font-semibold tabular-nums">
+            {formatEUR(totalRevenue.net_total)}
+          </div>
+          <div className="mt-2 text-sm text-muted-foreground space-y-0.5 tabular-nums">
+            <div>Btw: {formatEUR(totalRevenue.vat_total)}</div>
+            <div>Totaal incl. btw: {formatEUR(totalRevenue.gross_total)}</div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {cards.map(({ key, icon: Icon }) => {
