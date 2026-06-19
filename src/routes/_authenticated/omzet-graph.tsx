@@ -58,7 +58,7 @@ type ChartPoint = {
   [key: string]: string | number;
 };
 
-type MachineGraphMode = "individual" | "average";
+type MachineGraphMode = "individual" | "average" | "median";
 
 const CHANNELS = [
   "shopify_webshop",
@@ -97,6 +97,7 @@ const MACHINE_COLORS = [
 
 const TARGET_MONTHLY_REVENUE = 2000;
 const AVERAGE_MACHINE_SERIES_KEY = "averageMonthlyRevenue";
+const MEDIAN_MACHINE_SERIES_KEY = "medianMonthlyRevenue";
 
 function RevenueGraphPage() {
   const thisYear = currentMonth().split("-")[0];
@@ -168,6 +169,16 @@ function RevenueGraphPage() {
       ),
     [displayedMachineOptions, includeYearInLabels, machineActualsQ.data, periods],
   );
+  const medianMachineData = useMemo(
+    () =>
+      buildMedianMachineData(
+        periods,
+        machineActualsQ.data ?? [],
+        displayedMachineOptions,
+        includeYearInLabels,
+      ),
+    [displayedMachineOptions, includeYearInLabels, machineActualsQ.data, periods],
+  );
   const filteredMachineOptions = useMemo(() => {
     const query = machineSearch.trim().toLowerCase();
     if (!query) return machineOptions;
@@ -179,7 +190,12 @@ function RevenueGraphPage() {
   }, [machineOptions, machineSearch]);
 
   const selectedTotal = displayedMachineOptions.reduce((sum, machine) => sum + machine.total, 0);
-  const machineChartData = machineGraphMode === "average" ? averageMachineData : machineData;
+  const machineChartData =
+    machineGraphMode === "average"
+      ? averageMachineData
+      : machineGraphMode === "median"
+        ? medianMachineData
+        : machineData;
   const machineChartSeries =
     machineGraphMode === "average"
       ? [
@@ -189,11 +205,19 @@ function RevenueGraphPage() {
             color: "#111827",
           },
         ]
-      : displayedMachineOptions.map((machine, index) => ({
-          key: machine.seriesKey,
-          label: machine.label,
-          color: MACHINE_COLORS[index % MACHINE_COLORS.length],
-        }));
+      : machineGraphMode === "median"
+        ? [
+            {
+              key: MEDIAN_MACHINE_SERIES_KEY,
+              label: "Mediaan maandomzet",
+              color: "#0f766e",
+            },
+          ]
+        : displayedMachineOptions.map((machine, index) => ({
+            key: machine.seriesKey,
+            label: machine.label,
+            color: MACHINE_COLORS[index % MACHINE_COLORS.length],
+          }));
   const selectionLabel =
     selectedMachineIds.length === 0
       ? `Alle AFS (${machineOptions.length})`
@@ -275,7 +299,9 @@ function RevenueGraphPage() {
               <CardDescription>
                 {machineGraphMode === "average"
                   ? "Een lijn toont de gemiddelde maandomzet van de geselecteerde AFS-machines."
-                  : "Elke lijn is een AFS-machine."}{" "}
+                  : machineGraphMode === "median"
+                    ? "Een lijn toont de mediane maandomzet van de geselecteerde AFS-machines."
+                    : "Elke lijn is een AFS-machine."}{" "}
                 De stippellijn markeert {formatEUR(TARGET_MONTHLY_REVENUE)} omzet ex btw per maand.
               </CardDescription>
             </div>
@@ -298,6 +324,15 @@ function RevenueGraphPage() {
                   onClick={() => setMachineGraphMode("average")}
                 >
                   Gemiddelde
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={machineGraphMode === "median" ? "default" : "ghost"}
+                  className="h-8"
+                  onClick={() => setMachineGraphMode("median")}
+                >
+                  Mediaan
                 </Button>
               </div>
               <Badge variant="secondary">{selectionLabel}</Badge>
@@ -327,8 +362,11 @@ function RevenueGraphPage() {
               <RevenueLineChart data={machineChartData} series={machineChartSeries} showTarget />
             )}
           </div>
-          {machineGraphMode === "average" ? (
-            <AverageMachineLegend machineCount={displayedMachineOptions.length} />
+          {machineGraphMode === "average" || machineGraphMode === "median" ? (
+            <SummaryMachineLegend
+              machineCount={displayedMachineOptions.length}
+              mode={machineGraphMode}
+            />
           ) : (
             <MachineLegend machines={displayedMachineOptions} />
           )}
@@ -573,12 +611,25 @@ function MachineLegend({ machines }: { machines: MachineOption[] }) {
   );
 }
 
-function AverageMachineLegend({ machineCount }: { machineCount: number }) {
+function SummaryMachineLegend({
+  machineCount,
+  mode,
+}: {
+  machineCount: number;
+  mode: "average" | "median";
+}) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
       <span className="inline-flex items-center gap-2">
-        <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
-        <span>Gemiddelde maandomzet over {machineCount} AFS-machines</span>
+        <span
+          className={`h-2.5 w-2.5 rounded-full ${
+            mode === "average" ? "bg-slate-900" : "bg-teal-700"
+          }`}
+        />
+        <span>
+          {mode === "average" ? "Gemiddelde" : "Mediaan"} maandomzet over {machineCount}{" "}
+          AFS-machines
+        </span>
       </span>
     </div>
   );
@@ -703,6 +754,41 @@ function buildAverageMachineData(
     label: shortMonthLabel(period, includeYearInLabels),
     [AVERAGE_MACHINE_SERIES_KEY]: (totalsByPeriod.get(period) ?? 0) / denominator,
   }));
+}
+
+function buildMedianMachineData(
+  periods: string[],
+  rows: MachineActualRow[],
+  machines: MachineOption[],
+  includeYearInLabels: boolean,
+): ChartPoint[] {
+  const selected = new Set(machines.map((machine) => machine.id));
+  const valueByPeriodMachine = new Map<string, number>();
+
+  for (const row of rows) {
+    if (!row.machine_id || !selected.has(row.machine_id)) continue;
+    const key = `${row.period}|${row.machine_id}`;
+    valueByPeriodMachine.set(
+      key,
+      (valueByPeriodMachine.get(key) ?? 0) + Number(row.net_total ?? 0),
+    );
+  }
+
+  return periods.map((period) => ({
+    period,
+    label: shortMonthLabel(period, includeYearInLabels),
+    [MEDIAN_MACHINE_SERIES_KEY]: median(
+      machines.map((machine) => valueByPeriodMachine.get(`${period}|${machine.id}`) ?? 0),
+    ),
+  }));
+}
+
+function median(values: number[]) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle];
+  return (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 function machineSeriesKey(id: string) {
