@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { MultiPeriodPicker } from "@/components/multi-period-picker";
 import {
   Dialog,
   DialogContent,
@@ -82,7 +83,7 @@ type RevenueBudgetRow = {
   amount: number | string;
 };
 
-type ViewMode = "month" | "range" | "year";
+type ViewMode = "month" | "range" | "year" | "multiYear";
 type PlMetricColumn = "actual" | "budget" | "variance";
 
 const PL_METRIC_COLUMNS: Array<{ value: PlMetricColumn; label: string }> = [
@@ -229,6 +230,8 @@ function ProfitLossPage() {
   const [month, setMonth] = useState(thisMonthNumber);
   const [fromMonth, setFromMonth] = useState("01");
   const [toMonth, setToMonth] = useState(thisMonthNumber);
+  const [selectedYears, setSelectedYears] = useState<string[]>([thisYear]);
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [visibleColumns, setVisibleColumns] = useState<PlMetricColumn[]>([
     "actual",
     "budget",
@@ -239,8 +242,9 @@ function ProfitLossPage() {
   const months = useMemo(() => {
     if (viewMode === "month") return [composePeriod(year, month)];
     if (viewMode === "year") return yearPeriods(year);
+    if (viewMode === "multiYear") return multiYearPeriods(selectedYears, selectedMonths);
     return periodsBetween(composePeriod(year, fromMonth), composePeriod(year, toMonth));
-  }, [fromMonth, month, toMonth, viewMode, year]);
+  }, [fromMonth, month, selectedMonths, selectedYears, toMonth, viewMode, year]);
   const periodColumns = visibleColumns;
   const totalColumns = visibleColumns;
   const totalLabel = aggregateLabel(viewMode, months);
@@ -325,14 +329,7 @@ function ProfitLossPage() {
         revenueBudgets: revenueBudgetsQ.data ?? [],
         accounts: accountsQ.data ?? [],
       }),
-    [
-      accountsQ.data,
-      budgetsQ.data,
-      glQ.data,
-      months,
-      revenueBudgetsQ.data,
-      salesQ.data,
-    ],
+    [accountsQ.data, budgetsQ.data, glQ.data, months, revenueBudgetsQ.data, salesQ.data],
   );
 
   function toggleColumn(column: PlMetricColumn) {
@@ -467,24 +464,27 @@ function ProfitLossPage() {
                   <SelectItem value="month">Maand</SelectItem>
                   <SelectItem value="range">YTD / periode</SelectItem>
                   <SelectItem value="year">Jaar</SelectItem>
+                  <SelectItem value="multiYear">Meerdere jaren</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
 
-            <Field label="Jaar">
-              <Select value={year} onValueChange={setYear}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {yearOptions().map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+            {viewMode !== "multiYear" && (
+              <Field label="Jaar">
+                <Select value={year} onValueChange={setYear}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {yearOptions().map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
 
             {viewMode === "month" && (
               <Field label="Periode">
@@ -537,6 +537,17 @@ function ProfitLossPage() {
             )}
 
             <PlColumnToggles columns={visibleColumns} onToggle={toggleColumn} />
+
+            {viewMode === "multiYear" && (
+              <MultiPeriodPicker
+                years={yearOptions()}
+                months={monthOptions()}
+                selectedYears={selectedYears}
+                selectedMonths={selectedMonths}
+                onYearsChange={setSelectedYears}
+                onMonthsChange={setSelectedMonths}
+              />
+            )}
           </div>
         </CardContent>
       </Card>
@@ -566,9 +577,11 @@ function ProfitLossPage() {
                       className="border-l px-3 py-2 text-center font-medium"
                       colSpan={periodColumns.length}
                     >
-                      <span className="block">{monthShortLabel(period)}</span>
+                      <span className="block">
+                        {monthHeaderLabel(period, viewMode === "multiYear")}
+                      </span>
                       <span className="block text-[11px] font-normal text-muted-foreground">
-                        {monthToQuarterKey(period).replace(`${year}-`, "")}
+                        {quarterHeaderLabel(period, viewMode === "multiYear")}
                       </span>
                     </th>
                   ))}
@@ -1693,6 +1706,13 @@ function yearPeriods(year: string) {
   return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
 }
 
+function multiYearPeriods(years: string[], months: string[]) {
+  const selectedYears = uniqueSorted(years);
+  const selectedMonths =
+    months.length > 0 ? uniqueSorted(months) : monthOptions().map((m) => m.value);
+  return selectedYears.flatMap((year) => selectedMonths.map((month) => composePeriod(year, month)));
+}
+
 function monthOptions() {
   return Array.from({ length: 12 }, (_, index) => {
     const value = String(index + 1).padStart(2, "0");
@@ -1705,14 +1725,48 @@ function monthOptions() {
 
 function selectionTitle(viewMode: ViewMode, periods: string[], year: string) {
   if (viewMode === "year") return `Winst en verlies - jaar ${year}`;
+  if (viewMode === "multiYear") return `Winst en verlies - ${multiPeriodLabel(periods)}`;
   if (periods.length === 1) return `Winst en verlies - ${monthLabel(periods[0])}`;
   return `Winst en verlies - ${monthLabel(periods[0])} t/m ${monthLabel(periods[periods.length - 1])}`;
 }
 
 function aggregateLabel(viewMode: ViewMode, periods: string[]) {
   if (viewMode === "year") return "Jaar totaal";
+  if (viewMode === "multiYear") return "Selectie totaal";
   if (periods.length <= 1) return "Totaal";
   return periods[0]?.endsWith("-01") ? "YTD totaal" : "Periode totaal";
+}
+
+function multiPeriodLabel(periods: string[]) {
+  const years = uniqueSorted(periods.map((period) => period.split("-")[0]));
+  const months = uniqueSorted(periods.map((period) => period.split("-")[1]));
+  const monthText =
+    months.length === 12 ? "alle maanden" : months.map((month) => shortMonthName(month)).join(", ");
+  return `${years.join(", ")} - ${monthText}`;
+}
+
+function uniqueSorted(values: string[]) {
+  return [...new Set(values)].sort();
+}
+
+function shortMonthName(month: string) {
+  return new Date(2026, Number(month) - 1, 1).toLocaleDateString("nl-NL", {
+    month: "short",
+  });
+}
+
+function monthHeaderLabel(period: string, includeYear: boolean) {
+  if (!includeYear) return monthShortLabel(period);
+  const [year, rawMonth] = period.split("-");
+  return new Date(Number(year), Number(rawMonth) - 1, 1).toLocaleDateString("nl-NL", {
+    month: "short",
+    year: "2-digit",
+  });
+}
+
+function quarterHeaderLabel(period: string, includeYear: boolean) {
+  const [year, quarter] = monthToQuarterKey(period).split("-Q");
+  return includeYear ? `Q${quarter} ${year}` : `Q${quarter}`;
 }
 
 function plMetricLabel(column: PlMetricColumn) {

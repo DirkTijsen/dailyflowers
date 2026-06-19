@@ -17,16 +17,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { MultiPeriodPicker } from "@/components/multi-period-picker";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { channelLabels, currentMonth, formatEUR } from "@/lib/format";
 
 export const Route = createFileRoute("/_authenticated/omzet-graph")({
@@ -103,10 +97,15 @@ const TARGET_MONTHLY_REVENUE = 2000;
 
 function RevenueGraphPage() {
   const thisYear = currentMonth().split("-")[0];
-  const [year, setYear] = useState(thisYear);
+  const [selectedYears, setSelectedYears] = useState<string[]>([thisYear]);
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [machineSearch, setMachineSearch] = useState("");
   const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([]);
-  const periods = useMemo(() => yearPeriods(year), [year]);
+  const periods = useMemo(
+    () => multiYearPeriods(selectedYears, selectedMonths),
+    [selectedMonths, selectedYears],
+  );
+  const includeYearInLabels = selectedYears.length > 1;
 
   const channelActualsQ = useQuery({
     queryKey: ["omzet-graph-channel-actuals", periods],
@@ -133,8 +132,8 @@ function RevenueGraphPage() {
   });
 
   const channelData = useMemo(
-    () => buildChannelData(periods, channelActualsQ.data ?? []),
-    [channelActualsQ.data, periods],
+    () => buildChannelData(periods, channelActualsQ.data ?? [], includeYearInLabels),
+    [channelActualsQ.data, includeYearInLabels, periods],
   );
   const machineOptions = useMemo(
     () => buildMachineOptions(machineActualsQ.data ?? []),
@@ -146,8 +145,14 @@ function RevenueGraphPage() {
     return machineOptions.filter((machine) => selected.has(machine.id));
   }, [machineOptions, selectedMachineIds]);
   const machineData = useMemo(
-    () => buildMachineData(periods, machineActualsQ.data ?? [], displayedMachineOptions),
-    [displayedMachineOptions, machineActualsQ.data, periods],
+    () =>
+      buildMachineData(
+        periods,
+        machineActualsQ.data ?? [],
+        displayedMachineOptions,
+        includeYearInLabels,
+      ),
+    [displayedMachineOptions, includeYearInLabels, machineActualsQ.data, periods],
   );
   const filteredMachineOptions = useMemo(() => {
     const query = machineSearch.trim().toLowerCase();
@@ -180,22 +185,22 @@ function RevenueGraphPage() {
             Maandomzet ex btw uit dezelfde actuals als Omzet monitoring.
           </p>
         </div>
-        <div className="w-40">
-          <label className="text-xs text-muted-foreground">Jaar</label>
-          <Select value={year} onValueChange={setYear}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {yearOptions().map((option) => (
-                <SelectItem key={option} value={option}>
-                  {option}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
       </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          <div className="grid gap-3">
+            <MultiPeriodPicker
+              years={yearOptions()}
+              months={monthOptions()}
+              selectedYears={selectedYears}
+              selectedMonths={selectedMonths}
+              onYearsChange={setSelectedYears}
+              onMonthsChange={setSelectedMonths}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -545,7 +550,11 @@ function EmptyState() {
   );
 }
 
-function buildChannelData(periods: string[], rows: ChannelActualRow[]): ChartPoint[] {
+function buildChannelData(
+  periods: string[],
+  rows: ChannelActualRow[],
+  includeYearInLabels: boolean,
+): ChartPoint[] {
   const byPeriodChannel = new Map<string, number>();
   for (const row of rows) {
     if (!CHANNELS.includes(row.channel as (typeof CHANNELS)[number])) continue;
@@ -553,7 +562,7 @@ function buildChannelData(periods: string[], rows: ChannelActualRow[]): ChartPoi
   }
 
   return periods.map((period) => {
-    const point: ChartPoint = { period, label: shortMonthLabel(period) };
+    const point: ChartPoint = { period, label: shortMonthLabel(period, includeYearInLabels) };
     for (const channel of CHANNELS)
       point[channel] = byPeriodChannel.get(`${period}|${channel}`) ?? 0;
     return point;
@@ -589,6 +598,7 @@ function buildMachineData(
   periods: string[],
   rows: MachineActualRow[],
   machines: MachineOption[],
+  includeYearInLabels: boolean,
 ): ChartPoint[] {
   const selected = new Set(machines.map((machine) => machine.id));
   const keyById = new Map(machines.map((machine) => [machine.id, machine.seriesKey]));
@@ -603,7 +613,7 @@ function buildMachineData(
   }
 
   return periods.map((period) => {
-    const point: ChartPoint = { period, label: shortMonthLabel(period) };
+    const point: ChartPoint = { period, label: shortMonthLabel(period, includeYearInLabels) };
     for (const machine of machines) {
       point[keyById.get(machine.id) ?? machine.seriesKey] =
         values.get(`${period}|${machine.id}`) ?? 0;
@@ -616,8 +626,11 @@ function machineSeriesKey(id: string) {
   return `afs_${id.replace(/[^a-zA-Z0-9]/g, "_")}`;
 }
 
-function yearPeriods(year: string) {
-  return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
+function multiYearPeriods(years: string[], months: string[]) {
+  const selectedYears = uniqueSorted(years);
+  const selectedMonths =
+    months.length > 0 ? uniqueSorted(months) : monthOptions().map((m) => m.value);
+  return selectedYears.flatMap((year) => selectedMonths.map((month) => `${year}-${month}`));
 }
 
 function yearOptions() {
@@ -625,10 +638,25 @@ function yearOptions() {
   return Array.from({ length: 5 }, (_, index) => String(current - 2 + index));
 }
 
-function shortMonthLabel(period: string) {
+function monthOptions() {
+  return Array.from({ length: 12 }, (_, index) => {
+    const value = String(index + 1).padStart(2, "0");
+    return {
+      value,
+      label: new Date(2026, index, 1).toLocaleDateString("nl-NL", { month: "long" }),
+    };
+  });
+}
+
+function uniqueSorted(values: string[]) {
+  return [...new Set(values)].sort();
+}
+
+function shortMonthLabel(period: string, includeYear: boolean) {
   const [year, month] = period.split("-");
   return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString("nl-NL", {
     month: "short",
+    ...(includeYear ? { year: "2-digit" as const } : {}),
   });
 }
 

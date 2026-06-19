@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { MultiPeriodPicker } from "@/components/multi-period-picker";
 import { useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { formatEUR, channelLabels, currentMonth, monthLabel } from "@/lib/format";
@@ -78,7 +79,7 @@ type AnalysisRow = {
   lyActual: number;
 };
 
-type ViewMode = "month" | "range" | "year";
+type ViewMode = "month" | "range" | "year" | "multiYear";
 type DetailLevel = "channel" | "both" | "machine";
 type MetricColumn = "actual" | "budget" | "variance" | "ly" | "vsLy";
 
@@ -100,6 +101,8 @@ function BudgetsPage() {
   const [month, setMonth] = useState(thisMonthNumber);
   const [fromMonth, setFromMonth] = useState("01");
   const [toMonth, setToMonth] = useState(thisMonthNumber);
+  const [selectedYears, setSelectedYears] = useState<string[]>([thisYear]);
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [detailLevel, setDetailLevel] = useState<DetailLevel>("both");
   const [visibleColumns, setVisibleColumns] = useState<MetricColumn[]>([
     "actual",
@@ -110,8 +113,9 @@ function BudgetsPage() {
   const selectedPeriods = useMemo(() => {
     if (viewMode === "month") return [composePeriod(year, month)];
     if (viewMode === "year") return yearPeriods(year);
+    if (viewMode === "multiYear") return multiYearPeriods(selectedYears, selectedMonths);
     return periodsBetween(composePeriod(year, fromMonth), composePeriod(year, toMonth));
-  }, [fromMonth, month, toMonth, viewMode, year]);
+  }, [fromMonth, month, selectedMonths, selectedYears, toMonth, viewMode, year]);
   const lyPeriods = useMemo(() => selectedPeriods.map(previousYearPeriod), [selectedPeriods]);
   const needsLy = visibleColumns.includes("ly") || visibleColumns.includes("vsLy");
 
@@ -364,25 +368,28 @@ function BudgetsPage() {
                   <SelectItem value="month">Maand</SelectItem>
                   <SelectItem value="range">YTD / periode</SelectItem>
                   <SelectItem value="year">Jaar</SelectItem>
+                  <SelectItem value="multiYear">Meerdere jaren</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            <div>
-              <label className="text-xs text-muted-foreground">Jaar</label>
-              <Select value={year} onValueChange={setYear}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {yearOptions().map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {viewMode !== "multiYear" && (
+              <div>
+                <label className="text-xs text-muted-foreground">Jaar</label>
+                <Select value={year} onValueChange={setYear}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {yearOptions().map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {viewMode === "month" && (
               <div>
@@ -455,6 +462,17 @@ function BudgetsPage() {
             </div>
 
             <ColumnToggles columns={visibleColumns} onToggle={toggleColumn} />
+
+            {viewMode === "multiYear" && (
+              <MultiPeriodPicker
+                years={yearOptions()}
+                months={monthOptions()}
+                selectedYears={selectedYears}
+                selectedMonths={selectedMonths}
+                onYearsChange={setSelectedYears}
+                onMonthsChange={setSelectedMonths}
+              />
+            )}
           </div>
         </CardContent>
       </Card>
@@ -917,6 +935,13 @@ function yearPeriods(year: string) {
   return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
 }
 
+function multiYearPeriods(years: string[], months: string[]) {
+  const selectedYears = uniqueSorted(years);
+  const selectedMonths =
+    months.length > 0 ? uniqueSorted(months) : monthOptions().map((m) => m.value);
+  return selectedYears.flatMap((year) => selectedMonths.map((month) => composePeriod(year, month)));
+}
+
 function previousYearPeriod(period: string) {
   const [year, month] = period.split("-").map(Number);
   return `${year - 1}-${String(month).padStart(2, "0")}`;
@@ -929,14 +954,34 @@ function previousYearToCurrentPeriod(period: string) {
 
 function selectionTitle(viewMode: ViewMode, periods: string[], year: string) {
   if (viewMode === "year") return `Jaar ${year}`;
+  if (viewMode === "multiYear") return `Meerdere jaren - ${multiPeriodLabel(periods)}`;
   if (periods.length === 1) return monthLabel(periods[0]);
   return `${monthLabel(periods[0])} t/m ${monthLabel(periods[periods.length - 1])}`;
 }
 
 function aggregateLabel(viewMode: ViewMode, periods: string[]) {
   if (viewMode === "year") return "Jaar totaal";
+  if (viewMode === "multiYear") return "Selectie totaal";
   if (periods.length <= 1) return "Totaal";
   return periods[0]?.endsWith("-01") ? "YTD totaal" : "Periode totaal";
+}
+
+function multiPeriodLabel(periods: string[]) {
+  const years = uniqueSorted(periods.map((period) => period.split("-")[0]));
+  const months = uniqueSorted(periods.map((period) => period.split("-")[1]));
+  const monthText =
+    months.length === 12 ? "alle maanden" : months.map((month) => shortMonthName(month)).join(", ");
+  return `${years.join(", ")} - ${monthText}`;
+}
+
+function uniqueSorted(values: string[]) {
+  return [...new Set(values)].sort();
+}
+
+function shortMonthName(month: string) {
+  return new Date(2026, Number(month) - 1, 1).toLocaleDateString("nl-NL", {
+    month: "short",
+  });
 }
 
 function metricLabel(column: MetricColumn) {
