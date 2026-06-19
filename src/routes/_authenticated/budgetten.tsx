@@ -218,19 +218,6 @@ function BudgetsPage() {
     ],
   );
 
-  const totalRows = rows.filter((row) => detailLevel === "machine" || row.level === 0);
-  const totals = totalRows.reduce(
-    (sum, row) => ({
-      actual: sum.actual + row.actual,
-      budget: sum.budget + row.budget,
-      lyActual: sum.lyActual + row.lyActual,
-    }),
-    { actual: 0, budget: 0, lyActual: 0 },
-  );
-  const delta = totals.actual - totals.budget;
-  const deltaPct = totals.budget ? (delta / totals.budget) * 100 : null;
-  const deltaLy = totals.actual - totals.lyActual;
-  const deltaLyPct = totals.lyActual ? (deltaLy / totals.lyActual) * 100 : null;
   const periodColumns = visibleColumns;
   const totalColumns = visibleColumns;
   const tableColSpan = 3 + selectedPeriods.length * periodColumns.length + totalColumns.length;
@@ -472,34 +459,6 @@ function BudgetsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-5">
-        <MetricCard title="Actuals ex btw" value={formatEUR(totals.actual)} />
-        <MetricCard title="Budget ex btw" value={formatEUR(totals.budget)} />
-        <MetricCard
-          title="Act <> bud"
-          value={formatEUR(delta)}
-          tone={Math.abs(delta) > 0.01 ? (delta >= 0 ? "good" : "bad") : "neutral"}
-          detail={deltaPct === null ? "Geen budget" : `${formatSigned(deltaPct)}%`}
-        />
-        <MetricCard
-          title="LY actuals"
-          value={needsLy ? formatEUR(totals.lyActual) : "-"}
-          detail={needsLy ? "Zelfde periode vorig jaar" : "Kolom uit"}
-        />
-        <MetricCard
-          title="Act <> LY"
-          value={needsLy ? formatEUR(deltaLy) : "-"}
-          tone={!needsLy || Math.abs(deltaLy) <= 0.01 ? "neutral" : deltaLy >= 0 ? "good" : "bad"}
-          detail={
-            !needsLy
-              ? "Kolom uit"
-              : deltaLyPct === null
-                ? "Geen LY"
-                : `${formatSigned(deltaLyPct)}%`
-          }
-        />
-      </div>
-
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
@@ -620,32 +579,6 @@ function BudgetsPage() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function MetricCard({
-  title,
-  value,
-  detail,
-  tone = "neutral",
-}: {
-  title: string;
-  value: string;
-  detail?: string;
-  tone?: "neutral" | "good" | "bad";
-}) {
-  const toneClass =
-    tone === "good" ? "text-emerald-700" : tone === "bad" ? "text-destructive" : "text-foreground";
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className={`text-2xl font-semibold tabular-nums ${toneClass}`}>{value}</div>
-        {detail && <div className="mt-1 text-xs text-muted-foreground">{detail}</div>}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -1098,9 +1031,4 @@ function moneyDeltaClass(value: number, strong = false) {
   return value >= 0
     ? `${base} text-emerald-700 font-medium`
     : `${base} text-destructive font-medium`;
-}
-
-function formatSigned(value: number) {
-  const rounded = Math.round(value * 10) / 10;
-  return rounded > 0 ? `+${rounded}` : String(rounded);
 }
