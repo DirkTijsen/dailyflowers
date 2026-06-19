@@ -90,6 +90,7 @@ const PL_METRIC_COLUMNS: Array<{ value: PlMetricColumn; label: string }> = [
   { value: "budget", label: "Budget" },
   { value: "variance", label: "Verschil" },
 ];
+const WEFACT_NON_CUSTOMER_CATEGORIES = new Set(["omzethuur", "facilitair", "energie"]);
 
 type DetailBase = {
   source: "gl" | "sales";
@@ -1037,7 +1038,11 @@ function TransactionDetailDialog({
           .order("invoice_date", { ascending: false })
           .limit(5000);
         if (error) throw error;
-        rows.push(...((data ?? []) as WefactInvoiceDetailRow[]).map(mapWefactInvoiceDetail));
+        rows.push(
+          ...((data ?? []) as WefactInvoiceDetailRow[])
+            .filter((row) => !WEFACT_NON_CUSTOMER_CATEGORIES.has(row.category ?? ""))
+            .map(mapWefactInvoiceDetail),
+        );
       }
 
       return rows.sort(
