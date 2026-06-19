@@ -36,6 +36,7 @@ import {
   WalletCards,
   Banknote,
   ReceiptText,
+  TrendingUp,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -52,6 +53,7 @@ export const Route = createFileRoute("/_authenticated")({
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/budgetten", label: "Omzet monitoring", icon: Target },
+  { to: "/omzet-graph", label: "Omzet graph", icon: TrendingUp },
   { to: "/winst-verlies", label: "W&V", icon: BarChart3 },
   { to: "/btw-export", label: "Btw-export", icon: FileSpreadsheet },
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
