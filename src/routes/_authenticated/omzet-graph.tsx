@@ -58,6 +58,8 @@ type ChartPoint = {
   [key: string]: string | number;
 };
 
+type MachineGraphMode = "individual" | "average";
+
 const CHANNELS = [
   "shopify_webshop",
   "shopify_winkel",
@@ -94,6 +96,7 @@ const MACHINE_COLORS = [
 ];
 
 const TARGET_MONTHLY_REVENUE = 2000;
+const AVERAGE_MACHINE_SERIES_KEY = "averageMonthlyRevenue";
 
 function RevenueGraphPage() {
   const thisYear = currentMonth().split("-")[0];
@@ -101,6 +104,7 @@ function RevenueGraphPage() {
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [machineSearch, setMachineSearch] = useState("");
   const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([]);
+  const [machineGraphMode, setMachineGraphMode] = useState<MachineGraphMode>("individual");
   const periods = useMemo(
     () => multiYearPeriods(selectedYears, selectedMonths),
     [selectedMonths, selectedYears],
@@ -154,6 +158,16 @@ function RevenueGraphPage() {
       ),
     [displayedMachineOptions, includeYearInLabels, machineActualsQ.data, periods],
   );
+  const averageMachineData = useMemo(
+    () =>
+      buildAverageMachineData(
+        periods,
+        machineActualsQ.data ?? [],
+        displayedMachineOptions,
+        includeYearInLabels,
+      ),
+    [displayedMachineOptions, includeYearInLabels, machineActualsQ.data, periods],
+  );
   const filteredMachineOptions = useMemo(() => {
     const query = machineSearch.trim().toLowerCase();
     if (!query) return machineOptions;
@@ -165,6 +179,21 @@ function RevenueGraphPage() {
   }, [machineOptions, machineSearch]);
 
   const selectedTotal = displayedMachineOptions.reduce((sum, machine) => sum + machine.total, 0);
+  const machineChartData = machineGraphMode === "average" ? averageMachineData : machineData;
+  const machineChartSeries =
+    machineGraphMode === "average"
+      ? [
+          {
+            key: AVERAGE_MACHINE_SERIES_KEY,
+            label: "Gemiddelde maandomzet",
+            color: "#111827",
+          },
+        ]
+      : displayedMachineOptions.map((machine, index) => ({
+          key: machine.seriesKey,
+          label: machine.label,
+          color: MACHINE_COLORS[index % MACHINE_COLORS.length],
+        }));
   const selectionLabel =
     selectedMachineIds.length === 0
       ? `Alle AFS (${machineOptions.length})`
@@ -244,11 +273,33 @@ function RevenueGraphPage() {
             <div>
               <CardTitle className="text-base">AFS per maand</CardTitle>
               <CardDescription>
-                Elke lijn is een AFS-machine. De stippellijn markeert{" "}
-                {formatEUR(TARGET_MONTHLY_REVENUE)} omzet ex btw per maand.
+                {machineGraphMode === "average"
+                  ? "Een lijn toont de gemiddelde maandomzet van de geselecteerde AFS-machines."
+                  : "Elke lijn is een AFS-machine."}{" "}
+                De stippellijn markeert {formatEUR(TARGET_MONTHLY_REVENUE)} omzet ex btw per maand.
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-md border bg-background p-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={machineGraphMode === "individual" ? "default" : "ghost"}
+                  className="h-8"
+                  onClick={() => setMachineGraphMode("individual")}
+                >
+                  Per AFS
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={machineGraphMode === "average" ? "default" : "ghost"}
+                  className="h-8"
+                  onClick={() => setMachineGraphMode("average")}
+                >
+                  Gemiddelde
+                </Button>
+              </div>
               <Badge variant="secondary">{selectionLabel}</Badge>
               <Badge variant="outline">Totaal selectie {formatEUR(selectedTotal)}</Badge>
               <MachinePicker
@@ -273,18 +324,14 @@ function RevenueGraphPage() {
             ) : displayedMachineOptions.length === 0 ? (
               <EmptyState />
             ) : (
-              <RevenueLineChart
-                data={machineData}
-                series={displayedMachineOptions.map((machine, index) => ({
-                  key: machine.seriesKey,
-                  label: machine.label,
-                  color: MACHINE_COLORS[index % MACHINE_COLORS.length],
-                }))}
-                showTarget
-              />
+              <RevenueLineChart data={machineChartData} series={machineChartSeries} showTarget />
             )}
           </div>
-          <MachineLegend machines={displayedMachineOptions} />
+          {machineGraphMode === "average" ? (
+            <AverageMachineLegend machineCount={displayedMachineOptions.length} />
+          ) : (
+            <MachineLegend machines={displayedMachineOptions} />
+          )}
         </CardContent>
       </Card>
     </div>
@@ -526,6 +573,17 @@ function MachineLegend({ machines }: { machines: MachineOption[] }) {
   );
 }
 
+function AverageMachineLegend({ machineCount }: { machineCount: number }) {
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
+      <span className="inline-flex items-center gap-2">
+        <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
+        <span>Gemiddelde maandomzet over {machineCount} AFS-machines</span>
+      </span>
+    </div>
+  );
+}
+
 function LoadingState() {
   return (
     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -620,6 +678,31 @@ function buildMachineData(
     }
     return point;
   });
+}
+
+function buildAverageMachineData(
+  periods: string[],
+  rows: MachineActualRow[],
+  machines: MachineOption[],
+  includeYearInLabels: boolean,
+): ChartPoint[] {
+  const selected = new Set(machines.map((machine) => machine.id));
+  const totalsByPeriod = new Map<string, number>();
+  const denominator = machines.length || 1;
+
+  for (const row of rows) {
+    if (!row.machine_id || !selected.has(row.machine_id)) continue;
+    totalsByPeriod.set(
+      row.period,
+      (totalsByPeriod.get(row.period) ?? 0) + Number(row.net_total ?? 0),
+    );
+  }
+
+  return periods.map((period) => ({
+    period,
+    label: shortMonthLabel(period, includeYearInLabels),
+    [AVERAGE_MACHINE_SERIES_KEY]: (totalsByPeriod.get(period) ?? 0) / denominator,
+  }));
 }
 
 function machineSeriesKey(id: string) {
