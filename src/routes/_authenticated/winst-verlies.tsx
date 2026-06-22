@@ -185,6 +185,7 @@ type MollieSalesInvoiceDetailRow = {
   amount_net: number | string | null;
   vat_amount: number | string | null;
   invoice_url: string | null;
+  raw_payload: Record<string, unknown> | null;
 };
 
 type WefactInvoiceDetailRow = {
@@ -1028,15 +1029,18 @@ function TransactionDetailDialog({
         const { data, error } = await (supabase as any)
           .from("mollie_sales_invoices")
           .select(
-            "id,sales_invoice_id,reference,status,issued_at,paid_at,recipient_name,recipient_email,amount_gross,amount_net,vat_amount,invoice_url",
+            "id,sales_invoice_id,reference,status,issued_at,paid_at,recipient_name,recipient_email,amount_gross,amount_net,vat_amount,invoice_url,raw_payload",
           )
-          .eq("status", "paid")
-          .gte("paid_at", range.startIso)
-          .lt("paid_at", range.endIso)
-          .order("paid_at", { ascending: false, nullsFirst: false })
+          .gte("issued_at", range.startIso)
+          .lt("issued_at", range.endIso)
+          .order("issued_at", { ascending: false, nullsFirst: false })
           .limit(5000);
         if (error) throw error;
-        rows.push(...((data ?? []) as MollieSalesInvoiceDetailRow[]).map(mapMollieInvoiceDetail));
+        rows.push(
+          ...((data ?? []) as MollieSalesInvoiceDetailRow[])
+            .filter(isRevenueMollieInvoice)
+            .map(mapMollieInvoiceDetail),
+        );
       }
 
       if (wantsWefactInvoices) {
@@ -1179,7 +1183,7 @@ function SalesDetailTable({ rows }: { rows: SalesDetailRow[] }) {
     <table className="w-full min-w-[940px] text-sm">
       <thead className="sticky top-0 bg-background text-left shadow-sm">
         <tr>
-          <th className="px-3 py-2 font-medium">Betaald</th>
+          <th className="px-3 py-2 font-medium">Datum</th>
           <th className="px-3 py-2 font-medium">Kanaal</th>
           <th className="px-3 py-2 font-medium">Factuur</th>
           <th className="px-3 py-2 font-medium">Artikel</th>
@@ -1273,11 +1277,19 @@ function mapMollieInvoiceDetail(row: MollieSalesInvoiceDetailRow): SalesDetailRo
     vat_rate: null,
     invoice_number: row.reference ?? row.sales_invoice_id,
     status: row.status,
-    paid_at: row.paid_at ?? row.issued_at,
-    description_raw: row.recipient_email,
+    paid_at: row.issued_at ?? row.paid_at,
+    description_raw: [row.status ? `Status: ${row.status}` : null, row.recipient_email]
+      .filter(Boolean)
+      .join(" | "),
     parse_status: "ok",
     invoice_url: row.invoice_url,
   };
+}
+
+function isRevenueMollieInvoice(row: MollieSalesInvoiceDetailRow) {
+  const status = String(row.status ?? "").toLowerCase();
+  if (status === "canceled" || status === "cancelled") return false;
+  return String(row.raw_payload?.type ?? "invoice").toLowerCase() === "invoice";
 }
 
 function mapWefactInvoiceDetail(row: WefactInvoiceDetailRow): SalesDetailRow {

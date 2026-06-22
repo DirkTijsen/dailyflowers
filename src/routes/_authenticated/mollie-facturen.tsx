@@ -39,6 +39,7 @@ type MollieSalesInvoice = {
   vat_amount: number | string;
   discount_amount: number | string | null;
   invoice_url: string | null;
+  raw_payload: Record<string, unknown> | null;
   synced_at: string | null;
   created_at: string;
 };
@@ -80,7 +81,7 @@ function MollieFacturenPage() {
       const { data, error } = await (supabase as any)
         .from("mollie_sales_invoices")
         .select(
-          "id,sales_invoice_id,reference,status,issued_at,paid_at,due_at,recipient_name,recipient_email,amount_gross,amount_net,vat_amount,discount_amount,invoice_url,synced_at,created_at",
+          "id,sales_invoice_id,reference,status,issued_at,paid_at,due_at,recipient_name,recipient_email,amount_gross,amount_net,vat_amount,discount_amount,invoice_url,raw_payload,synced_at,created_at",
         )
         .order("paid_at", { ascending: false, nullsFirst: false })
         .order("issued_at", { ascending: false, nullsFirst: false })
@@ -119,17 +120,21 @@ function MollieFacturenPage() {
       filtered.reduce(
         (sum, invoice) => {
           sum.count += 1;
-          if (invoice.status === "paid") {
-            sum.paid += 1;
+          const isRevenue = isRevenueMollieInvoice(invoice);
+          if (isRevenue) {
+            sum.revenueCount += 1;
             sum.gross += Number(invoice.amount_gross ?? 0);
             sum.net += Number(invoice.amount_net ?? 0);
             sum.vat += Number(invoice.vat_amount ?? 0);
-          } else {
+          }
+          if (isRevenue && invoice.status === "paid") {
+            sum.paid += 1;
+          } else if (isRevenue) {
             sum.open += 1;
           }
           return sum;
         },
-        { count: 0, paid: 0, open: 0, gross: 0, net: 0, vat: 0 },
+        { count: 0, revenueCount: 0, paid: 0, open: 0, gross: 0, net: 0, vat: 0 },
       ),
     [filtered],
   );
@@ -184,7 +189,7 @@ function MollieFacturenPage() {
         <div>
           <h1 className="text-2xl font-semibold">Mollie Facturen</h1>
           <p className="text-sm text-muted-foreground">
-            Sales invoices uit Mollie. Alleen betaalde facturen tellen mee als omzet in W&V en
+            Sales invoices uit Mollie. Niet-geannuleerde facturen tellen mee als omzet in W&V en
             omzet monitoring.
           </p>
         </div>
@@ -270,7 +275,7 @@ function MollieFacturenPage() {
         <MetricCard title="Omzet ex btw" value={formatEUR(totals.net)} />
         <MetricCard title="Btw" value={formatEUR(totals.vat)} />
         <MetricCard title="Totaal incl." value={formatEUR(totals.gross)} />
-        <MetricCard title="Betaald / open" value={`${totals.paid} / ${totals.open}`} />
+        <MetricCard title="Ontvangen / open" value={`${totals.paid} / ${totals.open}`} />
       </div>
 
       <Card>
@@ -279,8 +284,8 @@ function MollieFacturenPage() {
             {month === "all" ? `Jaar ${year}` : monthLabel(`${year}-${month}`)}
           </CardTitle>
           <CardDescription>
-            Betaalde regels lopen mee in de omzetactuals. Concepten, issued en open facturen staan
-            hier alleen ter controle.
+            Open en vervallen sales invoices lopen mee in de omzetactuals. Creditnota's staan hier
+            alleen ter controle.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -419,7 +424,7 @@ function StatusMetric({ label, value }: { label: string; value: string }) {
 }
 
 function invoicePeriod(invoice: MollieSalesInvoice) {
-  const date = new Date(invoice.paid_at ?? invoice.issued_at ?? invoice.created_at);
+  const date = new Date(invoice.issued_at ?? invoice.paid_at ?? invoice.created_at);
   if (!Number.isFinite(date.getTime())) return "0000-00";
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -427,6 +432,11 @@ function invoicePeriod(invoice: MollieSalesInvoice) {
 function isCancelledMollieInvoice(invoice: MollieSalesInvoice) {
   const status = String(invoice.status ?? "").toLowerCase();
   return status === "canceled" || status === "cancelled";
+}
+
+function isRevenueMollieInvoice(invoice: MollieSalesInvoice) {
+  if (isCancelledMollieInvoice(invoice)) return false;
+  return String(invoice.raw_payload?.type ?? "invoice").toLowerCase() === "invoice";
 }
 
 function salesInvoiceStatusLabel(value: string | null | undefined) {
