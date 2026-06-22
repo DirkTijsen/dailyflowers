@@ -1249,6 +1249,7 @@ function mapShopifyOrderDetail(row: ShopifyOrderDetailRow): SalesDetailRow {
     paid_at: row.processed_at,
     description_raw: [
       row.source_name ? `Bron: ${row.source_name}` : null,
+      isCancelledShopifyOrder(row) ? "Geannuleerd: telt niet mee" : null,
       Number(row.total_shipping ?? 0) ? `Verzendkosten: ${formatEUR(row.total_shipping)}` : null,
       Number(row.total_refunded ?? 0) ? `Refunds: ${formatEUR(row.total_refunded)}` : null,
     ]
@@ -1334,9 +1335,48 @@ function exactDocumentUrl(row: GlDetailRow) {
 }
 
 function shopifyInvoiceAmounts(row: ShopifyOrderDetailRow) {
+  if (isCancelledShopifyOrder(row)) return { gross: 0, vat: 0 };
+  if (isFullyRefundedShopifyOrder(row)) return { gross: 0, vat: 0 };
+
   const gross = coalesceMoney(row.current_total_price, row.total_price);
   const vat = coalesceMoney(row.current_total_tax, row.total_tax, row.line_tax_total);
   return { gross, vat };
+}
+
+function isCancelledShopifyOrder(row: ShopifyOrderDetailRow) {
+  const status = String(row.financial_status ?? "").toLowerCase();
+  const cancelledAt = payloadValue(row.raw_payload, [
+    "cancelled_at",
+    "cancelled_at_csv",
+    "cancelledAt",
+    "canceled_at",
+  ]);
+  return (
+    status === "canceled" ||
+    status === "cancelled" ||
+    status === "voided" ||
+    String(cancelledAt ?? "").trim() !== ""
+  );
+}
+
+function isFullyRefundedShopifyOrder(row: ShopifyOrderDetailRow) {
+  const currentTotal = moneyOrNull(row.current_total_price);
+  const totalPrice = moneyOrNull(row.total_price);
+  const totalRefunded = moneyOrNull(row.total_refunded);
+  return (
+    row.financial_status === "refunded" &&
+    currentTotal !== null &&
+    totalPrice !== null &&
+    totalRefunded !== null &&
+    Math.abs(currentTotal) < 0.005 &&
+    totalRefunded >= totalPrice - 0.005
+  );
+}
+
+function moneyOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? roundMoney(numeric) : null;
 }
 
 function coalesceMoney(...values: unknown[]) {

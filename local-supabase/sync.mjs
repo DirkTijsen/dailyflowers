@@ -937,8 +937,10 @@ async function fetchShopifyOrdersPage(domain, accessToken, sinceIso, cursor) {
           processedAt
           createdAt
           updatedAt
+          cancelledAt
           sourceName
           displayFinancialStatus
+          displayFulfillmentStatus
           taxesIncluded
           statusPageUrl
           email
@@ -1266,7 +1268,9 @@ function graphqlOrderToRestLike(order) {
     processed_at: order.processedAt,
     created_at: order.createdAt,
     updated_at: order.updatedAt,
+    cancelled_at: order.cancelledAt,
     source_name: order.sourceName,
+    fulfillment_status: order.displayFulfillmentStatus,
     location_id: order.retailLocation?.id ?? null,
     financial_status: mapGraphqlFinancialStatus(order.displayFinancialStatus),
     taxes_included: order.taxesIncluded,
@@ -2370,6 +2374,8 @@ export async function processShopifyOrder(pool, order, options = {}) {
           name: order.name ?? null,
           source_name: order.source_name ?? null,
           financial_status: order.financial_status ?? null,
+          cancelled_at: order.cancelled_at ?? null,
+          fulfillment_status: order.fulfillment_status ?? null,
           customer_id: order.customer_id ?? null,
           customer_name: order.customer_name ?? null,
           customer_email: order.customer_email ?? null,

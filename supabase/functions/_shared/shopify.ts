@@ -128,6 +128,8 @@ export async function processShopifyOrder(order: any) {
             name: order.name ?? null,
             source_name: order.source_name ?? null,
             financial_status: order.financial_status ?? null,
+            cancelled_at: order.cancelled_at ?? null,
+            fulfillment_status: order.fulfillment_status ?? null,
             tax_rates: taxRates,
             line_count: lines.length,
           },

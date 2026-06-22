@@ -135,6 +135,7 @@ async function main() {
     await applyMigration(app, "20260618110000_add_wefact_facturen_channel.sql");
     await applyMigration(app, "20260618111000_add_wefact_invoices.sql");
     await applyMigration(app, "20260619100000_filter_wefact_customer_invoices_in_actuals.sql");
+    await applyMigration(app, "20260622152000_zero_fully_refunded_shopify_actuals.sql");
     await applyMigrationIfMissing(
       app,
       "public.afs_rental_invoices",

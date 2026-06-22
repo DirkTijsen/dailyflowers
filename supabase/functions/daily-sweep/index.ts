@@ -134,8 +134,10 @@ async function fetchShopifyOrdersPage(
           processedAt
           createdAt
           updatedAt
+          cancelledAt
           sourceName
           displayFinancialStatus
+          displayFulfillmentStatus
           taxesIncluded
           statusPageUrl
           subtotalPriceSet { shopMoney { amount } }
@@ -199,7 +201,9 @@ function graphqlOrderToRestLike(order: any): any {
     processed_at: order.processedAt,
     created_at: order.createdAt,
     updated_at: order.updatedAt,
+    cancelled_at: order.cancelledAt,
     source_name: order.sourceName,
+    fulfillment_status: order.displayFulfillmentStatus,
     location_id: order.retailLocation?.id ?? null,
     financial_status: mapGraphqlFinancialStatus(order.displayFinancialStatus),
     taxes_included: order.taxesIncluded,

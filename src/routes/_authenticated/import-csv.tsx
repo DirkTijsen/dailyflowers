@@ -187,6 +187,8 @@ function buildOrderSummaryRow(order: ParsedOrder) {
         order.firstRow["Payment References"],
       ),
       receipt_number: text(order.firstRow["Receipt Number"]),
+      cancelled_at_csv: isoDate(order.firstRow["Cancelled at"]),
+      fulfillment_status_csv: text(order.firstRow["Fulfillment Status"]),
       payment_terms_name: text(order.firstRow["Payment Terms Name"]),
       next_payment_due_at: isoDate(order.firstRow["Next Payment Due At"]),
       tags: text(order.firstRow["Tags"]),

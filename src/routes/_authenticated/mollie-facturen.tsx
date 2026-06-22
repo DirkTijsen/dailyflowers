@@ -86,7 +86,9 @@ function MollieFacturenPage() {
         .order("issued_at", { ascending: false, nullsFirst: false })
         .limit(10000);
       if (error) throw error;
-      return (data ?? []) as MollieSalesInvoice[];
+      return ((data ?? []) as MollieSalesInvoice[]).filter(
+        (invoice) => !isCancelledMollieInvoice(invoice),
+      );
     },
   });
 
@@ -420,6 +422,11 @@ function invoicePeriod(invoice: MollieSalesInvoice) {
   const date = new Date(invoice.paid_at ?? invoice.issued_at ?? invoice.created_at);
   if (!Number.isFinite(date.getTime())) return "0000-00";
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function isCancelledMollieInvoice(invoice: MollieSalesInvoice) {
+  const status = String(invoice.status ?? "").toLowerCase();
+  return status === "canceled" || status === "cancelled";
 }
 
 function salesInvoiceStatusLabel(value: string | null | undefined) {
