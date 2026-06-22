@@ -222,6 +222,17 @@ function BudgetsPage() {
     ],
   );
 
+  const totalRow = useMemo(
+    () =>
+      buildTotalRevenueRow({
+        periods: selectedPeriods,
+        budgets: budgetsQ.data ?? [],
+        channelActuals: channelActualsQ.data ?? [],
+        lyChannelActuals: lyChannelActualsQ.data ?? [],
+      }),
+    [budgetsQ.data, channelActualsQ.data, lyChannelActualsQ.data, selectedPeriods],
+  );
+
   const periodColumns = visibleColumns;
   const totalColumns = visibleColumns;
   const tableColSpan = 3 + selectedPeriods.length * periodColumns.length + totalColumns.length;
@@ -539,7 +550,7 @@ function BudgetsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && (
+                {rows.length === 0 && !hasAnyValue(totalRow) && (
                   <tr>
                     <td
                       colSpan={tableColSpan}
@@ -547,6 +558,33 @@ function BudgetsPage() {
                     >
                       Geen actuals of budgetten voor deze selectie.
                     </td>
+                  </tr>
+                )}
+                {(rows.length > 0 || hasAnyValue(totalRow)) && (
+                  <tr className="border-t bg-muted/40 font-semibold">
+                    <td className="px-3 py-2">
+                      <Badge variant="default">Totaal</Badge>
+                    </td>
+                    <td className="px-3 py-2">Alle kanalen</td>
+                    <td className="px-3 py-2 font-semibold">Totale omzet</td>
+                    {selectedPeriods.map((p) =>
+                      periodColumns.map((column) => (
+                        <MetricCell
+                          key={`${totalRow.key}-${p}-${column}`}
+                          value={metricValue(totalRow.periodValues[p], column)}
+                          column={column}
+                          strong
+                        />
+                      )),
+                    )}
+                    {totalColumns.map((column) => (
+                      <MetricCell
+                        key={`${totalRow.key}-total-${column}`}
+                        value={totalMetricValue(totalRow, column)}
+                        column={column}
+                        strong
+                      />
+                    ))}
                   </tr>
                 )}
                 {rows.map((row) => (
@@ -645,6 +683,76 @@ function MetricCell({
   const base = `px-3 py-2 text-right tabular-nums ${strong ? "font-semibold" : ""}`;
   const className = isDelta ? moneyDeltaClass(value, strong) : base;
   return <td className={className}>{formatEUR(value)}</td>;
+}
+
+function buildTotalRevenueRow({
+  periods,
+  budgets,
+  channelActuals,
+  lyChannelActuals,
+}: {
+  periods: string[];
+  budgets: BudgetRow[];
+  channelActuals: ActualRow[];
+  lyChannelActuals: ActualRow[];
+}): AnalysisRow {
+  const row: AnalysisRow = {
+    key: "__total_revenue",
+    channel: "__total",
+    machineId: null,
+    afsNumber: null,
+    label: "Totale omzet",
+    level: 0,
+    periodValues: Object.fromEntries(
+      periods.map((period) => [period, { actual: 0, budget: 0, lyActual: 0 }]),
+    ),
+    actual: 0,
+    budget: 0,
+    lyActual: 0,
+  };
+  const explicitChannelBudgetPeriods = new Set<string>();
+  const machineBudgetByChannelPeriod = new Map<string, number>();
+
+  for (const budget of budgets) {
+    const amount = Number(budget.amount ?? 0);
+    if (!budget.machine_id) {
+      explicitChannelBudgetPeriods.add(`${budget.channel}|${budget.period}`);
+      if (row.periodValues[budget.period]) row.periodValues[budget.period].budget += amount;
+      continue;
+    }
+
+    const key = `${budget.channel}|${budget.period}`;
+    machineBudgetByChannelPeriod.set(key, (machineBudgetByChannelPeriod.get(key) ?? 0) + amount);
+  }
+
+  for (const [key, amount] of machineBudgetByChannelPeriod.entries()) {
+    const [channel, period] = key.split("|");
+    if (channel !== "bold_afs") continue;
+    if (explicitChannelBudgetPeriods.has(key)) continue;
+    if (row.periodValues[period]) row.periodValues[period].budget += amount;
+  }
+
+  for (const actual of channelActuals) {
+    if (row.periodValues[actual.period]) {
+      row.periodValues[actual.period].actual += Number(actual.net_total ?? actual.gross_total ?? 0);
+    }
+  }
+
+  for (const actual of lyChannelActuals) {
+    const period = previousYearToCurrentPeriod(actual.period);
+    if (row.periodValues[period]) {
+      row.periodValues[period].lyActual += Number(actual.net_total ?? actual.gross_total ?? 0);
+    }
+  }
+
+  for (const period of periods) {
+    const values = row.periodValues[period] ?? { actual: 0, budget: 0, lyActual: 0 };
+    row.actual += values.actual;
+    row.budget += values.budget;
+    row.lyActual += values.lyActual;
+  }
+
+  return row;
 }
 
 function buildAnalysisRows({
