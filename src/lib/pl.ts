@@ -3,8 +3,8 @@ import { channelLabels } from "@/lib/format";
 export const PL_SECTIONS = [
   { value: "revenue", label: "Omzet" },
   { value: "cost_of_goods", label: "Kostprijs omzet" },
-  { value: "afs_fulfillment_logistics", label: "Vulling- en logistieke kosten AFS'en" },
   { value: "personnel", label: "Personeelskosten" },
+  { value: "afs_fulfillment_logistics", label: "Vulling- en logistieke kosten AFS'en" },
   { value: "housing", label: "Huisvestingskosten" },
   { value: "sales_marketing", label: "Verkoop en marketing" },
   { value: "general_admin", label: "Algemene kosten" },
