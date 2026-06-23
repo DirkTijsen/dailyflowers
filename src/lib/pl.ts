@@ -3,6 +3,7 @@ import { channelLabels } from "@/lib/format";
 export const PL_SECTIONS = [
   { value: "revenue", label: "Omzet" },
   { value: "cost_of_goods", label: "Kostprijs omzet" },
+  { value: "afs_fulfillment_logistics", label: "Vulling- en logistieke kosten AFS'en" },
   { value: "personnel", label: "Personeelskosten" },
   { value: "housing", label: "Huisvestingskosten" },
   { value: "sales_marketing", label: "Verkoop en marketing" },
@@ -555,6 +556,17 @@ function normalizeSection(
   if (direct) return direct.value;
   if (["omzet", "revenue", "sales"].includes(value)) return "revenue";
   if (["kostprijs", "kostprijs_omzet", "inkoopwaarde", "cogs"].includes(value)) return "cost_of_goods";
+  if (
+    [
+      "afs_fulfillment_logistics",
+      "vulling_en_logistieke_kosten_afs_en",
+      "vulling_logistiek_afs",
+      "vulling_en_logistiek_afs",
+      "uitbesteed_werk_afs",
+    ].includes(value)
+  ) {
+    return "afs_fulfillment_logistics";
+  }
   if (["personeel", "personeelskosten", "lonen"].includes(value)) return "personnel";
   if (["huisvesting", "huur"].includes(value)) return "housing";
   if (["verkoop", "marketing", "sales_marketing"].includes(value)) return "sales_marketing";
@@ -565,6 +577,7 @@ function normalizeSection(
 
   const code = accountCode.trim();
   const name = `${accountName} ${classification}`.toLowerCase();
+  if (code === "7600" || name.includes("uitbesteed werk")) return "afs_fulfillment_logistics";
   if (/^7/.test(code) || name.includes("kostprijs") || name.includes("inkoop")) return "cost_of_goods";
   if (name.includes("rente") || name.includes("bankkosten") || name.includes("financier")) return "financial";
   if (/^8/.test(code) || name.includes("omzet") || name.includes("opbreng")) return "revenue";
