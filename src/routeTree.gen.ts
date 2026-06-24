@@ -18,6 +18,7 @@ import { Route as AuthenticatedTransactiesRouteImport } from './routes/_authenti
 import { Route as AuthenticatedShopifyBetalingenRouteImport } from './routes/_authenticated/shopify-betalingen'
 import { Route as AuthenticatedOpenstaandKlantenRouteImport } from './routes/_authenticated/openstaand-klanten'
 import { Route as AuthenticatedOmzetaansluitingRouteImport } from './routes/_authenticated/omzetaansluiting'
+import { Route as AuthenticatedOmzetKaartRouteImport } from './routes/_authenticated/omzet-kaart'
 import { Route as AuthenticatedOmzetGraphRouteImport } from './routes/_authenticated/omzet-graph'
 import { Route as AuthenticatedMollieTransactiesRouteImport } from './routes/_authenticated/mollie-transacties'
 import { Route as AuthenticatedMollieFacturenRouteImport } from './routes/_authenticated/mollie-facturen'
@@ -84,6 +85,11 @@ const AuthenticatedOmzetaansluitingRoute =
     path: '/omzetaansluiting',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedOmzetKaartRoute = AuthenticatedOmzetKaartRouteImport.update({
+  id: '/omzet-kaart',
+  path: '/omzet-kaart',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedOmzetGraphRoute = AuthenticatedOmzetGraphRouteImport.update({
   id: '/omzet-graph',
   path: '/omzet-graph',
@@ -184,6 +190,7 @@ export interface FileRoutesByFullPath {
   '/mollie-facturen': typeof AuthenticatedMollieFacturenRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/omzet-graph': typeof AuthenticatedOmzetGraphRoute
+  '/omzet-kaart': typeof AuthenticatedOmzetKaartRoute
   '/omzetaansluiting': typeof AuthenticatedOmzetaansluitingRoute
   '/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
@@ -209,6 +216,7 @@ export interface FileRoutesByTo {
   '/mollie-facturen': typeof AuthenticatedMollieFacturenRoute
   '/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/omzet-graph': typeof AuthenticatedOmzetGraphRoute
+  '/omzet-kaart': typeof AuthenticatedOmzetKaartRoute
   '/omzetaansluiting': typeof AuthenticatedOmzetaansluitingRoute
   '/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
@@ -236,6 +244,7 @@ export interface FileRoutesById {
   '/_authenticated/mollie-facturen': typeof AuthenticatedMollieFacturenRoute
   '/_authenticated/mollie-transacties': typeof AuthenticatedMollieTransactiesRoute
   '/_authenticated/omzet-graph': typeof AuthenticatedOmzetGraphRoute
+  '/_authenticated/omzet-kaart': typeof AuthenticatedOmzetKaartRoute
   '/_authenticated/omzetaansluiting': typeof AuthenticatedOmzetaansluitingRoute
   '/_authenticated/openstaand-klanten': typeof AuthenticatedOpenstaandKlantenRoute
   '/_authenticated/shopify-betalingen': typeof AuthenticatedShopifyBetalingenRoute
@@ -263,6 +272,7 @@ export interface FileRouteTypes {
     | '/mollie-facturen'
     | '/mollie-transacties'
     | '/omzet-graph'
+    | '/omzet-kaart'
     | '/omzetaansluiting'
     | '/openstaand-klanten'
     | '/shopify-betalingen'
@@ -288,6 +298,7 @@ export interface FileRouteTypes {
     | '/mollie-facturen'
     | '/mollie-transacties'
     | '/omzet-graph'
+    | '/omzet-kaart'
     | '/omzetaansluiting'
     | '/openstaand-klanten'
     | '/shopify-betalingen'
@@ -314,6 +325,7 @@ export interface FileRouteTypes {
     | '/_authenticated/mollie-facturen'
     | '/_authenticated/mollie-transacties'
     | '/_authenticated/omzet-graph'
+    | '/_authenticated/omzet-kaart'
     | '/_authenticated/omzetaansluiting'
     | '/_authenticated/openstaand-klanten'
     | '/_authenticated/shopify-betalingen'
@@ -392,6 +404,13 @@ declare module '@tanstack/react-router' {
       path: '/omzetaansluiting'
       fullPath: '/omzetaansluiting'
       preLoaderRoute: typeof AuthenticatedOmzetaansluitingRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/omzet-kaart': {
+      id: '/_authenticated/omzet-kaart'
+      path: '/omzet-kaart'
+      fullPath: '/omzet-kaart'
+      preLoaderRoute: typeof AuthenticatedOmzetKaartRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/omzet-graph': {
@@ -531,6 +550,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedMollieFacturenRoute: typeof AuthenticatedMollieFacturenRoute
   AuthenticatedMollieTransactiesRoute: typeof AuthenticatedMollieTransactiesRoute
   AuthenticatedOmzetGraphRoute: typeof AuthenticatedOmzetGraphRoute
+  AuthenticatedOmzetKaartRoute: typeof AuthenticatedOmzetKaartRoute
   AuthenticatedOmzetaansluitingRoute: typeof AuthenticatedOmzetaansluitingRoute
   AuthenticatedOpenstaandKlantenRoute: typeof AuthenticatedOpenstaandKlantenRoute
   AuthenticatedShopifyBetalingenRoute: typeof AuthenticatedShopifyBetalingenRoute
@@ -554,6 +574,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedMollieFacturenRoute: AuthenticatedMollieFacturenRoute,
   AuthenticatedMollieTransactiesRoute: AuthenticatedMollieTransactiesRoute,
   AuthenticatedOmzetGraphRoute: AuthenticatedOmzetGraphRoute,
+  AuthenticatedOmzetKaartRoute: AuthenticatedOmzetKaartRoute,
   AuthenticatedOmzetaansluitingRoute: AuthenticatedOmzetaansluitingRoute,
   AuthenticatedOpenstaandKlantenRoute: AuthenticatedOpenstaandKlantenRoute,
   AuthenticatedShopifyBetalingenRoute: AuthenticatedShopifyBetalingenRoute,

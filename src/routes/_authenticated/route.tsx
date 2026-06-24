@@ -37,6 +37,7 @@ import {
   Banknote,
   ReceiptText,
   TrendingUp,
+  MapPinned,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -54,6 +55,7 @@ const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/budgetten", label: "Omzet monitoring", icon: Target },
   { to: "/omzet-graph", label: "Omzet graph", icon: TrendingUp },
+  { to: "/omzet-kaart", label: "Omzet kaart", icon: MapPinned },
   { to: "/winst-verlies", label: "W&V", icon: BarChart3 },
   { to: "/btw-export", label: "Btw-export", icon: FileSpreadsheet },
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
