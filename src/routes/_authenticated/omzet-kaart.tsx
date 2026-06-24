@@ -51,13 +51,13 @@ type RevenueMapLocation = {
   radius: number;
 };
 
-const MAP_WIDTH = 620;
-const MAP_HEIGHT = 760;
-const NL_BOUNDS = {
-  minLat: 50.73,
-  maxLat: 53.62,
-  minLon: 3.33,
-  maxLon: 7.23,
+const GOOGLE_MAP_EMBED_URL =
+  "https://maps.google.com/maps?q=Nederland&t=m&z=8&ie=UTF8&iwloc=&output=embed";
+const MAP_BOUNDS = {
+  minLat: 50.68,
+  maxLat: 53.7,
+  minLon: 3.25,
+  maxLon: 7.35,
 };
 
 const LOCATION_MATCHERS: Array<Coordinates & { match: string }> = [
@@ -254,7 +254,7 @@ function RevenueMapPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="min-h-[620px] rounded-md border bg-slate-50 p-3">
+            <div className="min-h-[640px]">
               {isLoading ? (
                 <MapState>Kaart laden...</MapState>
               ) : error ? (
@@ -371,78 +371,56 @@ function NetherlandsRevenueMap({
   const sortedLocations = [...locations].sort((a, b) => a.radius - b.radius);
 
   return (
-    <svg
-      viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
-      className="h-[620px] w-full"
-      role="img"
-      aria-label="Omzetkaart van AFS-locaties in Nederland"
+    <div
+      className="relative h-[640px] overflow-hidden rounded-md border bg-slate-100 shadow-sm"
+      role="region"
+      aria-label="Omzetkaart van AFS-locaties in Nederland op Google Maps"
     >
-      <defs>
-        <filter id="map-marker-shadow" x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2" floodOpacity="0.25" />
-        </filter>
-      </defs>
-      <rect width={MAP_WIDTH} height={MAP_HEIGHT} rx="8" fill="#f8fafc" />
-      <path
-        d="M236 63 L270 43 L328 66 L374 96 L419 128 L457 176 L474 228 L509 279 L489 332 L522 389 L482 438 L467 510 L423 568 L380 617 L326 671 L270 693 L222 661 L172 617 L129 558 L111 494 L83 432 L107 377 L81 318 L109 255 L139 201 L174 155 L207 116 Z"
-        fill="#e2e8f0"
-        stroke="#94a3b8"
-        strokeWidth="2"
+      <iframe
+        title="Google Maps kaart van Nederland"
+        src={GOOGLE_MAP_EMBED_URL}
+        className="absolute inset-0 h-full w-full border-0"
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+        tabIndex={-1}
       />
-      <path
-        d="M178 113 L136 94 L104 111 L127 136 L164 135 Z M115 158 L81 144 L49 161 L70 188 L108 184 Z M86 216 L52 205 L29 229 L52 251 L82 243 Z"
-        fill="#e2e8f0"
-        stroke="#94a3b8"
-        strokeWidth="2"
-      />
-      <path
-        d="M147 304 C205 334 255 334 315 310 M146 413 C219 396 304 414 379 387 M185 536 C258 516 349 533 433 500"
-        fill="none"
-        stroke="#cbd5e1"
-        strokeDasharray="6 8"
-        strokeWidth="1.5"
-      />
-      <g>
+      <div className="pointer-events-none absolute inset-0 bg-white/5" />
+      <div className="pointer-events-none absolute inset-0 z-10">
         {sortedLocations.map((location) => {
           if (location.x === null || location.y === null) return null;
           const highlighted = highlightedId === location.id;
           const fill = location.revenue > 0 ? "#dc2626" : "#64748b";
+          const size = Math.round((highlighted ? location.radius + 4 : location.radius) * 2);
           return (
-            <g key={location.id}>
-              <circle
-                cx={location.x}
-                cy={location.y}
-                r={highlighted ? location.radius + 4 : location.radius}
-                fill={fill}
-                fillOpacity={highlighted ? 0.88 : 0.68}
-                stroke={highlighted ? "#111827" : "#ffffff"}
-                strokeWidth={highlighted ? 2.5 : 1.5}
-                filter="url(#map-marker-shadow)"
-                className="cursor-pointer transition-opacity"
-                onMouseEnter={() => onHighlight(location.id)}
-                onFocus={() => onHighlight(location.id)}
-                onClick={() => onHighlight(location.id)}
-                tabIndex={0}
-              >
-                <title>
-                  {location.label} - {formatEUR(location.revenue)} - {location.txCount} transacties
-                </title>
-              </circle>
-              {highlighted && (
-                <text
-                  x={location.x}
-                  y={Math.max(18, location.y - location.radius - 10)}
-                  textAnchor="middle"
-                  className="pointer-events-none fill-slate-900 text-[13px] font-semibold"
-                >
-                  {location.label}
-                </text>
-              )}
-            </g>
+            <button
+              key={location.id}
+              type="button"
+              aria-label={`${location.label}: ${formatEUR(location.revenue)}`}
+              title={`${location.label} - ${formatEUR(location.revenue)} - ${
+                location.txCount
+              } transacties`}
+              className="pointer-events-auto absolute rounded-full border-2 border-white shadow-md outline-none transition-[height,width,opacity,box-shadow] hover:opacity-95 focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2"
+              style={{
+                left: `${location.x}%`,
+                top: `${location.y}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                transform: "translate(-50%, -50%)",
+                backgroundColor: fill,
+                opacity: highlighted ? 0.9 : 0.72,
+                boxShadow: highlighted
+                  ? "0 0 0 4px rgba(15, 23, 42, 0.25), 0 10px 22px rgba(15, 23, 42, 0.25)"
+                  : "0 2px 8px rgba(15, 23, 42, 0.22)",
+                zIndex: highlighted ? 200 : Math.round(location.radius),
+              }}
+              onMouseEnter={() => onHighlight(location.id)}
+              onFocus={() => onHighlight(location.id)}
+              onClick={() => onHighlight(location.id)}
+            />
           );
         })}
-      </g>
-    </svg>
+      </div>
+    </div>
   );
 }
 
@@ -560,10 +538,10 @@ function applyOverlapOffsets(locations: RevenueMapLocation[]) {
   const groups = new Map<string, RevenueMapLocation[]>();
   for (const location of locations) {
     if (!location.coordinates) continue;
-    const projected = project(location.coordinates.lat, location.coordinates.lon);
+    const projected = projectToMapPercent(location.coordinates.lat, location.coordinates.lon);
     location.x = projected.x;
     location.y = projected.y;
-    const key = `${Math.round(projected.x / 12)}:${Math.round(projected.y / 12)}`;
+    const key = `${Math.round(projected.x / 2)}:${Math.round(projected.y / 2)}`;
     groups.set(key, [...(groups.get(key) ?? []), location]);
   }
 
@@ -571,13 +549,9 @@ function applyOverlapOffsets(locations: RevenueMapLocation[]) {
     if (group.length <= 1) continue;
     const step = (Math.PI * 2) / group.length;
     group.forEach((location, index) => {
-      const distance = Math.min(18, 7 + group.length * 1.5);
-      location.x = clamp((location.x ?? 0) + Math.cos(index * step) * distance, 18, MAP_WIDTH - 18);
-      location.y = clamp(
-        (location.y ?? 0) + Math.sin(index * step) * distance,
-        18,
-        MAP_HEIGHT - 18,
-      );
+      const distance = Math.min(3.4, 1.1 + group.length * 0.12);
+      location.x = clamp((location.x ?? 0) + Math.cos(index * step) * distance, 3, 97);
+      location.y = clamp((location.y ?? 0) + Math.sin(index * step) * distance, 3, 97);
     });
   }
 
@@ -597,16 +571,33 @@ function coordinatesForMachine(machine: MachineRow): Coordinates | null {
   return LOCATION_MATCHERS.find((matcher) => normalized.includes(matcher.match)) ?? null;
 }
 
-function project(lat: number, lon: number) {
+function projectToMapPercent(lat: number, lon: number) {
+  const top = mercatorY(MAP_BOUNDS.maxLat);
+  const bottom = mercatorY(MAP_BOUNDS.minLat);
   return {
-    x: ((lon - NL_BOUNDS.minLon) / (NL_BOUNDS.maxLon - NL_BOUNDS.minLon)) * MAP_WIDTH,
-    y: ((NL_BOUNDS.maxLat - lat) / (NL_BOUNDS.maxLat - NL_BOUNDS.minLat)) * MAP_HEIGHT,
+    x: clamp(
+      ((mercatorX(lon) - mercatorX(MAP_BOUNDS.minLon)) /
+        (mercatorX(MAP_BOUNDS.maxLon) - mercatorX(MAP_BOUNDS.minLon))) *
+        100,
+      0,
+      100,
+    ),
+    y: clamp(((mercatorY(lat) - top) / (bottom - top)) * 100, 0, 100),
   };
 }
 
+function mercatorX(lon: number) {
+  return (lon + 180) / 360;
+}
+
+function mercatorY(lat: number) {
+  const radians = (lat * Math.PI) / 180;
+  return (1 - Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) / 2;
+}
+
 function markerRadius(revenue: number, maxRevenue: number) {
-  if (revenue <= 0 || maxRevenue <= 0) return 4;
-  return 5 + Math.sqrt(revenue / maxRevenue) * 24;
+  if (revenue <= 0 || maxRevenue <= 0) return 5;
+  return 5 + Math.sqrt(revenue / maxRevenue) * 18;
 }
 
 function googleMapsUrl(location: RevenueMapLocation) {
