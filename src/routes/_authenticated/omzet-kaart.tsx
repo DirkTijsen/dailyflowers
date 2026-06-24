@@ -9,6 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { MultiPeriodPicker } from "@/components/multi-period-picker";
 import { currentMonth, formatEUR } from "@/lib/format";
+import {
+  getMachineLocationTypeLabel,
+  inferMachineLocationType,
+  MACHINE_LOCATION_TYPES,
+  normalizeMachineLocationType,
+  type MachineLocationType,
+} from "@/lib/machine-location-types";
 
 type LeafletModule = typeof import("leaflet");
 
@@ -22,6 +29,7 @@ type MachineRow = {
   afs_number: string;
   machine_id: string | null;
   display_name: string;
+  location_type: string | null;
   active: boolean;
   notes: string | null;
 };
@@ -44,6 +52,7 @@ type RevenueMapLocation = {
   afsNumber: string;
   externalMachineId: string | null;
   label: string;
+  locationType: MachineLocationType;
   active: boolean;
   route: string | null;
   revenue: number;
@@ -156,6 +165,7 @@ function RevenueMapPage() {
   const [selectedYears, setSelectedYears] = useState<string[]>([thisYear]);
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [selectedLocationTypes, setSelectedLocationTypes] = useState<MachineLocationType[]>([]);
   const periods = useMemo(
     () => multiYearPeriods(selectedYears, selectedMonths),
     [selectedMonths, selectedYears],
@@ -166,7 +176,7 @@ function RevenueMapPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("machines")
-        .select("id,afs_number,machine_id,display_name,active,notes")
+        .select("id,afs_number,machine_id,display_name,location_type,active,notes")
         .order("display_name");
       if (error) throw error;
       return (data ?? []) as MachineRow[];
@@ -190,15 +200,36 @@ function RevenueMapPage() {
     () => buildMapLocations(machinesQ.data ?? [], actualsQ.data ?? []),
     [actualsQ.data, machinesQ.data],
   );
-  const plottedLocations = locations.filter((location) => location.coordinates);
-  const missingLocations = locations.filter((location) => !location.coordinates);
+  const locationTypeCounts = useMemo(() => countLocationTypes(locations), [locations]);
+  const visibleLocationTypes = useMemo(
+    () =>
+      MACHINE_LOCATION_TYPES.filter(
+        (type) =>
+          (locationTypeCounts.get(type.value) ?? 0) > 0 ||
+          selectedLocationTypes.includes(type.value),
+      ),
+    [locationTypeCounts, selectedLocationTypes],
+  );
+  const filteredLocations = useMemo(() => {
+    if (selectedLocationTypes.length === 0) return locations;
+    const selected = new Set(selectedLocationTypes);
+    return locations.filter((location) => selected.has(location.locationType));
+  }, [locations, selectedLocationTypes]);
+  const plottedLocations = filteredLocations.filter((location) => location.coordinates);
+  const missingLocations = filteredLocations.filter((location) => !location.coordinates);
   const topLocations = [...plottedLocations].sort((a, b) => b.revenue - a.revenue).slice(0, 12);
   const highlightedLocation =
-    locations.find((location) => location.id === highlightedId) ?? topLocations[0] ?? null;
-  const totalRevenue = locations.reduce((sum, location) => sum + location.revenue, 0);
-  const totalTransactions = locations.reduce((sum, location) => sum + location.txCount, 0);
+    filteredLocations.find((location) => location.id === highlightedId) ?? topLocations[0] ?? null;
+  const totalRevenue = filteredLocations.reduce((sum, location) => sum + location.revenue, 0);
+  const totalTransactions = filteredLocations.reduce((sum, location) => sum + location.txCount, 0);
   const isLoading = machinesQ.isLoading || actualsQ.isLoading;
   const error = machinesQ.error ?? actualsQ.error;
+
+  function toggleLocationType(type: MachineLocationType) {
+    setSelectedLocationTypes((current) =>
+      current.includes(type) ? current.filter((item) => item !== type) : [...current, type],
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -217,7 +248,7 @@ function RevenueMapPage() {
       </div>
 
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="space-y-4 pt-6">
           <MultiPeriodPicker
             years={yearOptions()}
             months={monthOptions()}
@@ -226,6 +257,43 @@ function RevenueMapPage() {
             onYearsChange={setSelectedYears}
             onMonthsChange={setSelectedMonths}
           />
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-medium">Locatietypes</div>
+              {selectedLocationTypes.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-8"
+                  onClick={() => setSelectedLocationTypes([])}
+                >
+                  Alles tonen
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {visibleLocationTypes.map((type) => {
+                const selected =
+                  selectedLocationTypes.length === 0 || selectedLocationTypes.includes(type.value);
+                return (
+                  <Button
+                    key={type.value}
+                    type="button"
+                    size="sm"
+                    variant={selected ? "default" : "outline"}
+                    className="h-8 gap-1.5"
+                    onClick={() => toggleLocationType(type.value)}
+                  >
+                    <span>{type.label}</span>
+                    <span className="text-xs opacity-75">
+                      {locationTypeCounts.get(type.value) ?? 0}
+                    </span>
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -302,6 +370,7 @@ function RevenueMapPage() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{location.label}</span>
                     <span className="block truncate text-xs text-muted-foreground">
+                      {getMachineLocationTypeLabel(location.locationType)} -{" "}
                       {location.coordinates?.place ?? "Geen positie"} - {location.afsNumber}
                     </span>
                   </span>
@@ -331,7 +400,9 @@ function RevenueMapPage() {
                       <span className="min-w-0">
                         <span className="block truncate font-medium">{location.label}</span>
                         <span className="block text-xs text-muted-foreground">
-                          {location.afsNumber} - {formatEUR(location.revenue)}
+                          {location.afsNumber} -{" "}
+                          {getMachineLocationTypeLabel(location.locationType)} -{" "}
+                          {formatEUR(location.revenue)}
                         </span>
                       </span>
                       <Button asChild size="sm" variant="outline" className="h-8 shrink-0">
@@ -443,8 +514,8 @@ function NetherlandsRevenueMap({
 
       marker.bindTooltip(
         `<strong>${escapeHtml(location.label)}</strong><br>${escapeHtml(
-          formatEUR(location.revenue),
-        )} - ${location.txCount} transacties`,
+          getMachineLocationTypeLabel(location.locationType),
+        )}<br>${escapeHtml(formatEUR(location.revenue))} - ${location.txCount} transacties`,
         { direction: "top", sticky: true },
       );
       marker.on("mouseover", () => onHighlight(location.id));
@@ -487,6 +558,7 @@ function LocationDetails({ location }: { location: RevenueMapLocation }) {
       <div className="grid grid-cols-2 gap-3">
         <Metric label="Omzet" value={formatEUR(location.revenue)} />
         <Metric label="Transacties" value={String(location.txCount)} />
+        <Metric label="Type" value={getMachineLocationTypeLabel(location.locationType)} />
         <Metric label="Plaats" value={location.coordinates?.place ?? "-"} />
         <Metric label="Route" value={location.route ?? "-"} />
       </div>
@@ -561,6 +633,9 @@ function buildMapLocations(machines: MachineRow[], actuals: MachineActualRow[]) 
         afsNumber: machine.afs_number,
         externalMachineId: machine.machine_id,
         label: machine.display_name,
+        locationType: normalizeMachineLocationType(
+          machine.location_type ?? inferMachineLocationType(machine.display_name),
+        ),
         active: machine.active,
         route: routeFromNotes(machine.notes),
         revenue: actual.revenue,
@@ -578,6 +653,14 @@ function buildMapLocations(machines: MachineRow[], actuals: MachineActualRow[]) 
   }));
 
   return positioned.sort((a, b) => b.revenue - a.revenue || a.label.localeCompare(b.label));
+}
+
+function countLocationTypes(locations: RevenueMapLocation[]) {
+  const counts = new Map<MachineLocationType, number>();
+  for (const location of locations) {
+    counts.set(location.locationType, (counts.get(location.locationType) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function coordinatesForMachine(machine: MachineRow): Coordinates | null {

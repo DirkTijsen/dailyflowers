@@ -138,6 +138,7 @@ async function main() {
     await applyMigration(app, "20260622152000_zero_fully_refunded_shopify_actuals.sql");
     await applyMigration(app, "20260622165000_include_open_mollie_invoices_in_revenue.sql");
     await applyMigration(app, "20260623103000_add_afs_fulfillment_logistics_pl_section.sql");
+    await applyMigration(app, "20260624102000_add_machine_location_types.sql");
     await applyMigrationIfMissing(
       app,
       "public.afs_rental_invoices",

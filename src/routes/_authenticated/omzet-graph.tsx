@@ -22,6 +22,12 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { channelLabels, currentMonth, formatEUR } from "@/lib/format";
+import {
+  getMachineLocationTypeLabel,
+  MACHINE_LOCATION_TYPES,
+  normalizeMachineLocationType,
+  type MachineLocationType,
+} from "@/lib/machine-location-types";
 
 export const Route = createFileRoute("/_authenticated/omzet-graph")({
   head: () => ({ meta: [{ title: "Omzet graph - Daily Flowers" }] }),
@@ -37,9 +43,11 @@ type ChannelActualRow = {
 
 type MachineActualRow = {
   period: string;
+  channel: string | null;
   machine_id: string | null;
   display_name: string | null;
   afs_number: string | null;
+  location_type: string | null;
   net_total: number | string | null;
   tx_count: number | null;
 };
@@ -95,6 +103,23 @@ const MACHINE_COLORS = [
   "#f97316",
 ];
 
+const MACHINE_TYPE_COLORS: Record<MachineLocationType, string> = {
+  winkelcentrum: "#dc2626",
+  outlet: "#ea580c",
+  tankstation: "#2563eb",
+  groothandel: "#7c3aed",
+  ziekenhuis: "#0891b2",
+  bouwmarkt: "#65a30d",
+  carwash: "#0d9488",
+  hotel: "#d97706",
+  luchthaven: "#4f46e5",
+  ov_station: "#0284c7",
+  winkelstraat: "#be123c",
+  kantoor_mixed_use: "#475569",
+  recreatie: "#c026d3",
+  onbekend: "#64748b",
+};
+
 const TARGET_MONTHLY_REVENUE = 2000;
 const AVERAGE_MACHINE_SERIES_KEY = "averageMonthlyRevenue";
 const MEDIAN_MACHINE_SERIES_KEY = "medianMonthlyRevenue";
@@ -129,7 +154,9 @@ function RevenueGraphPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("vw_monthly_machine" as never)
-        .select("period,machine_id,display_name,afs_number,tx_count,net_total")
+        .select(
+          "period,channel,machine_id,display_name,afs_number,location_type,tx_count,net_total",
+        )
         .in("period", periods);
       if (error) throw error;
       return (data ?? []) as MachineActualRow[];
@@ -142,6 +169,14 @@ function RevenueGraphPage() {
   );
   const machineOptions = useMemo(
     () => buildMachineOptions(machineActualsQ.data ?? []),
+    [machineActualsQ.data],
+  );
+  const machineTypeData = useMemo(
+    () => buildMachineTypeData(periods, machineActualsQ.data ?? [], includeYearInLabels),
+    [includeYearInLabels, machineActualsQ.data, periods],
+  );
+  const machineTypeSeries = useMemo(
+    () => buildMachineTypeSeries(machineActualsQ.data ?? []),
     [machineActualsQ.data],
   );
   const displayedMachineOptions = useMemo(() => {
@@ -288,6 +323,33 @@ function RevenueGraphPage() {
               color: CHANNEL_COLORS[channel],
             }))}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">AFS omzet per locatietype</CardTitle>
+          <CardDescription>
+            Bold/AFS omzet ex btw gegroepeerd op het ingestelde locatietype per machine.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="h-[460px]">
+            {machineActualsQ.isLoading ? (
+              <LoadingState />
+            ) : machineActualsQ.isError ? (
+              <ErrorState error={machineActualsQ.error} />
+            ) : machineTypeSeries.length === 0 ? (
+              <EmptyState />
+            ) : (
+              <RevenueLineChart
+                data={machineTypeData}
+                series={machineTypeSeries}
+                showTarget={false}
+              />
+            )}
+          </div>
+          <Legend items={machineTypeSeries} />
         </CardContent>
       </Card>
 
@@ -701,6 +763,47 @@ function buildMachineOptions(rows: MachineActualRow[]): MachineOption[] {
   return [...byMachine.values()].sort(
     (a, b) => b.total - a.total || a.label.localeCompare(b.label),
   );
+}
+
+function buildMachineTypeSeries(rows: MachineActualRow[]) {
+  const totals = new Map<MachineLocationType, number>();
+
+  for (const row of rows) {
+    if (row.channel !== "bold_afs") continue;
+    const type = normalizeMachineLocationType(row.location_type);
+    totals.set(type, (totals.get(type) ?? 0) + Number(row.net_total ?? 0));
+  }
+
+  return MACHINE_LOCATION_TYPES.filter((type) => Math.abs(totals.get(type.value) ?? 0) > 0.004).map(
+    (type) => ({
+      key: type.value,
+      label: getMachineLocationTypeLabel(type.value),
+      color: MACHINE_TYPE_COLORS[type.value],
+    }),
+  );
+}
+
+function buildMachineTypeData(
+  periods: string[],
+  rows: MachineActualRow[],
+  includeYearInLabels: boolean,
+): ChartPoint[] {
+  const values = new Map<string, number>();
+
+  for (const row of rows) {
+    if (row.channel !== "bold_afs") continue;
+    const type = normalizeMachineLocationType(row.location_type);
+    const key = `${row.period}|${type}`;
+    values.set(key, (values.get(key) ?? 0) + Number(row.net_total ?? 0));
+  }
+
+  return periods.map((period) => {
+    const point: ChartPoint = { period, label: shortMonthLabel(period, includeYearInLabels) };
+    for (const type of MACHINE_LOCATION_TYPES) {
+      point[type.value] = values.get(`${period}|${type.value}`) ?? 0;
+    }
+    return point;
+  });
 }
 
 function buildMachineData(

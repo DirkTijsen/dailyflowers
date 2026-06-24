@@ -4,10 +4,22 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useState } from "react";
 import { toast } from "sonner";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
+import {
+  inferMachineLocationType,
+  MACHINE_LOCATION_TYPES,
+  type MachineLocationType,
+} from "@/lib/machine-location-types";
 
 export const Route = createFileRoute("/_authenticated/instellingen")({
   head: () => ({ meta: [{ title: "Instellingen — Daily Flowers" }] }),
@@ -17,40 +29,113 @@ export const Route = createFileRoute("/_authenticated/instellingen")({
 const apiBaseUrl =
   typeof window !== "undefined" ? window.location.origin : import.meta.env.VITE_SUPABASE_URL || "";
 
+type NewMachineLocationTypeSelection = MachineLocationType | "auto";
+
+type QueryResult<T> = {
+  data: T[] | null;
+  error: { message: string } | null;
+};
+
+type LooseQueryBuilder = {
+  select: (columns?: string) => LooseQueryBuilder;
+  order: (column: string) => Promise<QueryResult<Record<string, unknown>>>;
+  limit: (count: number) => Promise<QueryResult<Record<string, unknown>>>;
+  insert: (values: object | object[]) => Promise<QueryResult<Record<string, unknown>>>;
+  update: (values: object) => LooseQueryBuilder;
+  delete: () => LooseQueryBuilder;
+  eq: (
+    column: string,
+    value: string | number | boolean | null,
+  ) => Promise<QueryResult<Record<string, unknown>>>;
+  upsert: (
+    values: object | object[],
+    options?: Record<string, unknown>,
+  ) => Promise<QueryResult<Record<string, unknown>>>;
+};
+
+type LooseSupabaseClient = {
+  from: (table: string) => LooseQueryBuilder;
+};
+
+type MachineSettingsRow = {
+  id: string;
+  afs_number: string;
+  machine_id: string | null;
+  display_name: string;
+  location_type: string | null;
+  active: boolean;
+};
+
+type VatRateRow = {
+  id: string;
+  rate: number | string;
+  label: string;
+  active: boolean;
+};
+
+type ShopifyConnectionRow = {
+  id: string;
+  label: string;
+  shop_domain: string;
+  last_synced_at: string | null;
+  active: boolean;
+};
+
+type MollieSettingsStatusRow = {
+  api_key_configured: boolean;
+  active: boolean;
+  updated_at: string | null;
+};
+
+type ArticleRow = {
+  id: string;
+  article_number: string;
+  product_name: string;
+  category: string | null;
+  price_gross: number | string | null;
+  vat_rate: number | string | null;
+  active: boolean;
+};
+
+const looseSupabase = supabase as unknown as LooseSupabaseClient;
+
 function SettingsPage() {
   const qc = useQueryClient();
   const machinesQ = useQuery({
     queryKey: ["machines-all"],
     queryFn: async () =>
-      (await supabase.from("machines").select("*").order("afs_number")).data ?? [],
+      ((await supabase.from("machines").select("*").order("afs_number")).data ??
+        []) as MachineSettingsRow[],
   });
   const vatQ = useQuery({
     queryKey: ["vat_rates"],
-    queryFn: async () => (await supabase.from("vat_rates").select("*").order("rate")).data ?? [],
+    queryFn: async () =>
+      ((await supabase.from("vat_rates").select("*").order("rate")).data ?? []) as VatRateRow[],
   });
   const shopQ = useQuery({
     queryKey: ["shopify_connections"],
     queryFn: async () =>
-      (await (supabase as any).from("shopify_connections").select("*").order("created_at")).data ??
-      [],
+      ((await looseSupabase.from("shopify_connections").select("*").order("created_at")).data ??
+        []) as ShopifyConnectionRow[],
   });
   const mollieStatusQ = useQuery({
     queryKey: ["mollie_settings_status"],
     queryFn: async () =>
-      (await (supabase as any).from("mollie_settings_status").select("*").limit(1)).data ?? [],
+      ((await looseSupabase.from("mollie_settings_status").select("*").limit(1)).data ??
+        []) as MollieSettingsStatusRow[],
   });
   const articlesQ = useQuery({
     queryKey: ["bold_articles"],
     queryFn: async () =>
-      (await (supabase as any)
-        .from("bold_articles")
-        .select("*")
-        .order("article_number")).data ?? [],
+      ((await looseSupabase.from("bold_articles").select("*").order("article_number")).data ??
+        []) as ArticleRow[],
   });
 
   const [newAfs, setNewAfs] = useState("");
   const [newMachineId, setNewMachineId] = useState("");
   const [newName, setNewName] = useState("");
+  const [newMachineLocationType, setNewMachineLocationType] =
+    useState<NewMachineLocationTypeSelection>("auto");
   const [newArticleNumber, setNewArticleNumber] = useState("");
   const [newArticleName, setNewArticleName] = useState("");
   const [newArticlePrice, setNewArticlePrice] = useState("");
@@ -70,7 +155,7 @@ function SettingsPage() {
       return;
     }
     const domain = shopDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-    const { error } = await (supabase as any).from("shopify_connections").insert({
+    const { error } = await looseSupabase.from("shopify_connections").insert({
       label: shopLabel,
       shop_domain: domain,
       client_id: shopClient || null,
@@ -87,12 +172,12 @@ function SettingsPage() {
     }
   }
   async function toggleShop(id: string, active: boolean) {
-    await (supabase as any).from("shopify_connections").update({ active }).eq("id", id);
+    await looseSupabase.from("shopify_connections").update({ active }).eq("id", id);
     qc.invalidateQueries({ queryKey: ["shopify_connections"] });
   }
   async function deleteShop(id: string) {
     if (!confirm("Shopify-koppeling verwijderen?")) return;
-    await (supabase as any).from("shopify_connections").delete().eq("id", id);
+    await looseSupabase.from("shopify_connections").delete().eq("id", id);
     qc.invalidateQueries({ queryKey: ["shopify_connections"] });
   }
 
@@ -105,11 +190,11 @@ function SettingsPage() {
 
     const currentSettings = mollieStatusQ.data?.[0];
     const request = currentSettings
-      ? (supabase as any)
+      ? looseSupabase
           .from("mollie_settings")
           .update({ api_key: token, active: true })
           .eq("id", "default")
-      : (supabase as any)
+      : looseSupabase
           .from("mollie_settings")
           .insert({ id: "default", api_key: token, active: true });
     const { error } = await request;
@@ -123,7 +208,7 @@ function SettingsPage() {
   }
 
   async function toggleMollie(active: boolean) {
-    const { error } = await (supabase as any)
+    const { error } = await looseSupabase
       .from("mollie_settings")
       .update({ active })
       .eq("id", "default");
@@ -137,15 +222,22 @@ function SettingsPage() {
       toast.error("AFS-nummer en naam zijn verplicht");
       return;
     }
-    const { error } = await supabase
-      .from("machines")
-      .insert({ afs_number: newAfs, machine_id: newMachineId || null, display_name: newName });
+    const { error } = await supabase.from("machines").insert({
+      afs_number: newAfs,
+      machine_id: newMachineId || null,
+      display_name: newName,
+      location_type:
+        newMachineLocationType === "auto"
+          ? inferMachineLocationType(newName)
+          : newMachineLocationType,
+    });
     if (error) toast.error(error.message);
     else {
       toast.success("Machine toegevoegd");
       setNewAfs("");
       setNewMachineId("");
       setNewName("");
+      setNewMachineLocationType("auto");
       qc.invalidateQueries({ queryKey: ["machines-all"] });
       qc.invalidateQueries({ queryKey: ["machines"] });
     }
@@ -195,7 +287,7 @@ function SettingsPage() {
     }
     const price = parseMoney(newArticlePrice);
     const vat = Number(newArticleVat);
-    const { error } = await (supabase as any).from("bold_articles").upsert(
+    const { error } = await looseSupabase.from("bold_articles").upsert(
       {
         article_number: newArticleNumber,
         product_name: newArticleName,
@@ -226,7 +318,7 @@ function SettingsPage() {
       toast.error("Geen artikelen gevonden");
       return;
     }
-    const { error } = await (supabase as any)
+    const { error } = await looseSupabase
       .from("bold_articles")
       .upsert(rows, { onConflict: "article_number" });
     if (error) toast.error(error.message);
@@ -236,8 +328,11 @@ function SettingsPage() {
     }
   }
 
-  async function updateArticle(id: string, values: Record<string, string | number | boolean | null>) {
-    await (supabase as any).from("bold_articles").update(values).eq("id", id);
+  async function updateArticle(
+    id: string,
+    values: Record<string, string | number | boolean | null>,
+  ) {
+    await looseSupabase.from("bold_articles").update(values).eq("id", id);
     qc.invalidateQueries({ queryKey: ["bold_articles"] });
   }
 
@@ -247,7 +342,7 @@ function SettingsPage() {
 
   async function deleteArticle(id: string) {
     if (!confirm("Artikel verwijderen?")) return;
-    const { error } = await (supabase as any).from("bold_articles").delete().eq("id", id);
+    const { error } = await looseSupabase.from("bold_articles").delete().eq("id", id);
     if (error) toast.error(error.message);
     else {
       toast.success("Artikel verwijderd");
@@ -258,7 +353,7 @@ function SettingsPage() {
   const mollieStatus = mollieStatusQ.data?.[0];
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-6xl">
       <div>
         <h1 className="text-2xl font-semibold">Instellingen</h1>
         <p className="text-sm text-muted-foreground">
@@ -274,7 +369,7 @@ function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-[140px_160px_1fr_auto] gap-2 items-end">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[120px_150px_1fr_190px_auto] md:items-end">
             <div>
               <label className="text-xs text-muted-foreground">AFS-code</label>
               <Input
@@ -299,6 +394,27 @@ function SettingsPage() {
                 placeholder="Hoog Catharijne P5"
               />
             </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Type locatie</label>
+              <Select
+                value={newMachineLocationType}
+                onValueChange={(value) =>
+                  setNewMachineLocationType(value as NewMachineLocationTypeSelection)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Automatisch</SelectItem>
+                  {MACHINE_LOCATION_TYPES.map((type) => (
+                    <SelectItem key={type.value} value={type.value}>
+                      {type.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Button onClick={addMachine}>
               <Plus className="h-4 w-4 mr-1" />
               Toevoegen
@@ -311,6 +427,7 @@ function SettingsPage() {
                   <th className="px-3 py-2 font-medium">AFS-code</th>
                   <th className="px-3 py-2 font-medium">Machine-ID</th>
                   <th className="px-3 py-2 font-medium">Naam</th>
+                  <th className="px-3 py-2 font-medium">Type locatie</th>
                   <th className="px-3 py-2 font-medium">Actief</th>
                   <th className="px-3 py-2"></th>
                 </tr>
@@ -318,12 +435,12 @@ function SettingsPage() {
               <tbody>
                 {machinesQ.data?.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                    <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
                       Nog geen machines.
                     </td>
                   </tr>
                 )}
-                {machinesQ.data?.map((m: any) => (
+                {machinesQ.data?.map((m) => (
                   <tr key={m.id} className="border-t">
                     <td className="px-3 py-2">
                       <Input
@@ -335,9 +452,7 @@ function SettingsPage() {
                     <td className="px-3 py-2">
                       <Input
                         defaultValue={m.machine_id ?? ""}
-                        onBlur={(e) =>
-                          updateMachine(m.id, { machine_id: e.target.value || null })
-                        }
+                        onBlur={(e) => updateMachine(m.id, { machine_id: e.target.value || null })}
                         className="h-8 font-mono text-xs"
                       />
                     </td>
@@ -347,6 +462,23 @@ function SettingsPage() {
                         onBlur={(e) => renameMachine(m.id, e.target.value)}
                         className="h-8"
                       />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Select
+                        value={m.location_type ?? inferMachineLocationType(m.display_name)}
+                        onValueChange={(value) => updateMachine(m.id, { location_type: value })}
+                      >
+                        <SelectTrigger className="h-8 min-w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MACHINE_LOCATION_TYPES.map((type) => (
+                            <SelectItem key={type.value} value={type.value}>
+                              {type.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </td>
                     <td className="px-3 py-2">
                       <Switch checked={m.active} onCheckedChange={(v) => toggleMachine(m.id, v)} />
@@ -452,7 +584,7 @@ function SettingsPage() {
                     </td>
                   </tr>
                 )}
-                {articlesQ.data?.map((a: any) => (
+                {articlesQ.data?.map((a) => (
                   <tr key={a.id} className="border-t">
                     <td className="px-3 py-2">
                       <Input
@@ -471,9 +603,7 @@ function SettingsPage() {
                     <td className="px-3 py-2">
                       <Input
                         defaultValue={a.category ?? ""}
-                        onBlur={(e) =>
-                          updateArticle(a.id, { category: e.target.value || null })
-                        }
+                        onBlur={(e) => updateArticle(a.id, { category: e.target.value || null })}
                         className="h-8"
                       />
                     </td>
@@ -550,7 +680,7 @@ function SettingsPage() {
                 </tr>
               </thead>
               <tbody>
-                {vatQ.data?.map((v: any) => (
+                {vatQ.data?.map((v) => (
                   <tr key={v.id} className="border-t">
                     <td className="px-3 py-2 tabular-nums">{v.rate}%</td>
                     <td className="px-3 py-2">{v.label}</td>
@@ -640,7 +770,7 @@ function SettingsPage() {
                     </td>
                   </tr>
                 )}
-                {shopQ.data?.map((c: any) => (
+                {shopQ.data?.map((c) => (
                   <tr key={c.id} className="border-t">
                     <td className="px-3 py-2">{c.label}</td>
                     <td className="px-3 py-2 font-mono text-xs">{c.shop_domain}</td>
