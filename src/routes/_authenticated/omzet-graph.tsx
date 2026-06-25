@@ -67,6 +67,7 @@ type ChartPoint = {
 };
 
 type MachineGraphMode = "individual" | "average" | "median";
+type MachineTypeGraphMode = "total" | "average";
 
 const CHANNELS = [
   "shopify_webshop",
@@ -131,6 +132,7 @@ function RevenueGraphPage() {
   const [machineSearch, setMachineSearch] = useState("");
   const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([]);
   const [machineGraphMode, setMachineGraphMode] = useState<MachineGraphMode>("individual");
+  const [machineTypeGraphMode, setMachineTypeGraphMode] = useState<MachineTypeGraphMode>("total");
   const periods = useMemo(
     () => multiYearPeriods(selectedYears, selectedMonths),
     [selectedMonths, selectedYears],
@@ -172,8 +174,14 @@ function RevenueGraphPage() {
     [machineActualsQ.data],
   );
   const machineTypeData = useMemo(
-    () => buildMachineTypeData(periods, machineActualsQ.data ?? [], includeYearInLabels),
-    [includeYearInLabels, machineActualsQ.data, periods],
+    () =>
+      buildMachineTypeData(
+        periods,
+        machineActualsQ.data ?? [],
+        includeYearInLabels,
+        machineTypeGraphMode,
+      ),
+    [includeYearInLabels, machineActualsQ.data, machineTypeGraphMode, periods],
   );
   const machineTypeSeries = useMemo(
     () => buildMachineTypeSeries(machineActualsQ.data ?? []),
@@ -328,10 +336,36 @@ function RevenueGraphPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">AFS omzet per locatietype</CardTitle>
-          <CardDescription>
-            Bold/AFS omzet ex btw gegroepeerd op het ingestelde locatietype per machine.
-          </CardDescription>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">AFS omzet per locatietype</CardTitle>
+              <CardDescription>
+                {machineTypeGraphMode === "average"
+                  ? "Gemiddelde Bold/AFS omzet ex btw per AFS-machine binnen elk locatietype."
+                  : "Totale Bold/AFS omzet ex btw gegroepeerd op het ingestelde locatietype per machine."}
+              </CardDescription>
+            </div>
+            <div className="inline-flex rounded-md border bg-background p-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={machineTypeGraphMode === "total" ? "default" : "ghost"}
+                className="h-8"
+                onClick={() => setMachineTypeGraphMode("total")}
+              >
+                Totaal
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={machineTypeGraphMode === "average" ? "default" : "ghost"}
+                className="h-8"
+                onClick={() => setMachineTypeGraphMode("average")}
+              >
+                Gemiddeld per AFS
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="h-[460px]">
@@ -769,7 +803,7 @@ function buildMachineTypeSeries(rows: MachineActualRow[]) {
   const totals = new Map<MachineLocationType, number>();
 
   for (const row of rows) {
-    if (row.channel !== "bold_afs") continue;
+    if (row.channel !== "bold_afs" || !row.machine_id) continue;
     const type = normalizeMachineLocationType(row.location_type);
     totals.set(type, (totals.get(type) ?? 0) + Number(row.net_total ?? 0));
   }
@@ -787,20 +821,28 @@ function buildMachineTypeData(
   periods: string[],
   rows: MachineActualRow[],
   includeYearInLabels: boolean,
+  mode: MachineTypeGraphMode,
 ): ChartPoint[] {
   const values = new Map<string, number>();
+  const machineIdsByType = new Map<MachineLocationType, Set<string>>();
 
   for (const row of rows) {
-    if (row.channel !== "bold_afs") continue;
+    if (row.channel !== "bold_afs" || !row.machine_id) continue;
     const type = normalizeMachineLocationType(row.location_type);
     const key = `${row.period}|${type}`;
     values.set(key, (values.get(key) ?? 0) + Number(row.net_total ?? 0));
+
+    const machineIds = machineIdsByType.get(type) ?? new Set<string>();
+    machineIds.add(row.machine_id);
+    machineIdsByType.set(type, machineIds);
   }
 
   return periods.map((period) => {
     const point: ChartPoint = { period, label: shortMonthLabel(period, includeYearInLabels) };
     for (const type of MACHINE_LOCATION_TYPES) {
-      point[type.value] = values.get(`${period}|${type.value}`) ?? 0;
+      const total = values.get(`${period}|${type.value}`) ?? 0;
+      const denominator = machineIdsByType.get(type.value)?.size ?? 0;
+      point[type.value] = mode === "average" && denominator > 0 ? total / denominator : total;
     }
     return point;
   });
