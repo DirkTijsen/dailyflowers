@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Download, ExternalLink, RefreshCw, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { MultiPeriodPicker } from "@/components/multi-period-picker";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -64,7 +66,9 @@ type SalesPeriodRow = {
 };
 
 type PlBudgetLine = {
+  id: string;
   period: string;
+  budget_year: number;
   section: string;
   line_key: string;
   line_label: string;
@@ -77,10 +81,12 @@ type PlBudgetLine = {
 };
 
 type RevenueBudgetRow = {
+  id: string;
   period: string;
   channel: string;
   machine_id: string | null;
   amount: number | string;
+  machines?: { display_name: string | null; afs_number: string | null } | null;
 };
 
 type ViewMode = "month" | "range" | "year" | "multiYear";
@@ -120,6 +126,33 @@ type PlRow = {
   budgetYtd?: number;
   budgetOnly?: boolean;
   detailByPeriod?: Record<string, DetailBase>;
+};
+
+type BudgetInputCell = {
+  id?: string;
+  amount: number;
+};
+
+type RevenueBudgetInputRow = {
+  key: string;
+  channel: string;
+  machineId: string | null;
+  label: string;
+  level: 0 | 1;
+  values: Record<string, BudgetInputCell>;
+};
+
+type PlBudgetInputRow = {
+  key: string;
+  section: string;
+  lineKey: string;
+  lineLabel: string;
+  kind: "revenue" | "cost";
+  sourceWorkbook: string;
+  sourceSheet: string;
+  sourceLabel: string;
+  sortOrder: number;
+  values: Record<string, BudgetInputCell>;
 };
 
 type GlDetailRow = {
@@ -213,7 +246,12 @@ type SupabaseQuery<T> = PromiseLike<SupabaseResult<T>> & {
   gte(column: string, value: unknown): SupabaseQuery<T>;
   lt(column: string, value: unknown): SupabaseQuery<T>;
   eq(column: string, value: unknown): SupabaseQuery<T>;
+  neq(column: string, value: unknown): SupabaseQuery<T>;
   limit(count: number): SupabaseQuery<T>;
+  is(column: string, value: unknown): SupabaseQuery<T>;
+  delete(): SupabaseQuery<T>;
+  update(values: unknown): SupabaseQuery<T>;
+  insert(values: unknown): PromiseLike<SupabaseResult<T>>;
   upsert(values: unknown, options?: Record<string, unknown>): PromiseLike<SupabaseResult<T>>;
 };
 
@@ -240,6 +278,8 @@ function ProfitLossPage() {
   ]);
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [exactSyncing, setExactSyncing] = useState(false);
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
+  const [savingBudgetCell, setSavingBudgetCell] = useState<string | null>(null);
   const months = useMemo(() => {
     if (viewMode === "month") return [composePeriod(year, month)];
     if (viewMode === "year") return yearPeriods(year);
@@ -296,7 +336,7 @@ function ProfitLossPage() {
       const { data, error } = await db
         .from<PlBudgetLine>("pl_budget_lines")
         .select(
-          "period,section,line_key,line_label,kind,amount,source_workbook,source_sheet,source_label,sort_order",
+          "id,period,budget_year,section,line_key,line_label,kind,amount,source_workbook,source_sheet,source_label,sort_order",
         )
         .in("period", months)
         .order("sort_order")
@@ -312,7 +352,7 @@ function ProfitLossPage() {
     queryFn: async () => {
       const { data, error } = await db
         .from<RevenueBudgetRow>("budgets")
-        .select("period,channel,machine_id,amount")
+        .select("id,period,channel,machine_id,amount,machines(display_name,afs_number)")
         .in("period", months);
       if (error) throw error;
       return (data ?? []) as RevenueBudgetRow[];
@@ -332,6 +372,10 @@ function ProfitLossPage() {
       }),
     [accountsQ.data, budgetsQ.data, glQ.data, months, revenueBudgetsQ.data, salesQ.data],
   );
+
+  useEffect(() => {
+    setBudgetDrafts({});
+  }, [months, budgetsQ.data, revenueBudgetsQ.data]);
 
   function toggleColumn(column: PlMetricColumn) {
     setVisibleColumns((current) => {
@@ -353,6 +397,114 @@ function ProfitLossPage() {
       amount,
       title: `${row.label} - ${monthLabel(period)}`,
     });
+  }
+
+  function updateBudgetDraft(cellKey: string, value: string) {
+    setBudgetDrafts((current) => ({ ...current, [cellKey]: value }));
+  }
+
+  async function saveRevenueBudgetInput(
+    row: RevenueBudgetInputRow,
+    period: string,
+    rawValue: string,
+  ) {
+    const cell = row.values[period];
+    const amount = parseBudgetInput(rawValue);
+    const cellKey = revenueBudgetCellKey(row.key, period);
+    if (!Number.isFinite(amount)) {
+      toast.error("Ongeldig bedrag");
+      setBudgetDrafts((current) => ({
+        ...current,
+        [cellKey]: formatAmountInput(cell?.amount ?? 0),
+      }));
+      return;
+    }
+    if (cell?.id && Math.abs(amount - cell.amount) < 0.005) return;
+    if (!cell?.id && Math.abs(amount) < 0.005) return;
+
+    setSavingBudgetCell(cellKey);
+    try {
+      if (cell?.id) {
+        const { error } = await db.from("budgets").update({ amount }).eq("id", cell.id);
+        if (error) throw error;
+      } else {
+        let del = db.from("budgets").delete().eq("channel", row.channel).eq("period", period);
+        del = row.machineId ? del.eq("machine_id", row.machineId) : del.is("machine_id", null);
+        const deleteResult = await del;
+        if (deleteResult.error) throw deleteResult.error;
+
+        const { error } = await db.from("budgets").insert({
+          channel: row.channel,
+          machine_id: row.machineId,
+          period,
+          amount,
+        });
+        if (error) throw error;
+      }
+
+      setBudgetDrafts((current) => ({ ...current, [cellKey]: formatAmountInput(amount) }));
+      qc.invalidateQueries({ queryKey: ["wv-revenue-budgets"] });
+      qc.invalidateQueries({ queryKey: ["budgets-analysis"] });
+      toast.success("Budget opgeslagen");
+    } catch (error) {
+      toast.error("Budget opslaan mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingBudgetCell(null);
+    }
+  }
+
+  async function savePlBudgetInput(row: PlBudgetInputRow, period: string, rawValue: string) {
+    const cell = row.values[period];
+    const amount = parseBudgetInput(rawValue);
+    const cellKey = plBudgetCellKey(row.key, period);
+    if (!Number.isFinite(amount)) {
+      toast.error("Ongeldig bedrag");
+      setBudgetDrafts((current) => ({
+        ...current,
+        [cellKey]: formatAmountInput(cell?.amount ?? 0),
+      }));
+      return;
+    }
+    if (cell?.id && Math.abs(amount - cell.amount) < 0.005) return;
+    if (!cell?.id && Math.abs(amount) < 0.005) return;
+
+    setSavingBudgetCell(cellKey);
+    try {
+      if (cell?.id) {
+        const { error } = await db.from("pl_budget_lines").update({ amount }).eq("id", cell.id);
+        if (error) throw error;
+      } else {
+        const { error } = await db.from("pl_budget_lines").upsert(
+          {
+            period,
+            budget_year: Number(period.split("-")[0]),
+            section: row.section,
+            line_key: row.lineKey,
+            line_label: row.lineLabel,
+            kind: row.kind,
+            amount,
+            source_workbook: row.sourceWorkbook,
+            source_sheet: row.sourceSheet,
+            source_label: row.sourceLabel,
+            sort_order: row.sortOrder,
+          },
+          { onConflict: "source_workbook,period,line_key" },
+        );
+        if (error) throw error;
+      }
+
+      setBudgetDrafts((current) => ({ ...current, [cellKey]: formatAmountInput(amount) }));
+      qc.invalidateQueries({ queryKey: ["wv-pl-budget-lines"] });
+      toast.success("Budget opgeslagen");
+    } catch (error) {
+      toast.error("Budget opslaan mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingBudgetCell(null);
+    }
   }
 
   async function uploadTransactions(event: ChangeEvent<HTMLInputElement>) {
@@ -453,206 +605,380 @@ function ProfitLossPage() {
         </div>
       </div>
 
+      <Tabs defaultValue="wv" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="wv">W&V</TabsTrigger>
+          <TabsTrigger value="budget-inputs">Budget inputs</TabsTrigger>
+        </TabsList>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6 items-end">
+              <Field label="View">
+                <Select value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="month">Maand</SelectItem>
+                    <SelectItem value="range">YTD / periode</SelectItem>
+                    <SelectItem value="year">Jaar</SelectItem>
+                    <SelectItem value="multiYear">Meerdere jaren</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              {viewMode !== "multiYear" && (
+                <Field label="Jaar">
+                  <Select value={year} onValueChange={setYear}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {yearOptions().map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+
+              {viewMode === "month" && (
+                <Field label="Periode">
+                  <Select value={month} onValueChange={setMonth}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {monthOptions().map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+
+              {viewMode === "range" && (
+                <>
+                  <Field label="Vanaf">
+                    <Select value={fromMonth} onValueChange={setFromMonth}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {monthOptions().map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="T/m">
+                    <Select value={toMonth} onValueChange={setToMonth}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {monthOptions().map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </>
+              )}
+
+              <PlColumnToggles columns={visibleColumns} onToggle={toggleColumn} />
+
+              {viewMode === "multiYear" && (
+                <MultiPeriodPicker
+                  years={yearOptions()}
+                  months={monthOptions()}
+                  selectedYears={selectedYears}
+                  selectedMonths={selectedMonths}
+                  onYearsChange={setSelectedYears}
+                  onMonthsChange={setSelectedMonths}
+                />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <TabsContent value="wv" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{selectionTitle(viewMode, months, year)}</CardTitle>
+              <CardDescription>
+                Actuals naast omzetbudgetten en W&V-kostenbudgetten. Klik op een actual om de
+                onderliggende grootboekregels of verkooptransacties te zien.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1680px] text-sm">
+                  <thead className="bg-muted/50 text-left">
+                    <tr>
+                      <th className="px-3 py-2 font-medium" rowSpan={2}>
+                        Rubriek
+                      </th>
+                      <th className="px-3 py-2 font-medium" rowSpan={2}>
+                        Regel
+                      </th>
+                      {months.map((period) => (
+                        <th
+                          key={period}
+                          className="border-l px-3 py-2 text-center font-medium"
+                          colSpan={periodColumns.length}
+                        >
+                          <span className="block">
+                            {monthHeaderLabel(period, viewMode === "multiYear")}
+                          </span>
+                          <span className="block text-[11px] font-normal text-muted-foreground">
+                            {quarterHeaderLabel(period, viewMode === "multiYear")}
+                          </span>
+                        </th>
+                      ))}
+                      <th
+                        className="border-l px-3 py-2 text-center font-medium"
+                        colSpan={totalColumns.length}
+                      >
+                        {totalLabel}
+                      </th>
+                    </tr>
+                    <tr>
+                      {months.map((period) => (
+                        <BudgetHeaderCells key={`${period}-headers`} columns={periodColumns} />
+                      ))}
+                      <BudgetHeaderCells columns={totalColumns} totalLabel={totalLabel} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr
+                        key={row.key}
+                        className={
+                          row.kind === "subtotal" || row.kind === "result"
+                            ? "border-t bg-muted/20"
+                            : "border-t hover:bg-muted/30"
+                        }
+                      >
+                        <td className="px-3 py-2">
+                          {row.level === 0 ? (
+                            <Badge variant="outline">{sectionLabel(row.section)}</Badge>
+                          ) : null}
+                        </td>
+                        <td
+                          className={row.level === 0 ? "px-3 py-2 font-semibold" : "px-3 py-2 pl-8"}
+                        >
+                          {row.label}
+                        </td>
+                        {months.map((period) => {
+                          const value = row.values[period] ?? 0;
+                          const budget = row.budgetValues?.[period];
+                          const canOpen =
+                            Boolean(row.detailByPeriod?.[period]) && Math.abs(value) >= 0.005;
+                          return (
+                            <BudgetAmountCells
+                              key={`${row.key}-${period}`}
+                              columns={periodColumns}
+                              value={value}
+                              budget={budget}
+                              budgetOnly={row.budgetOnly}
+                              valueFormat={row.valueFormat}
+                              strong={row.kind !== "normal"}
+                              onClick={canOpen ? () => openDetail(row, period) : undefined}
+                            />
+                          );
+                        })}
+                        <BudgetAmountCells
+                          columns={totalColumns}
+                          value={row.ytd}
+                          budget={row.budgetYtd}
+                          budgetOnly={row.budgetOnly}
+                          valueFormat={row.valueFormat}
+                          strong
+                        />
+                      </tr>
+                    ))}
+                    {rows.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={tableColSpan}
+                          className="px-3 py-8 text-center text-muted-foreground"
+                        >
+                          Geen W&V-data voor deze selectie.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="budget-inputs" className="space-y-4">
+          <BudgetInputsPanel
+            months={months}
+            revenueBudgets={revenueBudgetsQ.data ?? []}
+            budgetLines={budgetsQ.data ?? []}
+            drafts={budgetDrafts}
+            savingCell={savingBudgetCell}
+            onDraftChange={updateBudgetDraft}
+            onSaveRevenue={saveRevenueBudgetInput}
+            onSavePl={savePlBudgetInput}
+          />
+        </TabsContent>
+      </Tabs>
+
+      <TransactionDetailDialog detail={detail} onOpenChange={(open) => !open && setDetail(null)} />
+    </div>
+  );
+}
+
+function BudgetInputsPanel({
+  months,
+  revenueBudgets,
+  budgetLines,
+  drafts,
+  savingCell,
+  onDraftChange,
+  onSaveRevenue,
+  onSavePl,
+}: {
+  months: string[];
+  revenueBudgets: RevenueBudgetRow[];
+  budgetLines: PlBudgetLine[];
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSaveRevenue: (row: RevenueBudgetInputRow, period: string, rawValue: string) => void;
+  onSavePl: (row: PlBudgetInputRow, period: string, rawValue: string) => void;
+}) {
+  const revenueRows = useMemo(
+    () => buildRevenueBudgetInputRows(revenueBudgets, months),
+    [months, revenueBudgets],
+  );
+  const plRows = useMemo(() => buildPlBudgetInputRows(budgetLines, months), [budgetLines, months]);
+  const tableMinWidth = Math.max(960, 360 + months.length * 132 + 140);
+
+  return (
+    <>
       <Card>
-        <CardContent className="pt-6">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6 items-end">
-            <Field label="View">
-              <Select value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="month">Maand</SelectItem>
-                  <SelectItem value="range">YTD / periode</SelectItem>
-                  <SelectItem value="year">Jaar</SelectItem>
-                  <SelectItem value="multiYear">Meerdere jaren</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            {viewMode !== "multiYear" && (
-              <Field label="Jaar">
-                <Select value={year} onValueChange={setYear}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {yearOptions().map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {option}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-
-            {viewMode === "month" && (
-              <Field label="Periode">
-                <Select value={month} onValueChange={setMonth}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {monthOptions().map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-
-            {viewMode === "range" && (
-              <>
-                <Field label="Vanaf">
-                  <Select value={fromMonth} onValueChange={setFromMonth}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {monthOptions().map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="T/m">
-                  <Select value={toMonth} onValueChange={setToMonth}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {monthOptions().map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </>
-            )}
-
-            <PlColumnToggles columns={visibleColumns} onToggle={toggleColumn} />
-
-            {viewMode === "multiYear" && (
-              <MultiPeriodPicker
-                years={yearOptions()}
-                months={monthOptions()}
-                selectedYears={selectedYears}
-                selectedMonths={selectedMonths}
-                onYearsChange={setSelectedYears}
-                onMonthsChange={setSelectedMonths}
-              />
-            )}
+        <CardHeader>
+          <CardTitle className="text-base">Omzetbudgetten</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
+              <thead className="bg-muted/50 text-left">
+                <tr>
+                  <th className="w-44 px-3 py-2 font-medium">Kanaal</th>
+                  <th className="w-52 px-3 py-2 font-medium">Budgetregel</th>
+                  {months.map((period) => (
+                    <BudgetInputHeader key={period} period={period} />
+                  ))}
+                  <th className="w-32 border-l px-3 py-2 text-right font-medium">Totaal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {revenueRows.map((row) => (
+                  <tr key={row.key} className="border-t hover:bg-muted/30">
+                    <td className="px-3 py-2">
+                      {row.level === 0 ? (
+                        <Badge variant="outline">{channelLabel(row.channel)}</Badge>
+                      ) : null}
+                    </td>
+                    <td className={row.level === 0 ? "px-3 py-2 font-medium" : "px-3 py-2 pl-8"}>
+                      {row.label}
+                    </td>
+                    {months.map((period) => {
+                      const cellKey = revenueBudgetCellKey(row.key, period);
+                      return (
+                        <td key={period} className="border-l px-2 py-1">
+                          <BudgetInputField
+                            cellKey={cellKey}
+                            cell={row.values[period]}
+                            draft={drafts[cellKey]}
+                            saving={savingCell === cellKey}
+                            onDraftChange={onDraftChange}
+                            onSave={(rawValue) => onSaveRevenue(row, period, rawValue)}
+                          />
+                        </td>
+                      );
+                    })}
+                    <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+                      {formatEUR(sumInputCells(row.values, months))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{selectionTitle(viewMode, months, year)}</CardTitle>
-          <CardDescription>
-            Actuals naast omzetbudgetten en W&V-kostenbudgetten. Klik op een actual om de
-            onderliggende grootboekregels of verkooptransacties te zien.
-          </CardDescription>
+          <CardTitle className="text-base">W&V-budgetregels</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1680px] text-sm">
+            <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
               <thead className="bg-muted/50 text-left">
                 <tr>
-                  <th className="px-3 py-2 font-medium" rowSpan={2}>
-                    Rubriek
-                  </th>
-                  <th className="px-3 py-2 font-medium" rowSpan={2}>
-                    Regel
-                  </th>
+                  <th className="w-44 px-3 py-2 font-medium">Rubriek</th>
+                  <th className="w-52 px-3 py-2 font-medium">Budgetregel</th>
                   {months.map((period) => (
-                    <th
-                      key={period}
-                      className="border-l px-3 py-2 text-center font-medium"
-                      colSpan={periodColumns.length}
-                    >
-                      <span className="block">
-                        {monthHeaderLabel(period, viewMode === "multiYear")}
-                      </span>
-                      <span className="block text-[11px] font-normal text-muted-foreground">
-                        {quarterHeaderLabel(period, viewMode === "multiYear")}
-                      </span>
-                    </th>
+                    <BudgetInputHeader key={period} period={period} />
                   ))}
-                  <th
-                    className="border-l px-3 py-2 text-center font-medium"
-                    colSpan={totalColumns.length}
-                  >
-                    {totalLabel}
-                  </th>
-                </tr>
-                <tr>
-                  {months.map((period) => (
-                    <BudgetHeaderCells key={`${period}-headers`} columns={periodColumns} />
-                  ))}
-                  <BudgetHeaderCells columns={totalColumns} totalLabel={totalLabel} />
+                  <th className="w-32 border-l px-3 py-2 text-right font-medium">Totaal</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={row.key}
-                    className={
-                      row.kind === "subtotal" || row.kind === "result"
-                        ? "border-t bg-muted/20"
-                        : "border-t hover:bg-muted/30"
-                    }
-                  >
+                {plRows.map((row) => (
+                  <tr key={row.key} className="border-t hover:bg-muted/30">
                     <td className="px-3 py-2">
-                      {row.level === 0 ? (
-                        <Badge variant="outline">{sectionLabel(row.section)}</Badge>
-                      ) : null}
+                      <Badge variant="outline">{sectionLabel(row.section)}</Badge>
                     </td>
-                    <td className={row.level === 0 ? "px-3 py-2 font-semibold" : "px-3 py-2 pl-8"}>
-                      {row.label}
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{row.lineLabel}</div>
+                      <div className="text-xs text-muted-foreground">{row.sourceLabel}</div>
                     </td>
                     {months.map((period) => {
-                      const value = row.values[period] ?? 0;
-                      const budget = row.budgetValues?.[period];
-                      const canOpen =
-                        Boolean(row.detailByPeriod?.[period]) && Math.abs(value) >= 0.005;
+                      const cellKey = plBudgetCellKey(row.key, period);
                       return (
-                        <BudgetAmountCells
-                          key={`${row.key}-${period}`}
-                          columns={periodColumns}
-                          value={value}
-                          budget={budget}
-                          budgetOnly={row.budgetOnly}
-                          valueFormat={row.valueFormat}
-                          strong={row.kind !== "normal"}
-                          onClick={canOpen ? () => openDetail(row, period) : undefined}
-                        />
+                        <td key={period} className="border-l px-2 py-1">
+                          <BudgetInputField
+                            cellKey={cellKey}
+                            cell={row.values[period]}
+                            draft={drafts[cellKey]}
+                            saving={savingCell === cellKey}
+                            onDraftChange={onDraftChange}
+                            onSave={(rawValue) => onSavePl(row, period, rawValue)}
+                          />
+                        </td>
                       );
                     })}
-                    <BudgetAmountCells
-                      columns={totalColumns}
-                      value={row.ytd}
-                      budget={row.budgetYtd}
-                      budgetOnly={row.budgetOnly}
-                      valueFormat={row.valueFormat}
-                      strong
-                    />
+                    <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+                      {formatEUR(sumInputCells(row.values, months))}
+                    </td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {plRows.length === 0 && (
                   <tr>
                     <td
-                      colSpan={tableColSpan}
+                      colSpan={months.length + 3}
                       className="px-3 py-8 text-center text-muted-foreground"
                     >
-                      Geen W&V-data voor deze selectie.
+                      Geen W&V-budgetregels voor deze selectie.
                     </td>
                   </tr>
                 )}
@@ -661,10 +987,183 @@ function ProfitLossPage() {
           </div>
         </CardContent>
       </Card>
-
-      <TransactionDetailDialog detail={detail} onOpenChange={(open) => !open && setDetail(null)} />
-    </div>
+    </>
   );
+}
+
+function BudgetInputHeader({ period }: { period: string }) {
+  return (
+    <th className="w-32 border-l px-3 py-2 text-right font-medium">
+      <span className="block">{monthHeaderLabel(period, true)}</span>
+      <span className="block text-[11px] font-normal text-muted-foreground">
+        {quarterHeaderLabel(period, true)}
+      </span>
+    </th>
+  );
+}
+
+function BudgetInputField({
+  cellKey,
+  cell,
+  draft,
+  saving,
+  onDraftChange,
+  onSave,
+}: {
+  cellKey: string;
+  cell?: BudgetInputCell;
+  draft?: string;
+  saving: boolean;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (rawValue: string) => void;
+}) {
+  const value = draft ?? formatAmountInput(cell?.amount ?? 0);
+  return (
+    <Input
+      value={value}
+      inputMode="decimal"
+      disabled={saving}
+      className="h-8 min-w-28 text-right tabular-nums"
+      onChange={(event) => onDraftChange(cellKey, event.target.value)}
+      onBlur={(event) => onSave(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
+function buildRevenueBudgetInputRows(revenueBudgets: RevenueBudgetRow[], months: string[]) {
+  const result = new Map<string, RevenueBudgetInputRow>();
+
+  const ensure = (channel: string, machineId: string | null, label: string, level: 0 | 1) => {
+    const key = revenueBudgetRowKey(channel, machineId);
+    if (!result.has(key)) {
+      result.set(key, {
+        key,
+        channel,
+        machineId,
+        label,
+        level,
+        values: blankInputCells(months),
+      });
+    }
+    return result.get(key)!;
+  };
+
+  for (const channel of CHANNELS) {
+    ensure(channel, null, "Totaal kanaal", 0);
+  }
+
+  for (const budget of revenueBudgets) {
+    if (!CHANNELS.includes(budget.channel as (typeof CHANNELS)[number])) continue;
+    if (!months.includes(budget.period)) continue;
+    const machineLabel = budget.machine_id ? machineBudgetLabel(budget.machines) : "Totaal kanaal";
+    const row = ensure(budget.channel, budget.machine_id, machineLabel, budget.machine_id ? 1 : 0);
+    row.values[budget.period] = {
+      id: budget.id,
+      amount: Number(budget.amount ?? 0),
+    };
+  }
+
+  return [...result.values()].sort((a, b) => {
+    const channelSort = channelOrderIndex(a.channel) - channelOrderIndex(b.channel);
+    if (channelSort !== 0) return channelSort;
+    if (a.level !== b.level) return a.level - b.level;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function buildPlBudgetInputRows(budgetLines: PlBudgetLine[], months: string[]) {
+  const result = new Map<string, PlBudgetInputRow>();
+
+  for (const line of budgetLines) {
+    if (!months.includes(line.period)) continue;
+    const key = plBudgetRowKey(line.source_workbook, line.line_key);
+    if (!result.has(key)) {
+      result.set(key, {
+        key,
+        section: line.section,
+        lineKey: line.line_key,
+        lineLabel: line.line_label,
+        kind: line.kind,
+        sourceWorkbook: line.source_workbook,
+        sourceSheet: line.source_sheet,
+        sourceLabel: line.source_label,
+        sortOrder: Number(line.sort_order ?? 0),
+        values: blankInputCells(months),
+      });
+    }
+    result.get(key)!.values[line.period] = {
+      id: line.id,
+      amount: Number(line.amount ?? 0),
+    };
+  }
+
+  return [...result.values()].sort((a, b) => {
+    const sectionSort = sectionIndex(a.section) - sectionIndex(b.section);
+    if (sectionSort !== 0) return sectionSort;
+    return a.sortOrder - b.sortOrder || a.lineLabel.localeCompare(b.lineLabel);
+  });
+}
+
+function blankInputCells(months: string[]) {
+  return Object.fromEntries(months.map((period) => [period, { amount: 0 }])) as Record<
+    string,
+    BudgetInputCell
+  >;
+}
+
+function revenueBudgetRowKey(channel: string, machineId: string | null) {
+  return `${channel}|${machineId ?? "channel"}`;
+}
+
+function revenueBudgetCellKey(rowKey: string, period: string) {
+  return `revenue|${rowKey}|${period}`;
+}
+
+function plBudgetRowKey(sourceWorkbook: string, lineKey: string) {
+  return `${sourceWorkbook}|${lineKey}`;
+}
+
+function plBudgetCellKey(rowKey: string, period: string) {
+  return `pl|${rowKey}|${period}`;
+}
+
+function machineBudgetLabel(machine: RevenueBudgetRow["machines"]) {
+  const name = machine?.display_name?.trim();
+  const afsNumber = machine?.afs_number?.trim();
+  if (name && afsNumber) return `${name} (${afsNumber})`;
+  return name || afsNumber || "Onbekende AFS";
+}
+
+function sumInputCells(values: Record<string, BudgetInputCell>, months: string[]) {
+  return months.reduce((sum, period) => sum + Number(values[period]?.amount ?? 0), 0);
+}
+
+function formatAmountInput(value: number) {
+  if (!Number.isFinite(value)) return "";
+  return value.toLocaleString("nl-NL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function parseBudgetInput(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return 0;
+  let normalized = trimmed.replace(/[\u20ac\s]/g, "");
+  if (normalized.includes(",") && normalized.includes(".")) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else {
+    normalized = normalized.replace(",", ".");
+  }
+  return Number(normalized);
+}
+
+function channelOrderIndex(channel: string) {
+  const index = CHANNELS.indexOf(channel as (typeof CHANNELS)[number]);
+  return index === -1 ? 999 : index;
 }
 
 function buildProfitLoss({
@@ -1026,8 +1525,8 @@ function TransactionDetailDialog({
       }
 
       if (wantsMollieInvoices) {
-        const { data, error } = await (supabase as any)
-          .from("mollie_sales_invoices")
+        const { data, error } = await db
+          .from<MollieSalesInvoiceDetailRow>("mollie_sales_invoices")
           .select(
             "id,sales_invoice_id,reference,status,issued_at,paid_at,recipient_name,recipient_email,amount_gross,amount_net,vat_amount,invoice_url,raw_payload",
           )
@@ -1044,8 +1543,8 @@ function TransactionDetailDialog({
       }
 
       if (wantsWefactInvoices) {
-        const { data, error } = await (supabase as any)
-          .from("wefact_invoices")
+        const { data, error } = await db
+          .from<WefactInvoiceDetailRow>("wefact_invoices")
           .select(
             "id,invoice_number,invoice_date,due_date,status,customer_number,customer_name,reference,category,amount_gross,amount_net,vat_amount,source_filename",
           )
