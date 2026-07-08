@@ -1605,14 +1605,14 @@ function CostDriverInputField({
       drafts[basisCellKey] ??
       formatDriverInput(driver, cell?.basisAmount ?? driver.defaultBasisAmount ?? 0);
     return (
-      <div className="space-y-1">
-        <label className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">Orderwaarde</span>
+      <div className="space-y-2">
+        <label className="block space-y-1">
+          <span className="block text-[11px] text-muted-foreground">Orderwaarde</span>
           <Input
             value={basisValue}
             inputMode="decimal"
             disabled={savingCell === basisCellKey}
-            className="h-8 min-w-20 text-right tabular-nums"
+            className="h-8 w-full min-w-0 text-right tabular-nums"
             onChange={(event) => onDraftChange(basisCellKey, event.target.value)}
             onBlur={(event) => onSave(event.currentTarget.value, "basisAmount")}
             onKeyDown={(event) => {
@@ -1620,13 +1620,13 @@ function CostDriverInputField({
             }}
           />
         </label>
-        <label className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">Per order</span>
+        <label className="block space-y-1">
+          <span className="block text-[11px] text-muted-foreground">Per order</span>
           <Input
             value={amountValue}
             inputMode="decimal"
             disabled={savingCell === amountCellKey}
-            className="h-8 min-w-20 text-right tabular-nums"
+            className="h-8 w-full min-w-0 text-right tabular-nums"
             onChange={(event) => onDraftChange(amountCellKey, event.target.value)}
             onBlur={(event) => onSave(event.currentTarget.value, "amount")}
             onKeyDown={(event) => {
