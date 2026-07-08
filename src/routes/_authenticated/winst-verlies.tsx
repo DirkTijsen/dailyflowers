@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Download, ExternalLink, RefreshCw, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -189,6 +189,7 @@ const AFS_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
     defaultBasisAmount: null,
   },
 ];
+const AFS_MACHINE_COUNT_DRIVER_KEY = "afs_schoonmaak";
 const SHOP_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
   {
     driver_key: "winkels_inkoop",
@@ -1403,6 +1404,7 @@ function CostDriversCard({
       }),
     [activeAfsCount, budgetLines, driverRules, months, revenueBudgets],
   );
+  const afsMachineCountDriver = rows.find((row) => row.driver_key === AFS_MACHINE_COUNT_DRIVER_KEY);
   const tableMinWidth = Math.max(1020, 380 + months.length * 156 + 140);
 
   return (
@@ -1425,43 +1427,112 @@ function CostDriversCard({
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.driver_key} className="border-t hover:bg-muted/30">
-                  <td className="px-3 py-2">
-                    <Badge variant="outline">Kostprijs omzet</Badge>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{row.driver_label}</div>
-                    <div className="text-xs text-muted-foreground">{row.input_label}</div>
-                  </td>
-                  {months.map((period) => {
-                    const cell = row.values[period];
-                    return (
-                      <td key={period} className="border-l px-2 py-1">
-                        <CostDriverInputField
-                          driver={row}
-                          period={period}
-                          cell={cell}
-                          drafts={drafts}
-                          savingCell={savingCell}
-                          onDraftChange={onDraftChange}
-                          onSave={(rawValue, field) => onSave(row, period, rawValue, field)}
-                        />
-                        <div className="mt-1 text-right text-[11px] text-muted-foreground">
-                          {formatEUR(cell?.calculatedAmount ?? 0)}
-                        </div>
-                      </td>
-                    );
-                  })}
-                  <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
-                    {formatEUR(row.total)}
-                  </td>
-                </tr>
+                <Fragment key={row.driver_key}>
+                  {row.driver_key === AFS_MACHINE_COUNT_DRIVER_KEY && afsMachineCountDriver ? (
+                    <AfsMachineCountInputRow
+                      driver={afsMachineCountDriver}
+                      months={months}
+                      drafts={drafts}
+                      savingCell={savingCell}
+                      onDraftChange={onDraftChange}
+                      onSave={(period, rawValue) =>
+                        onSave(afsMachineCountDriver, period, rawValue, "machineCount")
+                      }
+                    />
+                  ) : null}
+                  <tr className="border-t hover:bg-muted/30">
+                    <td className="px-3 py-2">
+                      <Badge variant="outline">Kostprijs omzet</Badge>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{row.driver_label}</div>
+                      <div className="text-xs text-muted-foreground">{row.input_label}</div>
+                    </td>
+                    {months.map((period) => {
+                      const cell = row.values[period];
+                      return (
+                        <td key={period} className="border-l px-2 py-1">
+                          <CostDriverInputField
+                            driver={row}
+                            period={period}
+                            cell={cell}
+                            drafts={drafts}
+                            savingCell={savingCell}
+                            onDraftChange={onDraftChange}
+                            onSave={(rawValue, field) => onSave(row, period, rawValue, field)}
+                          />
+                          <div className="mt-1 text-right text-[11px] text-muted-foreground">
+                            {formatEUR(cell?.calculatedAmount ?? 0)}
+                          </div>
+                        </td>
+                      );
+                    })}
+                    <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+                      {formatEUR(row.total)}
+                    </td>
+                  </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function AfsMachineCountInputRow({
+  driver,
+  months,
+  drafts,
+  savingCell,
+  onDraftChange,
+  onSave,
+}: {
+  driver: CostDriverInputRow;
+  months: string[];
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (period: string, rawValue: string) => void;
+}) {
+  return (
+    <tr className="border-t bg-muted/20 hover:bg-muted/30">
+      <td className="px-3 py-2">
+        <Badge variant="outline">Kostprijs omzet</Badge>
+      </td>
+      <td className="px-3 py-2">
+        <div className="font-medium">Aantal AFS</div>
+        <div className="text-xs text-muted-foreground">Leeg = standaardtelling</div>
+      </td>
+      {months.map((period) => {
+        const cell = driver.values[period];
+        const cellKey = costDriverCellKey(driver.driver_key, period, "machineCount");
+        const value =
+          drafts[cellKey] ?? formatMachineCountInput(cell?.machineCountOverride ?? null);
+        const standard = formatMachineCountInput(cell?.standardMachineCount ?? null);
+        return (
+          <td key={period} className="border-l px-2 py-1">
+            <Input
+              value={value}
+              placeholder={standard}
+              inputMode="numeric"
+              disabled={savingCell === cellKey}
+              className="h-8 min-w-28 text-right tabular-nums"
+              onChange={(event) => onDraftChange(cellKey, event.target.value)}
+              onBlur={(event) => onSave(period, event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+            />
+            <div className="mt-1 text-right text-[11px] text-muted-foreground">
+              Standaard: {standard}
+            </div>
+          </td>
+        );
+      })}
+      <td className="border-l px-3 py-2 text-right text-muted-foreground">-</td>
+    </tr>
   );
 }
 
@@ -1563,49 +1634,6 @@ function CostDriverInputField({
             }}
           />
         </label>
-      </div>
-    );
-  }
-
-  if (driver.calculation_type === "amount_per_afs") {
-    const machineCountCellKey = costDriverCellKey(driver.driver_key, period, "machineCount");
-    const standardMachineCount = cell?.standardMachineCount ?? null;
-    const machineCountValue =
-      drafts[machineCountCellKey] ?? formatMachineCountInput(cell?.machineCountOverride ?? null);
-    return (
-      <div className="space-y-1">
-        <label className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">Per AFS</span>
-          <Input
-            value={amountValue}
-            inputMode="decimal"
-            disabled={savingCell === amountCellKey}
-            className="h-8 min-w-20 text-right tabular-nums"
-            onChange={(event) => onDraftChange(amountCellKey, event.target.value)}
-            onBlur={(event) => onSave(event.currentTarget.value, "amount")}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-            }}
-          />
-        </label>
-        <label className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">Aantal AFS</span>
-          <Input
-            value={machineCountValue}
-            placeholder={formatMachineCountInput(standardMachineCount)}
-            inputMode="numeric"
-            disabled={savingCell === machineCountCellKey}
-            className="h-8 min-w-20 text-right tabular-nums"
-            onChange={(event) => onDraftChange(machineCountCellKey, event.target.value)}
-            onBlur={(event) => onSave(event.currentTarget.value, "machineCount")}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-            }}
-          />
-        </label>
-        <div className="text-right text-[11px] text-muted-foreground">
-          Standaard: {formatMachineCountInput(standardMachineCount)}
-        </div>
       </div>
     );
   }
@@ -1716,6 +1744,7 @@ function buildCostDriverInputRows({
 }) {
   const revenueBudgetByChannel = revenueBudgetValuesByChannel(revenueBudgets, budgetLines, months);
   const calculatedByDriver = new Map<string, Record<string, number>>();
+  const sharedAfsMachineCountByPeriod = sharedAfsMachineCountOverrides(driverRules, months);
 
   return COST_DRIVER_DEFINITIONS.map((driver) => {
     const rules = driverRules
@@ -1735,13 +1764,9 @@ function buildCostDriverInputRows({
       const basisAmount = Number(rule?.basis_amount ?? driver.defaultBasisAmount ?? 0) || null;
       const standardMachineCount =
         driver.calculation_type === "amount_per_afs" ? activeAfsCount : null;
-      const rawMachineCountOverride =
-        driver.calculation_type === "amount_per_afs" && rule?.machine_count != null
-          ? Number(rule.machine_count)
-          : null;
       const machineCountOverride =
-        rawMachineCountOverride !== null && Number.isFinite(rawMachineCountOverride)
-          ? rawMachineCountOverride
+        driver.calculation_type === "amount_per_afs"
+          ? (sharedAfsMachineCountByPeriod[period] ?? null)
           : null;
       const machineCount =
         driver.calculation_type === "amount_per_afs"
@@ -1920,6 +1945,21 @@ function activeRuleForPeriod(rules: PlBudgetDriverRule[], period: string) {
       comparePeriods(rule.from_period, period) <= 0 &&
       (!rule.to_period || comparePeriods(rule.to_period, period) >= 0),
   );
+}
+
+function sharedAfsMachineCountOverrides(driverRules: PlBudgetDriverRule[], months: string[]) {
+  const rules = driverRules
+    .filter((rule) => rule.driver_key === AFS_MACHINE_COUNT_DRIVER_KEY)
+    .sort((a, b) => comparePeriods(a.from_period, b.from_period));
+
+  return Object.fromEntries(
+    months.map((period) => {
+      const rule = activeRuleForPeriod(rules, period);
+      if (rule?.machine_count == null) return [period, null];
+      const override = Number(rule.machine_count);
+      return [period, Number.isFinite(override) ? override : null];
+    }),
+  ) as Record<string, number | null>;
 }
 
 function calculateCostDriverAmount({
