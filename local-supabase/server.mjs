@@ -129,6 +129,27 @@ const resources = {
     ],
     writable: true,
   },
+  pl_budget_driver_rules: {
+    table: "public.pl_budget_driver_rules",
+    columns: [
+      "id",
+      "driver_key",
+      "driver_label",
+      "calculation_type",
+      "amount",
+      "machine_count",
+      "section",
+      "line_key",
+      "line_label",
+      "source_label",
+      "sort_order",
+      "from_period",
+      "to_period",
+      "created_at",
+      "updated_at",
+    ],
+    writable: true,
+  },
   machines: {
     table: "public.machines",
     columns: [

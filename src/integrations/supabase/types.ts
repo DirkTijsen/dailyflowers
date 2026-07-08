@@ -133,6 +133,60 @@ export type Database = {
         };
         Relationships: [];
       };
+      pl_budget_driver_rules: {
+        Row: {
+          amount: number;
+          calculation_type: string;
+          created_at: string;
+          driver_key: string;
+          driver_label: string;
+          from_period: string;
+          id: string;
+          line_key: string;
+          line_label: string;
+          machine_count: number | null;
+          section: string;
+          sort_order: number;
+          source_label: string;
+          to_period: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          amount?: number;
+          calculation_type: string;
+          created_at?: string;
+          driver_key: string;
+          driver_label: string;
+          from_period: string;
+          id?: string;
+          line_key: string;
+          line_label: string;
+          machine_count?: number | null;
+          section?: string;
+          sort_order?: number;
+          source_label: string;
+          to_period?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          amount?: number;
+          calculation_type?: string;
+          created_at?: string;
+          driver_key?: string;
+          driver_label?: string;
+          from_period?: string;
+          id?: string;
+          line_key?: string;
+          line_label?: string;
+          machine_count?: number | null;
+          section?: string;
+          sort_order?: number;
+          source_label?: string;
+          to_period?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       machines: {
         Row: {
           active: boolean;

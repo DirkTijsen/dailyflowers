@@ -157,6 +157,11 @@ async function main() {
     await applyMigration(app, "20260617210000_add_shopify_order_payment_coverage.sql");
     await applyMigration(app, "20260617211500_add_shopify_open_customer_balances.sql");
     await applyMigration(app, "20260617203000_add_pl_budget_lines.sql");
+    await applyMigrationIfMissing(
+      app,
+      "public.pl_budget_driver_rules",
+      "20260708111500_add_pl_budget_driver_rules.sql",
+    );
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);

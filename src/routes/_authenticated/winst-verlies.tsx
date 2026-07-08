@@ -80,6 +80,22 @@ type PlBudgetLine = {
   sort_order: number;
 };
 
+type PlBudgetDriverRule = {
+  id: string;
+  driver_key: string;
+  driver_label: string;
+  calculation_type: "percentage_of_revenue" | "amount_per_afs";
+  amount: number | string;
+  machine_count: number | string | null;
+  section: string;
+  line_key: string;
+  line_label: string;
+  source_label: string;
+  sort_order: number;
+  from_period: string;
+  to_period: string | null;
+};
+
 type RevenueBudgetRow = {
   id: string;
   period: string;
@@ -98,6 +114,58 @@ const PL_METRIC_COLUMNS: Array<{ value: PlMetricColumn; label: string }> = [
   { value: "variance", label: "Verschil" },
 ];
 const WEFACT_NON_CUSTOMER_CATEGORIES = new Set(["omzethuur", "facilitair", "energie"]);
+const AFS_DRIVER_SOURCE_WORKBOOK = "AFS kostprijs drivers";
+const LEGACY_AFS_BUDGET_LINE_KEYS = new Set([
+  "budget-afs-inkoop",
+  "budget-afs-vaste-machinekosten",
+]);
+const AFS_COST_DRIVER_DEFINITIONS: AfsCostDriverDefinition[] = [
+  {
+    driver_key: "afs_inkoop",
+    driver_label: "AFS - Inkoop",
+    calculation_type: "percentage_of_revenue",
+    section: "cost_of_goods",
+    line_key: "budget-afs-inkoop",
+    line_label: "AFS - Inkoop",
+    source_label: "Inkoop (% van AFS omzet)",
+    sort_order: 210,
+    defaultAmount: 45,
+  },
+  {
+    driver_key: "afs_schoonmaak",
+    driver_label: "AFS - Schoonmaak",
+    calculation_type: "amount_per_afs",
+    section: "cost_of_goods",
+    line_key: "budget-afs-schoonmaak",
+    line_label: "AFS - Schoonmaak",
+    source_label: "Vast bedrag per AFS per maand",
+    sort_order: 211,
+    defaultAmount: 0,
+  },
+  {
+    driver_key: "afs_onderhoud",
+    driver_label: "AFS - Onderhoud",
+    calculation_type: "amount_per_afs",
+    section: "cost_of_goods",
+    line_key: "budget-afs-onderhoud",
+    line_label: "AFS - Onderhoud",
+    source_label: "Vast bedrag per AFS per maand",
+    sort_order: 212,
+    defaultAmount: 0,
+  },
+  {
+    driver_key: "afs_logistiek",
+    driver_label: "AFS - Logistiek",
+    calculation_type: "amount_per_afs",
+    section: "cost_of_goods",
+    line_key: "budget-afs-logistiek",
+    line_label: "AFS - Logistiek",
+    source_label: "Vast bedrag per AFS per maand",
+    sort_order: 213,
+    defaultAmount: 0,
+  },
+];
+const AFS_COST_DRIVER_KEYS = AFS_COST_DRIVER_DEFINITIONS.map((driver) => driver.driver_key);
 
 type DetailBase = {
   source: "gl" | "sales";
@@ -153,6 +221,30 @@ type PlBudgetInputRow = {
   sourceLabel: string;
   sortOrder: number;
   values: Record<string, BudgetInputCell>;
+};
+
+type AfsCostDriverDefinition = {
+  driver_key: string;
+  driver_label: string;
+  calculation_type: "percentage_of_revenue" | "amount_per_afs";
+  section: string;
+  line_key: string;
+  line_label: string;
+  source_label: string;
+  sort_order: number;
+  defaultAmount: number;
+};
+
+type AfsCostDriverInputCell = {
+  rule?: PlBudgetDriverRule;
+  amount: number;
+  machineCount: number | null;
+  calculatedAmount: number;
+};
+
+type AfsCostDriverInputRow = AfsCostDriverDefinition & {
+  values: Record<string, AfsCostDriverInputCell>;
+  total: number;
 };
 
 type GlDetailRow = {
@@ -360,22 +452,62 @@ function ProfitLossPage() {
     enabled: months.length > 0,
   });
 
+  const afsCostDriverRulesQ = useQuery({
+    queryKey: ["wv-afs-cost-driver-rules"],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<PlBudgetDriverRule>("pl_budget_driver_rules")
+        .select(
+          "id,driver_key,driver_label,calculation_type,amount,machine_count,section,line_key,line_label,source_label,sort_order,from_period,to_period",
+        )
+        .in("driver_key", AFS_COST_DRIVER_KEYS)
+        .order("driver_key")
+        .order("from_period");
+      if (error) throw error;
+      return (data ?? []) as PlBudgetDriverRule[];
+    },
+  });
+
+  const activeAfsCountQ = useQuery({
+    queryKey: ["machines-active-afs-count"],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<{ id: string }>("machines")
+        .select("id")
+        .eq("active", true);
+      if (error) throw error;
+      return (data ?? []).length;
+    },
+  });
+
+  const effectiveBudgetLines = useMemo(
+    () =>
+      buildEffectiveBudgetLines({
+        budgetLines: budgetsQ.data ?? [],
+        driverRules: afsCostDriverRulesQ.data ?? [],
+        revenueBudgets: revenueBudgetsQ.data ?? [],
+        months,
+        activeAfsCount: activeAfsCountQ.data ?? 0,
+      }),
+    [activeAfsCountQ.data, afsCostDriverRulesQ.data, budgetsQ.data, months, revenueBudgetsQ.data],
+  );
+
   const { rows } = useMemo(
     () =>
       buildProfitLoss({
         months,
         glRows: glQ.data ?? [],
         salesRows: salesQ.data ?? [],
-        budgetLines: budgetsQ.data ?? [],
+        budgetLines: effectiveBudgetLines,
         revenueBudgets: revenueBudgetsQ.data ?? [],
         accounts: accountsQ.data ?? [],
       }),
-    [accountsQ.data, budgetsQ.data, glQ.data, months, revenueBudgetsQ.data, salesQ.data],
+    [accountsQ.data, effectiveBudgetLines, glQ.data, months, revenueBudgetsQ.data, salesQ.data],
   );
 
   useEffect(() => {
     setBudgetDrafts({});
-  }, [months, budgetsQ.data, revenueBudgetsQ.data]);
+  }, [afsCostDriverRulesQ.data, budgetsQ.data, months, revenueBudgetsQ.data]);
 
   function toggleColumn(column: PlMetricColumn) {
     setVisibleColumns((current) => {
@@ -500,6 +632,83 @@ function ProfitLossPage() {
       toast.success("Budget opgeslagen");
     } catch (error) {
       toast.error("Budget opslaan mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingBudgetCell(null);
+    }
+  }
+
+  async function saveAfsCostDriverInput(
+    driver: AfsCostDriverDefinition,
+    period: string,
+    rawValue: string,
+  ) {
+    const amount = parseBudgetInput(rawValue);
+    const cellKey = afsCostDriverCellKey(driver.driver_key, period);
+    const rules = (afsCostDriverRulesQ.data ?? [])
+      .filter((rule) => rule.driver_key === driver.driver_key)
+      .sort((a, b) => comparePeriods(a.from_period, b.from_period));
+    const currentRule = activeRuleForPeriod(rules, period);
+    const currentAmount = Number(currentRule?.amount ?? driver.defaultAmount);
+
+    if (!Number.isFinite(amount)) {
+      toast.error("Ongeldige driverwaarde");
+      setBudgetDrafts((current) => ({
+        ...current,
+        [cellKey]: formatDriverInput(driver, currentAmount),
+      }));
+      return;
+    }
+    if (currentRule && Math.abs(amount - currentAmount) < 0.0005) return;
+
+    const machineCount =
+      driver.calculation_type === "amount_per_afs" ? (activeAfsCountQ.data ?? 0) : null;
+    const rulePayload = {
+      driver_key: driver.driver_key,
+      driver_label: driver.driver_label,
+      calculation_type: driver.calculation_type,
+      amount,
+      machine_count: machineCount,
+      section: driver.section,
+      line_key: driver.line_key,
+      line_label: driver.line_label,
+      source_label: driver.source_label,
+      sort_order: driver.sort_order,
+    };
+
+    setSavingBudgetCell(cellKey);
+    try {
+      if (currentRule?.from_period === period) {
+        const { error } = await db
+          .from("pl_budget_driver_rules")
+          .update(rulePayload)
+          .eq("id", currentRule.id);
+        if (error) throw error;
+      } else {
+        if (currentRule && comparePeriods(currentRule.from_period, period) < 0) {
+          const { error } = await db
+            .from("pl_budget_driver_rules")
+            .update({ to_period: previousPeriod(period) })
+            .eq("id", currentRule.id);
+          if (error) throw error;
+        }
+
+        const nextRule = rules.find((rule) => comparePeriods(rule.from_period, period) > 0);
+        const { error } = await db.from("pl_budget_driver_rules").insert({
+          ...rulePayload,
+          from_period: period,
+          to_period:
+            currentRule?.to_period ?? (nextRule ? previousPeriod(nextRule.from_period) : null),
+        });
+        if (error) throw error;
+      }
+
+      setBudgetDrafts((current) => ({ ...current, [cellKey]: formatDriverInput(driver, amount) }));
+      qc.invalidateQueries({ queryKey: ["wv-afs-cost-driver-rules"] });
+      toast.success("AFS kostprijs opgeslagen");
+    } catch (error) {
+      toast.error("AFS kostprijs opslaan mislukt", {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -829,11 +1038,14 @@ function ProfitLossPage() {
             months={months}
             revenueBudgets={revenueBudgetsQ.data ?? []}
             budgetLines={budgetsQ.data ?? []}
+            driverRules={afsCostDriverRulesQ.data ?? []}
+            activeAfsCount={activeAfsCountQ.data ?? 0}
             drafts={budgetDrafts}
             savingCell={savingBudgetCell}
             onDraftChange={updateBudgetDraft}
             onSaveRevenue={saveRevenueBudgetInput}
             onSavePl={savePlBudgetInput}
+            onSaveAfsDriver={saveAfsCostDriverInput}
           />
         </TabsContent>
       </Tabs>
@@ -847,20 +1059,26 @@ function BudgetInputsPanel({
   months,
   revenueBudgets,
   budgetLines,
+  driverRules,
+  activeAfsCount,
   drafts,
   savingCell,
   onDraftChange,
   onSaveRevenue,
   onSavePl,
+  onSaveAfsDriver,
 }: {
   months: string[];
   revenueBudgets: RevenueBudgetRow[];
   budgetLines: PlBudgetLine[];
+  driverRules: PlBudgetDriverRule[];
+  activeAfsCount: number;
   drafts: Record<string, string>;
   savingCell: string | null;
   onDraftChange: (cellKey: string, value: string) => void;
   onSaveRevenue: (row: RevenueBudgetInputRow, period: string, rawValue: string) => void;
   onSavePl: (row: PlBudgetInputRow, period: string, rawValue: string) => void;
+  onSaveAfsDriver: (driver: AfsCostDriverDefinition, period: string, rawValue: string) => void;
 }) {
   const revenueRows = useMemo(
     () => buildRevenueBudgetInputRows(revenueBudgets, months),
@@ -924,6 +1142,18 @@ function BudgetInputsPanel({
           </div>
         </CardContent>
       </Card>
+
+      <AfsCostDriversCard
+        months={months}
+        revenueBudgets={revenueBudgets}
+        budgetLines={budgetLines}
+        driverRules={driverRules}
+        activeAfsCount={activeAfsCount}
+        drafts={drafts}
+        savingCell={savingCell}
+        onDraftChange={onDraftChange}
+        onSave={onSaveAfsDriver}
+      />
 
       <Card>
         <CardHeader>
@@ -991,6 +1221,105 @@ function BudgetInputsPanel({
   );
 }
 
+function AfsCostDriversCard({
+  months,
+  revenueBudgets,
+  budgetLines,
+  driverRules,
+  activeAfsCount,
+  drafts,
+  savingCell,
+  onDraftChange,
+  onSave,
+}: {
+  months: string[];
+  revenueBudgets: RevenueBudgetRow[];
+  budgetLines: PlBudgetLine[];
+  driverRules: PlBudgetDriverRule[];
+  activeAfsCount: number;
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (driver: AfsCostDriverDefinition, period: string, rawValue: string) => void;
+}) {
+  const rows = useMemo(
+    () =>
+      buildAfsCostDriverInputRows({
+        driverRules,
+        revenueBudgets,
+        budgetLines,
+        months,
+        activeAfsCount,
+      }),
+    [activeAfsCount, budgetLines, driverRules, months, revenueBudgets],
+  );
+  const tableMinWidth = Math.max(960, 360 + months.length * 132 + 140);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">AFS kostprijs</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
+            <thead className="bg-muted/50 text-left">
+              <tr>
+                <th className="w-44 px-3 py-2 font-medium">Driver</th>
+                <th className="w-52 px-3 py-2 font-medium">Input</th>
+                {months.map((period) => (
+                  <BudgetInputHeader key={period} period={period} />
+                ))}
+                <th className="w-32 border-l px-3 py-2 text-right font-medium">Budget totaal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.driver_key} className="border-t hover:bg-muted/30">
+                  <td className="px-3 py-2">
+                    <Badge variant="outline">Kostprijs omzet</Badge>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{row.driver_label}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.calculation_type === "percentage_of_revenue"
+                        ? "% van AFS omzet"
+                        : "Bedrag per AFS per maand"}
+                    </div>
+                  </td>
+                  {months.map((period) => {
+                    const cell = row.values[period];
+                    const cellKey = afsCostDriverCellKey(row.driver_key, period);
+                    return (
+                      <td key={period} className="border-l px-2 py-1">
+                        <AfsCostDriverInputField
+                          driver={row}
+                          period={period}
+                          cell={cell}
+                          draft={drafts[cellKey]}
+                          saving={savingCell === cellKey}
+                          onDraftChange={onDraftChange}
+                          onSave={(rawValue) => onSave(row, period, rawValue)}
+                        />
+                        <div className="mt-1 text-right text-[11px] text-muted-foreground">
+                          {formatEUR(cell?.calculatedAmount ?? 0)}
+                        </div>
+                      </td>
+                    );
+                  })}
+                  <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+                    {formatEUR(row.total)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function BudgetInputHeader({ period }: { period: string }) {
   return (
     <th className="w-32 border-l px-3 py-2 text-right font-medium">
@@ -1018,6 +1347,40 @@ function BudgetInputField({
   onSave: (rawValue: string) => void;
 }) {
   const value = draft ?? formatAmountInput(cell?.amount ?? 0);
+  return (
+    <Input
+      value={value}
+      inputMode="decimal"
+      disabled={saving}
+      className="h-8 min-w-28 text-right tabular-nums"
+      onChange={(event) => onDraftChange(cellKey, event.target.value)}
+      onBlur={(event) => onSave(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
+function AfsCostDriverInputField({
+  driver,
+  period,
+  cell,
+  draft,
+  saving,
+  onDraftChange,
+  onSave,
+}: {
+  driver: AfsCostDriverDefinition;
+  period: string;
+  cell?: AfsCostDriverInputCell;
+  draft?: string;
+  saving: boolean;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (rawValue: string) => void;
+}) {
+  const cellKey = afsCostDriverCellKey(driver.driver_key, period);
+  const value = draft ?? formatDriverInput(driver, cell?.amount ?? driver.defaultAmount);
   return (
     <Input
       value={value}
@@ -1078,6 +1441,8 @@ function buildPlBudgetInputRows(budgetLines: PlBudgetLine[], months: string[]) {
   const result = new Map<string, PlBudgetInputRow>();
 
   for (const line of budgetLines) {
+    if (line.kind === "revenue") continue;
+    if (LEGACY_AFS_BUDGET_LINE_KEYS.has(line.line_key)) continue;
     if (!months.includes(line.period)) continue;
     const key = plBudgetRowKey(line.source_workbook, line.line_key);
     if (!result.has(key)) {
@@ -1107,11 +1472,117 @@ function buildPlBudgetInputRows(budgetLines: PlBudgetLine[], months: string[]) {
   });
 }
 
+function buildAfsCostDriverInputRows({
+  driverRules,
+  revenueBudgets,
+  budgetLines,
+  months,
+  activeAfsCount,
+}: {
+  driverRules: PlBudgetDriverRule[];
+  revenueBudgets: RevenueBudgetRow[];
+  budgetLines: PlBudgetLine[];
+  months: string[];
+  activeAfsCount: number;
+}) {
+  const revenueBudgetByChannel = revenueBudgetValuesByChannel(revenueBudgets, budgetLines, months);
+  const afsRevenue = revenueBudgetByChannel.get("bold_afs") ?? blankValues(months);
+
+  return AFS_COST_DRIVER_DEFINITIONS.map((driver) => {
+    const rules = driverRules
+      .filter((rule) => rule.driver_key === driver.driver_key)
+      .sort((a, b) => comparePeriods(a.from_period, b.from_period));
+    const values = blankAfsCostDriverCells(months);
+
+    for (const period of months) {
+      const rule = activeRuleForPeriod(rules, period);
+      const amount = Number(rule?.amount ?? driver.defaultAmount);
+      const machineCount =
+        driver.calculation_type === "amount_per_afs"
+          ? Number(rule?.machine_count ?? activeAfsCount)
+          : null;
+      values[period] = {
+        rule,
+        amount,
+        machineCount,
+        calculatedAmount: calculateAfsCostDriverAmount({
+          driver,
+          amount,
+          machineCount,
+          revenue: afsRevenue[period] ?? 0,
+        }),
+      };
+    }
+
+    return {
+      ...driver,
+      values,
+      total: months.reduce((sum, period) => sum + (values[period]?.calculatedAmount ?? 0), 0),
+    };
+  });
+}
+
+function buildEffectiveBudgetLines({
+  budgetLines,
+  driverRules,
+  revenueBudgets,
+  months,
+  activeAfsCount,
+}: {
+  budgetLines: PlBudgetLine[];
+  driverRules: PlBudgetDriverRule[];
+  revenueBudgets: RevenueBudgetRow[];
+  months: string[];
+  activeAfsCount: number;
+}) {
+  const manualLines = budgetLines.filter(
+    (line) => line.kind === "revenue" || !LEGACY_AFS_BUDGET_LINE_KEYS.has(line.line_key),
+  );
+  const afsDriverRows = buildAfsCostDriverInputRows({
+    driverRules,
+    revenueBudgets,
+    budgetLines,
+    months,
+    activeAfsCount,
+  });
+  const generatedLines = afsDriverRows.flatMap((driver) =>
+    months.map((period) => ({
+      id: `driver:${driver.driver_key}:${period}`,
+      period,
+      budget_year: Number(period.split("-")[0]),
+      section: driver.section,
+      line_key: driver.line_key,
+      line_label: driver.line_label,
+      kind: "cost" as const,
+      amount: driver.values[period]?.calculatedAmount ?? 0,
+      source_workbook: AFS_DRIVER_SOURCE_WORKBOOK,
+      source_sheet: "AFS kostprijs",
+      source_label: driver.source_label,
+      sort_order: driver.sort_order,
+    })),
+  );
+
+  return [...manualLines, ...generatedLines];
+}
+
 function blankInputCells(months: string[]) {
   return Object.fromEntries(months.map((period) => [period, { amount: 0 }])) as Record<
     string,
     BudgetInputCell
   >;
+}
+
+function blankAfsCostDriverCells(months: string[]) {
+  return Object.fromEntries(
+    months.map((period) => [
+      period,
+      {
+        amount: 0,
+        machineCount: null,
+        calculatedAmount: 0,
+      },
+    ]),
+  ) as Record<string, AfsCostDriverInputCell>;
 }
 
 function revenueBudgetRowKey(channel: string, machineId: string | null) {
@@ -1128,6 +1599,10 @@ function plBudgetRowKey(sourceWorkbook: string, lineKey: string) {
 
 function plBudgetCellKey(rowKey: string, period: string) {
   return `pl|${rowKey}|${period}`;
+}
+
+function afsCostDriverCellKey(driverKey: string, period: string) {
+  return `afs-driver|${driverKey}|${period}`;
 }
 
 function machineBudgetLabel(machine: RevenueBudgetRow["machines"]) {
@@ -1152,13 +1627,55 @@ function formatAmountInput(value: number) {
 function parseBudgetInput(value: string) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return 0;
-  let normalized = trimmed.replace(/[\u20ac\s]/g, "");
+  let normalized = trimmed.replace(/[\u20ac%\s]/g, "");
   if (normalized.includes(",") && normalized.includes(".")) {
     normalized = normalized.replace(/\./g, "").replace(",", ".");
   } else {
     normalized = normalized.replace(",", ".");
   }
   return Number(normalized);
+}
+
+function formatDriverInput(driver: AfsCostDriverDefinition, value: number) {
+  if (!Number.isFinite(value)) return "";
+  return value.toLocaleString("nl-NL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: driver.calculation_type === "percentage_of_revenue" ? 2 : 2,
+  });
+}
+
+function activeRuleForPeriod(rules: PlBudgetDriverRule[], period: string) {
+  return rules.find(
+    (rule) =>
+      comparePeriods(rule.from_period, period) <= 0 &&
+      (!rule.to_period || comparePeriods(rule.to_period, period) >= 0),
+  );
+}
+
+function calculateAfsCostDriverAmount({
+  driver,
+  amount,
+  machineCount,
+  revenue,
+}: {
+  driver: AfsCostDriverDefinition;
+  amount: number;
+  machineCount: number | null;
+  revenue: number;
+}) {
+  if (driver.calculation_type === "percentage_of_revenue")
+    return roundMoney(revenue * (amount / 100));
+  return roundMoney(amount * Number(machineCount ?? 0));
+}
+
+function comparePeriods(a: string, b: string) {
+  return a.localeCompare(b);
+}
+
+function previousPeriod(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const d = new Date(year, month - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function channelOrderIndex(channel: string) {
