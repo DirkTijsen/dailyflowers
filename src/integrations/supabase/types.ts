@@ -136,6 +136,7 @@ export type Database = {
       pl_budget_driver_rules: {
         Row: {
           amount: number;
+          basis_amount: number | null;
           calculation_type: string;
           created_at: string;
           driver_key: string;
@@ -153,6 +154,7 @@ export type Database = {
         };
         Insert: {
           amount?: number;
+          basis_amount?: number | null;
           calculation_type: string;
           created_at?: string;
           driver_key: string;
@@ -170,6 +172,7 @@ export type Database = {
         };
         Update: {
           amount?: number;
+          basis_amount?: number | null;
           calculation_type?: string;
           created_at?: string;
           driver_key?: string;

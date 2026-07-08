@@ -162,6 +162,7 @@ async function main() {
       "public.pl_budget_driver_rules",
       "20260708111500_add_pl_budget_driver_rules.sql",
     );
+    await applyMigration(app, "20260708113500_add_shop_webshop_cost_drivers.sql");
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);

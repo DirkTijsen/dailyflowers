@@ -137,6 +137,7 @@ const resources = {
       "driver_label",
       "calculation_type",
       "amount",
+      "basis_amount",
       "machine_count",
       "section",
       "line_key",
