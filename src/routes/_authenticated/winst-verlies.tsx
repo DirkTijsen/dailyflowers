@@ -121,15 +121,120 @@ const PL_METRIC_COLUMNS: Array<{ value: PlMetricColumn; label: string }> = [
   { value: "variance", label: "Verschil" },
 ];
 const WEFACT_NON_CUSTOMER_CATEGORIES = new Set(["omzethuur", "facilitair", "energie"]);
+const MANUAL_PL_BUDGET_SOURCE_WORKBOOK = "W&V budgetregels";
 const COST_DRIVER_SOURCE_WORKBOOK = "Kostprijs omzet drivers";
-const LEGACY_DRIVER_BUDGET_LINE_KEYS = new Set([
+const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
   "budget-afs-inkoop",
   "budget-afs-vaste-machinekosten",
   "budget-winkels-inkoop",
   "budget-winkels-verspilling",
   "budget-webshop-inkoop",
   "budget-webshop-bezorgkosten",
+  "budget-winkels-overhead",
+  "budget-webshop-overhead",
+  "budget-winkels-aflossing",
 ]);
+const MANUAL_PL_BUDGET_DEFINITIONS: ManualPlBudgetDefinition[] = [
+  {
+    section: "housing",
+    lineKey: "budget-winkels-huur",
+    lineLabel: "Winkel - Pand",
+    sourceSheet: "Winkel",
+    sourceLabel: "Pand",
+    sortOrder: 410,
+  },
+  {
+    section: "personnel",
+    lineKey: "budget-winkels-personeel",
+    lineLabel: "Winkel - Personeel",
+    sourceSheet: "Winkel",
+    sourceLabel: "Personeel",
+    sortOrder: 310,
+  },
+  {
+    section: "personnel",
+    lineKey: "budget-webshop-personeel",
+    lineLabel: "Webshop - Personeel",
+    sourceSheet: "Webshop",
+    sourceLabel: "Personeel",
+    sortOrder: 320,
+  },
+  {
+    section: "sales_marketing",
+    lineKey: "budget-webshop-advertentiekosten",
+    lineLabel: "Marketing - Marketingkosten/verkoopkosten",
+    sourceSheet: "Marketing",
+    sourceLabel: "Marketingkosten/verkoopkosten",
+    sortOrder: 510,
+  },
+  {
+    section: "personnel",
+    lineKey: "budget-afs-personeel",
+    lineLabel: "AFS - Personeel",
+    sourceSheet: "AFS",
+    sourceLabel: "Personeel",
+    sortOrder: 330,
+  },
+  {
+    section: "afs_fulfillment_logistics",
+    lineKey: "budget-afs-autos",
+    lineLabel: "AFS - Auto's",
+    sourceSheet: "AFS",
+    sourceLabel: "Auto's",
+    sortOrder: 360,
+  },
+  {
+    section: "personnel",
+    lineKey: "budget-hoofdkantoor-personeel",
+    lineLabel: "Hoofdkantoor - Personeel",
+    sourceSheet: "Hoofdkantoor",
+    sourceLabel: "Personeel",
+    sortOrder: 340,
+  },
+  {
+    section: "housing",
+    lineKey: "budget-hoofdkantoor-huur",
+    lineLabel: "Hoofdkantoor - Huur",
+    sourceSheet: "Hoofdkantoor",
+    sourceLabel: "Huur",
+    sortOrder: 420,
+  },
+  {
+    section: "general_admin",
+    lineKey: "budget-hoofdkantoor-kantoorkosten",
+    lineLabel: "Hoofdkantoor - Kantoorkosten",
+    sourceSheet: "Hoofdkantoor",
+    sourceLabel: "Kantoorkosten",
+    sortOrder: 640,
+  },
+  {
+    section: "general_admin",
+    lineKey: "budget-hoofdkantoor-autokosten",
+    lineLabel: "Hoofdkantoor - Autokosten",
+    sourceSheet: "Hoofdkantoor",
+    sourceLabel: "Autokosten",
+    sortOrder: 650,
+  },
+  {
+    section: "general_admin",
+    lineKey: "budget-hoofdkantoor-overige-kosten",
+    lineLabel: "Hoofdkantoor - Overige kosten",
+    sourceSheet: "Hoofdkantoor",
+    sourceLabel: "Licenties, administratie, juridisch",
+    sortOrder: 660,
+  },
+  {
+    section: "general_admin",
+    lineKey: "budget-hoofdkantoor-management-fees",
+    lineLabel: "Hoofdkantoor - Management fees",
+    sourceSheet: "Hoofdkantoor",
+    sourceLabel: "Management fees",
+    sortOrder: 670,
+  },
+];
+const MANUAL_PL_BUDGET_DEFINITION_BY_KEY = new Map(
+  MANUAL_PL_BUDGET_DEFINITIONS.map((definition) => [definition.lineKey, definition]),
+);
 const AFS_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
   {
     driver_key: "afs_inkoop",
@@ -309,6 +414,15 @@ type PlBudgetInputRow = {
   sourceLabel: string;
   sortOrder: number;
   values: Record<string, BudgetInputCell>;
+};
+
+type ManualPlBudgetDefinition = {
+  section: string;
+  lineKey: string;
+  lineLabel: string;
+  sourceSheet: string;
+  sourceLabel: string;
+  sortOrder: number;
 };
 
 type CostDriverDefinition = {
@@ -1697,11 +1811,27 @@ function buildRevenueBudgetInputRows(revenueBudgets: RevenueBudgetRow[], months:
 function buildPlBudgetInputRows(budgetLines: PlBudgetLine[], months: string[]) {
   const result = new Map<string, PlBudgetInputRow>();
 
+  for (const definition of MANUAL_PL_BUDGET_DEFINITIONS) {
+    const key = plBudgetRowKey(definition.lineKey);
+    result.set(key, {
+      key,
+      section: definition.section,
+      lineKey: definition.lineKey,
+      lineLabel: definition.lineLabel,
+      kind: "cost",
+      sourceWorkbook: MANUAL_PL_BUDGET_SOURCE_WORKBOOK,
+      sourceSheet: definition.sourceSheet,
+      sourceLabel: definition.sourceLabel,
+      sortOrder: definition.sortOrder,
+      values: blankInputCells(months),
+    });
+  }
+
   for (const line of budgetLines) {
     if (line.kind === "revenue") continue;
-    if (LEGACY_DRIVER_BUDGET_LINE_KEYS.has(line.line_key)) continue;
+    if (EXCLUDED_PL_BUDGET_LINE_KEYS.has(line.line_key)) continue;
     if (!months.includes(line.period)) continue;
-    const key = plBudgetRowKey(line.source_workbook, line.line_key);
+    const key = plBudgetRowKey(line.line_key);
     if (!result.has(key)) {
       result.set(key, {
         key,
@@ -1816,9 +1946,9 @@ function buildEffectiveBudgetLines({
   months: string[];
   activeAfsCount: number;
 }) {
-  const manualLines = budgetLines.filter(
-    (line) => line.kind === "revenue" || !LEGACY_DRIVER_BUDGET_LINE_KEYS.has(line.line_key),
-  );
+  const manualLines = budgetLines
+    .filter((line) => line.kind === "revenue" || !EXCLUDED_PL_BUDGET_LINE_KEYS.has(line.line_key))
+    .map(normalizeManualBudgetLine);
   const driverRows = buildCostDriverInputRows({
     driverRules,
     revenueBudgets,
@@ -1844,6 +1974,19 @@ function buildEffectiveBudgetLines({
   );
 
   return [...manualLines, ...generatedLines];
+}
+
+function normalizeManualBudgetLine(line: PlBudgetLine): PlBudgetLine {
+  const definition = MANUAL_PL_BUDGET_DEFINITION_BY_KEY.get(line.line_key);
+  if (!definition) return line;
+  return {
+    ...line,
+    section: definition.section,
+    line_label: definition.lineLabel,
+    source_sheet: definition.sourceSheet,
+    source_label: definition.sourceLabel,
+    sort_order: definition.sortOrder,
+  };
 }
 
 function blankInputCells(months: string[]) {
@@ -1877,8 +2020,8 @@ function revenueBudgetCellKey(rowKey: string, period: string) {
   return `revenue|${rowKey}|${period}`;
 }
 
-function plBudgetRowKey(sourceWorkbook: string, lineKey: string) {
-  return `${sourceWorkbook}|${lineKey}`;
+function plBudgetRowKey(lineKey: string) {
+  return lineKey;
 }
 
 function plBudgetCellKey(rowKey: string, period: string) {
