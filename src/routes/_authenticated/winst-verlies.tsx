@@ -332,8 +332,12 @@ type CostDriverInputCell = {
   amount: number;
   basisAmount: number | null;
   machineCount: number | null;
+  machineCountOverride: number | null;
+  standardMachineCount: number | null;
   calculatedAmount: number;
 };
+
+type CostDriverInputFieldName = "amount" | "basisAmount" | "machineCount";
 
 type CostDriverInputRow = CostDriverDefinition & {
   values: Record<string, CostDriverInputCell>;
@@ -736,9 +740,12 @@ function ProfitLossPage() {
     driver: CostDriverDefinition,
     period: string,
     rawValue: string,
-    field: "amount" | "basisAmount" = "amount",
+    field: CostDriverInputFieldName = "amount",
   ) {
-    const parsedValue = parseBudgetInput(rawValue);
+    const isMachineCountField = field === "machineCount";
+    const trimmedValue = String(rawValue ?? "").trim();
+    const parsedValue =
+      isMachineCountField && !trimmedValue ? null : parseBudgetInput(trimmedValue);
     const cellKey = costDriverCellKey(driver.driver_key, period, field);
     const rules = (costDriverRulesQ.data ?? [])
       .filter((rule) => rule.driver_key === driver.driver_key)
@@ -746,17 +753,30 @@ function ProfitLossPage() {
     const currentRule = activeRuleForPeriod(rules, period);
     const currentAmount = Number(currentRule?.amount ?? driver.defaultAmount);
     const currentBasisAmount = Number(currentRule?.basis_amount ?? driver.defaultBasisAmount ?? 0);
-    const nextAmount = field === "amount" ? parsedValue : currentAmount;
-    const nextBasisAmount = field === "basisAmount" ? parsedValue : currentBasisAmount;
+    const currentMachineCountOverride =
+      currentRule?.machine_count == null ? null : Number(currentRule.machine_count);
+    const numericValue = parsedValue ?? 0;
+    const nextAmount = field === "amount" ? numericValue : currentAmount;
+    const nextBasisAmount = field === "basisAmount" ? numericValue : currentBasisAmount;
+    const nextMachineCountOverride =
+      field === "machineCount" ? parsedValue : currentMachineCountOverride;
 
-    if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    if (parsedValue !== null && (!Number.isFinite(parsedValue) || parsedValue < 0)) {
       toast.error("Ongeldige driverwaarde");
       setBudgetDrafts((current) => ({
         ...current,
-        [cellKey]: formatDriverInput(
-          driver,
-          field === "amount" ? currentAmount : currentBasisAmount,
-        ),
+        [cellKey]:
+          field === "machineCount"
+            ? formatMachineCountInput(currentMachineCountOverride)
+            : formatDriverInput(driver, field === "amount" ? currentAmount : currentBasisAmount),
+      }));
+      return;
+    }
+    if (field === "machineCount" && parsedValue !== null && !Number.isInteger(parsedValue)) {
+      toast.error("Aantal AFS moet een heel getal zijn");
+      setBudgetDrafts((current) => ({
+        ...current,
+        [cellKey]: formatMachineCountInput(currentMachineCountOverride),
       }));
       return;
     }
@@ -771,20 +791,19 @@ function ProfitLossPage() {
     if (
       currentRule &&
       Math.abs(nextAmount - currentAmount) < 0.0005 &&
-      Math.abs(nextBasisAmount - currentBasisAmount) < 0.0005
+      Math.abs(nextBasisAmount - currentBasisAmount) < 0.0005 &&
+      nextMachineCountOverride === currentMachineCountOverride
     ) {
       return;
     }
 
-    const machineCount =
-      driver.calculation_type === "amount_per_afs" ? (activeAfsCountQ.data ?? 0) : null;
     const rulePayload = {
       driver_key: driver.driver_key,
       driver_label: driver.driver_label,
       calculation_type: driver.calculation_type,
       amount: nextAmount,
       basis_amount: driver.calculation_type === "orders_from_revenue" ? nextBasisAmount : null,
-      machine_count: machineCount,
+      machine_count: driver.calculation_type === "amount_per_afs" ? nextMachineCountOverride : null,
       section: driver.section,
       line_key: driver.line_key,
       line_label: driver.line_label,
@@ -821,7 +840,10 @@ function ProfitLossPage() {
 
       setBudgetDrafts((current) => ({
         ...current,
-        [cellKey]: formatDriverInput(driver, field === "amount" ? nextAmount : nextBasisAmount),
+        [cellKey]:
+          field === "machineCount"
+            ? formatMachineCountInput(nextMachineCountOverride)
+            : formatDriverInput(driver, field === "amount" ? nextAmount : nextBasisAmount),
       }));
       qc.invalidateQueries({ queryKey: ["wv-cost-driver-rules"] });
       toast.success("Kostprijsdriver opgeslagen");
@@ -1367,7 +1389,7 @@ function CostDriversCard({
     driver: CostDriverDefinition,
     period: string,
     rawValue: string,
-    field?: "amount" | "basisAmount",
+    field?: CostDriverInputFieldName,
   ) => void;
 }) {
   const rows = useMemo(
@@ -1500,7 +1522,7 @@ function CostDriverInputField({
   drafts: Record<string, string>;
   savingCell: string | null;
   onDraftChange: (cellKey: string, value: string) => void;
-  onSave: (rawValue: string, field?: "amount" | "basisAmount") => void;
+  onSave: (rawValue: string, field?: CostDriverInputFieldName) => void;
 }) {
   const amountCellKey = costDriverCellKey(driver.driver_key, period, "amount");
   const amountValue =
@@ -1541,6 +1563,49 @@ function CostDriverInputField({
             }}
           />
         </label>
+      </div>
+    );
+  }
+
+  if (driver.calculation_type === "amount_per_afs") {
+    const machineCountCellKey = costDriverCellKey(driver.driver_key, period, "machineCount");
+    const standardMachineCount = cell?.standardMachineCount ?? null;
+    const machineCountValue =
+      drafts[machineCountCellKey] ?? formatMachineCountInput(cell?.machineCountOverride ?? null);
+    return (
+      <div className="space-y-1">
+        <label className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">Per AFS</span>
+          <Input
+            value={amountValue}
+            inputMode="decimal"
+            disabled={savingCell === amountCellKey}
+            className="h-8 min-w-20 text-right tabular-nums"
+            onChange={(event) => onDraftChange(amountCellKey, event.target.value)}
+            onBlur={(event) => onSave(event.currentTarget.value, "amount")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+        </label>
+        <label className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">Aantal AFS</span>
+          <Input
+            value={machineCountValue}
+            placeholder={formatMachineCountInput(standardMachineCount)}
+            inputMode="numeric"
+            disabled={savingCell === machineCountCellKey}
+            className="h-8 min-w-20 text-right tabular-nums"
+            onChange={(event) => onDraftChange(machineCountCellKey, event.target.value)}
+            onBlur={(event) => onSave(event.currentTarget.value, "machineCount")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+        </label>
+        <div className="text-right text-[11px] text-muted-foreground">
+          Standaard: {formatMachineCountInput(standardMachineCount)}
+        </div>
       </div>
     );
   }
@@ -1668,15 +1733,27 @@ function buildCostDriverInputRows({
       const rule = activeRuleForPeriod(rules, period);
       const amount = Number(rule?.amount ?? driver.defaultAmount);
       const basisAmount = Number(rule?.basis_amount ?? driver.defaultBasisAmount ?? 0) || null;
+      const standardMachineCount =
+        driver.calculation_type === "amount_per_afs" ? activeAfsCount : null;
+      const rawMachineCountOverride =
+        driver.calculation_type === "amount_per_afs" && rule?.machine_count != null
+          ? Number(rule.machine_count)
+          : null;
+      const machineCountOverride =
+        rawMachineCountOverride !== null && Number.isFinite(rawMachineCountOverride)
+          ? rawMachineCountOverride
+          : null;
       const machineCount =
         driver.calculation_type === "amount_per_afs"
-          ? Number(rule?.machine_count ?? activeAfsCount)
+          ? (machineCountOverride ?? standardMachineCount ?? 0)
           : null;
       values[period] = {
         rule,
         amount,
         basisAmount,
         machineCount,
+        machineCountOverride,
+        standardMachineCount,
         calculatedAmount: calculateCostDriverAmount({
           driver,
           amount,
@@ -1759,6 +1836,8 @@ function blankCostDriverCells(months: string[]) {
         amount: 0,
         basisAmount: null,
         machineCount: null,
+        machineCountOverride: null,
+        standardMachineCount: null,
         calculatedAmount: 0,
       },
     ]),
@@ -1784,7 +1863,7 @@ function plBudgetCellKey(rowKey: string, period: string) {
 function costDriverCellKey(
   driverKey: string,
   period: string,
-  field: "amount" | "basisAmount" = "amount",
+  field: CostDriverInputFieldName = "amount",
 ) {
   return `cost-driver|${driverKey}|${period}|${field}`;
 }
@@ -1805,6 +1884,13 @@ function formatAmountInput(value: number) {
   return value.toLocaleString("nl-NL", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+  });
+}
+
+function formatMachineCountInput(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return "";
+  return value.toLocaleString("nl-NL", {
+    maximumFractionDigits: 0,
   });
 }
 

@@ -163,6 +163,7 @@ async function main() {
       "20260708111500_add_pl_budget_driver_rules.sql",
     );
     await applyMigration(app, "20260708113500_add_shop_webshop_cost_drivers.sql");
+    await applyMigration(app, "20260708115000_use_afs_machine_count_as_override.sql");
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);
