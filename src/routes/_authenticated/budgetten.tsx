@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MultiPeriodPicker } from "@/components/multi-period-picker";
+import { cn } from "@/lib/utils";
 import { useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { formatEUR, channelLabels, currentMonth, monthLabel } from "@/lib/format";
@@ -30,6 +31,14 @@ const CHANNELS = [
   "shopify_winkel",
   "bold_afs",
 ] as const;
+const STICKY_SEPARATOR_SHADOW = "shadow-[4px_0_8px_-8px_rgba(15,23,42,0.65)]";
+const MONITOR_STICKY_HEADER_TYPE = "sticky left-0 z-30 w-32 min-w-[8rem] bg-muted px-3 py-2";
+const MONITOR_STICKY_HEADER_CHANNEL =
+  "sticky left-[8rem] z-30 w-40 min-w-[10rem] bg-muted px-3 py-2";
+const MONITOR_STICKY_HEADER_NAME = "sticky left-[18rem] z-30 w-60 min-w-[15rem] bg-muted px-3 py-2";
+const MONITOR_STICKY_BODY_TYPE = "sticky left-0 z-20 w-32 min-w-[8rem] px-3 py-2";
+const MONITOR_STICKY_BODY_CHANNEL = "sticky left-[8rem] z-20 w-40 min-w-[10rem] px-3 py-2";
+const MONITOR_STICKY_BODY_NAME = "sticky left-[18rem] z-20 w-60 min-w-[15rem] px-3 py-2";
 
 type BudgetRow = {
   id: string;
@@ -503,13 +512,20 @@ function BudgetsPage() {
             <table className="w-full min-w-[980px] text-sm">
               <thead className="bg-muted/50">
                 <tr className="text-left">
-                  <th className="px-3 py-2 font-medium" rowSpan={2}>
+                  <th className={cn(MONITOR_STICKY_HEADER_TYPE, "font-medium")} rowSpan={2}>
                     Type
                   </th>
-                  <th className="px-3 py-2 font-medium" rowSpan={2}>
+                  <th className={cn(MONITOR_STICKY_HEADER_CHANNEL, "font-medium")} rowSpan={2}>
                     Kanaal
                   </th>
-                  <th className="px-3 py-2 font-medium min-w-[240px]" rowSpan={2}>
+                  <th
+                    className={cn(
+                      MONITOR_STICKY_HEADER_NAME,
+                      STICKY_SEPARATOR_SHADOW,
+                      "font-medium",
+                    )}
+                    rowSpan={2}
+                  >
                     Naam
                   </th>
                   {selectedPeriods.map((p) => (
@@ -562,11 +578,19 @@ function BudgetsPage() {
                 )}
                 {(rows.length > 0 || hasAnyValue(totalRow)) && (
                   <tr className="border-t bg-muted/40 font-semibold">
-                    <td className="px-3 py-2">
+                    <td className={cn(MONITOR_STICKY_BODY_TYPE, "bg-muted/40")}>
                       <Badge variant="default">Totaal</Badge>
                     </td>
-                    <td className="px-3 py-2">Alle kanalen</td>
-                    <td className="px-3 py-2 font-semibold">Totale omzet</td>
+                    <td className={cn(MONITOR_STICKY_BODY_CHANNEL, "bg-muted/40")}>Alle kanalen</td>
+                    <td
+                      className={cn(
+                        MONITOR_STICKY_BODY_NAME,
+                        STICKY_SEPARATOR_SHADOW,
+                        "bg-muted/40 font-semibold",
+                      )}
+                    >
+                      Totale omzet
+                    </td>
                     {selectedPeriods.map((p) =>
                       periodColumns.map((column) => (
                         <MetricCell
@@ -592,17 +616,25 @@ function BudgetsPage() {
                     key={row.key}
                     className={
                       row.level === 0
-                        ? "border-t hover:bg-muted/30"
-                        : "border-t bg-muted/10 hover:bg-muted/30"
+                        ? "group border-t hover:bg-muted/30"
+                        : "group border-t bg-muted/10 hover:bg-muted/30"
                     }
                   >
-                    <td className="px-3 py-2">
+                    <td className={monitorStickyCellClass(row, "type")}>
                       <Badge variant={row.level === 0 ? "outline" : "secondary"}>
                         {row.level === 0 ? "Kanaal" : "AFS"}
                       </Badge>
                     </td>
-                    <td className="px-3 py-2">{channelLabels[row.channel] ?? row.channel}</td>
-                    <td className={row.level === 0 ? "px-3 py-2 font-medium" : "px-3 py-2 pl-8"}>
+                    <td className={monitorStickyCellClass(row, "channel")}>
+                      {channelLabels[row.channel] ?? row.channel}
+                    </td>
+                    <td
+                      className={cn(
+                        monitorStickyCellClass(row, "name"),
+                        STICKY_SEPARATOR_SHADOW,
+                        row.level === 0 ? "font-medium" : "pl-8",
+                      )}
+                    >
                       <div>{row.label}</div>
                       {row.afsNumber && (
                         <div className="text-xs text-muted-foreground tabular-nums">
@@ -636,6 +668,21 @@ function BudgetsPage() {
       </Card>
     </div>
   );
+}
+
+function monitorStickyCellClass(row: AnalysisRow, column: "type" | "channel" | "name") {
+  const baseClass =
+    column === "type"
+      ? MONITOR_STICKY_BODY_TYPE
+      : column === "channel"
+        ? MONITOR_STICKY_BODY_CHANNEL
+        : MONITOR_STICKY_BODY_NAME;
+  const rowBackground =
+    row.level === 0
+      ? "bg-background group-hover:bg-muted/30"
+      : "bg-muted/10 group-hover:bg-muted/30";
+
+  return cn(baseClass, rowBackground);
 }
 
 function ColumnToggles({

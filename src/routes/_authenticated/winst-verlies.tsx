@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { currentMonth, formatDateNL, formatDateTimeNL, formatEUR } from "@/lib/format";
 import {
   CHANNELS,
@@ -121,6 +122,18 @@ const PL_METRIC_COLUMNS: Array<{ value: PlMetricColumn; label: string }> = [
   { value: "variance", label: "Verschil" },
 ];
 const WEFACT_NON_CUSTOMER_CATEGORIES = new Set(["omzethuur", "facilitair", "energie"]);
+const STICKY_SEPARATOR_SHADOW = "shadow-[4px_0_8px_-8px_rgba(15,23,42,0.65)]";
+const BUDGET_STICKY_HEADER_FIRST = "sticky left-0 z-30 w-44 min-w-[11rem] bg-muted px-3 py-2";
+const BUDGET_STICKY_HEADER_SECOND =
+  "sticky left-[11rem] z-30 w-52 min-w-[13rem] bg-muted px-3 py-2";
+const BUDGET_STICKY_BODY_FIRST =
+  "sticky left-0 z-20 w-44 min-w-[11rem] bg-background px-3 py-2 group-hover:bg-muted/30";
+const BUDGET_STICKY_BODY_SECOND =
+  "sticky left-[11rem] z-20 w-52 min-w-[13rem] bg-background px-3 py-2 group-hover:bg-muted/30";
+const PL_STICKY_HEADER_FIRST = "sticky left-0 z-30 w-44 min-w-[11rem] bg-muted px-3 py-2";
+const PL_STICKY_HEADER_SECOND = "sticky left-[11rem] z-30 w-72 min-w-[18rem] bg-muted px-3 py-2";
+const PL_STICKY_BODY_FIRST = "sticky left-0 z-20 w-44 min-w-[11rem] px-3 py-2";
+const PL_STICKY_BODY_SECOND = "sticky left-[11rem] z-20 w-72 min-w-[18rem] px-3 py-2";
 const MANUAL_PL_BUDGET_SOURCE_WORKBOOK = "W&V budgetregels";
 const COST_DRIVER_SOURCE_WORKBOOK = "Kostprijs omzet drivers";
 const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
@@ -1193,10 +1206,17 @@ function ProfitLossPage() {
                 <table className="w-full min-w-[1680px] text-sm">
                   <thead className="bg-muted/50 text-left">
                     <tr>
-                      <th className="px-3 py-2 font-medium" rowSpan={2}>
+                      <th className={cn(PL_STICKY_HEADER_FIRST, "font-medium")} rowSpan={2}>
                         Rubriek
                       </th>
-                      <th className="px-3 py-2 font-medium" rowSpan={2}>
+                      <th
+                        className={cn(
+                          PL_STICKY_HEADER_SECOND,
+                          STICKY_SEPARATOR_SHADOW,
+                          "font-medium",
+                        )}
+                        rowSpan={2}
+                      >
                         Regel
                       </th>
                       {months.map((period) => (
@@ -1233,17 +1253,21 @@ function ProfitLossPage() {
                         key={row.key}
                         className={
                           row.kind === "subtotal" || row.kind === "result"
-                            ? "border-t bg-muted/20"
-                            : "border-t hover:bg-muted/30"
+                            ? "group border-t bg-muted/20 hover:bg-muted/30"
+                            : "group border-t hover:bg-muted/30"
                         }
                       >
-                        <td className="px-3 py-2">
+                        <td className={profitLossStickyCellClass(row, "section")}>
                           {row.level === 0 ? (
                             <Badge variant="outline">{sectionLabel(row.section)}</Badge>
                           ) : null}
                         </td>
                         <td
-                          className={row.level === 0 ? "px-3 py-2 font-semibold" : "px-3 py-2 pl-8"}
+                          className={cn(
+                            profitLossStickyCellClass(row, "label"),
+                            STICKY_SEPARATOR_SHADOW,
+                            row.level === 0 ? "font-semibold" : "pl-8",
+                          )}
                         >
                           {row.label}
                         </td>
@@ -1365,8 +1389,16 @@ function BudgetInputsPanel({
             <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
               <thead className="bg-muted/50 text-left">
                 <tr>
-                  <th className="w-44 px-3 py-2 font-medium">Kanaal</th>
-                  <th className="w-52 px-3 py-2 font-medium">Budgetregel</th>
+                  <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>Kanaal</th>
+                  <th
+                    className={cn(
+                      BUDGET_STICKY_HEADER_SECOND,
+                      STICKY_SEPARATOR_SHADOW,
+                      "font-medium",
+                    )}
+                  >
+                    Budgetregel
+                  </th>
                   {months.map((period) => (
                     <BudgetInputHeader key={period} period={period} />
                   ))}
@@ -1375,13 +1407,19 @@ function BudgetInputsPanel({
               </thead>
               <tbody>
                 {revenueRows.map((row) => (
-                  <tr key={row.key} className="border-t hover:bg-muted/30">
-                    <td className="px-3 py-2">
+                  <tr key={row.key} className="group border-t hover:bg-muted/30">
+                    <td className={BUDGET_STICKY_BODY_FIRST}>
                       {row.level === 0 ? (
                         <Badge variant="outline">{channelLabel(row.channel)}</Badge>
                       ) : null}
                     </td>
-                    <td className={row.level === 0 ? "px-3 py-2 font-medium" : "px-3 py-2 pl-8"}>
+                    <td
+                      className={cn(
+                        BUDGET_STICKY_BODY_SECOND,
+                        STICKY_SEPARATOR_SHADOW,
+                        row.level === 0 ? "font-medium" : "pl-8",
+                      )}
+                    >
                       {row.label}
                     </td>
                     {months.map((period) => {
@@ -1448,8 +1486,16 @@ function BudgetInputsPanel({
             <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
               <thead className="bg-muted/50 text-left">
                 <tr>
-                  <th className="w-44 px-3 py-2 font-medium">Rubriek</th>
-                  <th className="w-52 px-3 py-2 font-medium">Budgetregel</th>
+                  <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>Rubriek</th>
+                  <th
+                    className={cn(
+                      BUDGET_STICKY_HEADER_SECOND,
+                      STICKY_SEPARATOR_SHADOW,
+                      "font-medium",
+                    )}
+                  >
+                    Budgetregel
+                  </th>
                   {months.map((period) => (
                     <BudgetInputHeader key={period} period={period} />
                   ))}
@@ -1458,11 +1504,11 @@ function BudgetInputsPanel({
               </thead>
               <tbody>
                 {plRows.map((row) => (
-                  <tr key={row.key} className="border-t hover:bg-muted/30">
-                    <td className="px-3 py-2">
+                  <tr key={row.key} className="group border-t hover:bg-muted/30">
+                    <td className={BUDGET_STICKY_BODY_FIRST}>
                       <Badge variant="outline">{sectionLabel(row.section)}</Badge>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className={cn(BUDGET_STICKY_BODY_SECOND, STICKY_SEPARATOR_SHADOW)}>
                       <div className="font-medium">{row.lineLabel}</div>
                       <div className="text-xs text-muted-foreground">{row.sourceLabel}</div>
                     </td>
@@ -1503,6 +1549,15 @@ function BudgetInputsPanel({
       </Card>
     </>
   );
+}
+
+function profitLossStickyCellClass(row: PlRow, column: "section" | "label") {
+  const rowBackground =
+    row.kind === "subtotal" || row.kind === "result"
+      ? "bg-muted/20 group-hover:bg-muted/30"
+      : "bg-background group-hover:bg-muted/30";
+
+  return cn(column === "section" ? PL_STICKY_BODY_FIRST : PL_STICKY_BODY_SECOND, rowBackground);
 }
 
 function CostDriversCard({
@@ -1555,8 +1610,16 @@ function CostDriversCard({
           <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
             <thead className="bg-muted/50 text-left">
               <tr>
-                <th className="w-44 px-3 py-2 font-medium">Driver</th>
-                <th className="w-52 px-3 py-2 font-medium">Input</th>
+                <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>Driver</th>
+                <th
+                  className={cn(
+                    BUDGET_STICKY_HEADER_SECOND,
+                    STICKY_SEPARATOR_SHADOW,
+                    "font-medium",
+                  )}
+                >
+                  Input
+                </th>
                 {months.map((period) => (
                   <BudgetInputHeader key={period} period={period} />
                 ))}
@@ -1578,11 +1641,11 @@ function CostDriversCard({
                       }
                     />
                   ) : null}
-                  <tr className="border-t hover:bg-muted/30">
-                    <td className="px-3 py-2">
+                  <tr className="group border-t hover:bg-muted/30">
+                    <td className={BUDGET_STICKY_BODY_FIRST}>
                       <Badge variant="outline">Kostprijs omzet</Badge>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className={cn(BUDGET_STICKY_BODY_SECOND, STICKY_SEPARATOR_SHADOW)}>
                       <div className="font-medium">{row.driver_label}</div>
                       <div className="text-xs text-muted-foreground">{row.input_label}</div>
                     </td>
@@ -1635,11 +1698,11 @@ function AfsMachineCountInputRow({
   onSave: (period: string, rawValue: string) => void;
 }) {
   return (
-    <tr className="border-t bg-muted/20 hover:bg-muted/30">
-      <td className="px-3 py-2">
+    <tr className="group border-t bg-muted/20 hover:bg-muted/30">
+      <td className={cn(BUDGET_STICKY_BODY_FIRST, "bg-muted/20")}>
         <Badge variant="outline">Kostprijs omzet</Badge>
       </td>
-      <td className="px-3 py-2">
+      <td className={cn(BUDGET_STICKY_BODY_SECOND, STICKY_SEPARATOR_SHADOW, "bg-muted/20")}>
         <div className="font-medium">Aantal AFS</div>
         <div className="text-xs text-muted-foreground">Leeg = standaardtelling</div>
       </td>
