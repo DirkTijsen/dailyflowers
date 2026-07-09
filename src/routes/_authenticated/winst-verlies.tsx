@@ -113,6 +113,33 @@ type RevenueBudgetRow = {
   machines?: { display_name: string | null; afs_number: string | null } | null;
 };
 
+type AfsRentalAgreementRow = {
+  id: string;
+  machine_id: string;
+  start_period: string;
+  end_period: string | null;
+  fixed_fee_net: number | string;
+  energy_cost_net: number | string;
+  turnover_rate_percent: number | string;
+  turnover_threshold_net: number | string;
+  status: "active" | "inactive";
+};
+
+type AfsRentalInvoiceRow = {
+  id: string;
+  period: string;
+  machine_id: string | null;
+  subtotal_net: number | string;
+  status: string;
+};
+
+type AfsMachineActualRow = {
+  period: string;
+  machine_id: string | null;
+  net_total: number | string | null;
+  gross_total: number | string | null;
+};
+
 type ViewMode = "month" | "range" | "year" | "multiYear";
 type PlMetricColumn = "actual" | "budget" | "variance";
 
@@ -137,9 +164,13 @@ const PL_STICKY_BODY_SECOND = "sticky left-[11rem] z-20 w-72 min-w-[18rem] px-3 
 const MANUAL_PL_BUDGET_SOURCE_WORKBOOK = "W&V budgetregels";
 const COST_DRIVER_SOURCE_WORKBOOK = "Kostprijs omzet drivers";
 const PL_PARAMETER_SOURCE_WORKBOOK = "W&V parameters";
+const AFS_RENT_SOURCE_WORKBOOK = "AFS huurafspraken";
+const AFS_RENT_BUDGET_LINE_KEY = "budget-afs-huurkosten";
+const AFS_RENT_LINE_LABEL = "AFS - Huurkosten";
 const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
   "budget-afs-inkoop",
   "budget-afs-vaste-machinekosten",
+  AFS_RENT_BUDGET_LINE_KEY,
   "budget-winkels-inkoop",
   "budget-winkels-verspilling",
   "budget-webshop-inkoop",
@@ -702,6 +733,48 @@ function ProfitLossPage() {
     enabled: months.length > 0,
   });
 
+  const afsRentalAgreementsQ = useQuery({
+    queryKey: ["wv-afs-rental-agreements"],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<AfsRentalAgreementRow>("afs_rental_agreements")
+        .select(
+          "id,machine_id,start_period,end_period,fixed_fee_net,energy_cost_net,turnover_rate_percent,turnover_threshold_net,status",
+        )
+        .order("start_period", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as AfsRentalAgreementRow[];
+    },
+  });
+
+  const afsRentalInvoicesQ = useQuery({
+    queryKey: ["wv-afs-rental-invoices", months],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<AfsRentalInvoiceRow>("afs_rental_invoices")
+        .select("id,period,machine_id,subtotal_net,status")
+        .in("period", months)
+        .neq("status", "canceled");
+      if (error) throw error;
+      return (data ?? []) as AfsRentalInvoiceRow[];
+    },
+    enabled: months.length > 0,
+  });
+
+  const afsMachineActualsQ = useQuery({
+    queryKey: ["wv-afs-machine-actuals", months],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<AfsMachineActualRow>("vw_monthly_machine")
+        .select("period,machine_id,net_total,gross_total")
+        .in("period", months)
+        .eq("channel", "bold_afs");
+      if (error) throw error;
+      return (data ?? []) as AfsMachineActualRow[];
+    },
+    enabled: months.length > 0,
+  });
+
   const costDriverRulesQ = useQuery({
     queryKey: ["wv-cost-driver-rules"],
     queryFn: async () => {
@@ -736,10 +809,20 @@ function ProfitLossPage() {
         budgetLines: budgetsQ.data ?? [],
         driverRules: costDriverRulesQ.data ?? [],
         revenueBudgets: revenueBudgetsQ.data ?? [],
+        afsRentalAgreements: afsRentalAgreementsQ.data ?? [],
+        afsMachineActuals: afsMachineActualsQ.data ?? [],
         months,
         activeAfsCount: activeAfsCountQ.data ?? 0,
       }),
-    [activeAfsCountQ.data, costDriverRulesQ.data, budgetsQ.data, months, revenueBudgetsQ.data],
+    [
+      activeAfsCountQ.data,
+      afsMachineActualsQ.data,
+      afsRentalAgreementsQ.data,
+      costDriverRulesQ.data,
+      budgetsQ.data,
+      months,
+      revenueBudgetsQ.data,
+    ],
   );
 
   const { rows } = useMemo(
@@ -748,11 +831,20 @@ function ProfitLossPage() {
         months,
         glRows: glQ.data ?? [],
         salesRows: salesQ.data ?? [],
+        afsRentalInvoices: afsRentalInvoicesQ.data ?? [],
         budgetLines: effectiveBudgetLines,
         revenueBudgets: revenueBudgetsQ.data ?? [],
         accounts: accountsQ.data ?? [],
       }),
-    [accountsQ.data, effectiveBudgetLines, glQ.data, months, revenueBudgetsQ.data, salesQ.data],
+    [
+      accountsQ.data,
+      afsRentalInvoicesQ.data,
+      effectiveBudgetLines,
+      glQ.data,
+      months,
+      revenueBudgetsQ.data,
+      salesQ.data,
+    ],
   );
   const revenueActualsByChannel = useMemo(
     () => buildRevenueActualsByChannel(salesQ.data ?? [], months),
@@ -2127,12 +2219,16 @@ function buildEffectiveBudgetLines({
   budgetLines,
   driverRules,
   revenueBudgets,
+  afsRentalAgreements,
+  afsMachineActuals,
   months,
   activeAfsCount,
 }: {
   budgetLines: PlBudgetLine[];
   driverRules: PlBudgetDriverRule[];
   revenueBudgets: RevenueBudgetRow[];
+  afsRentalAgreements: AfsRentalAgreementRow[];
+  afsMachineActuals: AfsMachineActualRow[];
   months: string[];
   activeAfsCount: number;
 }) {
@@ -2163,8 +2259,14 @@ function buildEffectiveBudgetLines({
       sort_order: driver.sort_order,
     })),
   );
+  const afsRentBudgetLines = buildAfsRentalBudgetLines({
+    agreements: afsRentalAgreements,
+    revenueBudgets,
+    machineActuals: afsMachineActuals,
+    months,
+  });
 
-  return [...manualLines, ...generatedLines];
+  return [...manualLines, ...generatedLines, ...afsRentBudgetLines];
 }
 
 function normalizeManualBudgetLine(line: PlBudgetLine): PlBudgetLine {
@@ -2178,6 +2280,121 @@ function normalizeManualBudgetLine(line: PlBudgetLine): PlBudgetLine {
     source_label: definition.sourceLabel,
     sort_order: definition.sortOrder,
   };
+}
+
+function buildAfsRentalBudgetLines({
+  agreements,
+  revenueBudgets,
+  machineActuals,
+  months,
+}: {
+  agreements: AfsRentalAgreementRow[];
+  revenueBudgets: RevenueBudgetRow[];
+  machineActuals: AfsMachineActualRow[];
+  months: string[];
+}): PlBudgetLine[] {
+  if (agreements.length === 0 || months.length === 0) return [];
+
+  const turnoverByMachinePeriod = afsTurnoverByMachinePeriod({
+    revenueBudgets,
+    machineActuals,
+    months,
+  });
+
+  return months.map((period) => {
+    const activeAgreements = activeAfsRentalAgreementsForPeriod(agreements, period);
+    const amount = activeAgreements.reduce((sum, agreement) => {
+      const turnover =
+        turnoverByMachinePeriod.get(afsMachinePeriodKey(agreement.machine_id, period)) ?? 0;
+      return sum + calculateAfsRentalCost(agreement, turnover);
+    }, 0);
+
+    return {
+      id: `afs-rent:${period}`,
+      period,
+      budget_year: Number(period.split("-")[0]),
+      section: "housing",
+      line_key: AFS_RENT_BUDGET_LINE_KEY,
+      line_label: AFS_RENT_LINE_LABEL,
+      kind: "cost" as const,
+      amount: roundMoney(amount),
+      source_workbook: AFS_RENT_SOURCE_WORKBOOK,
+      source_sheet: "AFS huurafspraken",
+      source_label: "Vaste fee + energie + omzetafhankelijke huur",
+      sort_order: 430,
+    };
+  });
+}
+
+function activeAfsRentalAgreementsForPeriod(agreements: AfsRentalAgreementRow[], period: string) {
+  const byMachine = new Map<string, AfsRentalAgreementRow>();
+
+  for (const agreement of agreements) {
+    if (agreement.status !== "active") continue;
+    if (agreement.start_period > period) continue;
+    if (agreement.end_period && agreement.end_period < period) continue;
+
+    const existing = byMachine.get(agreement.machine_id);
+    if (!existing || agreement.start_period > existing.start_period) {
+      byMachine.set(agreement.machine_id, agreement);
+    }
+  }
+
+  return [...byMachine.values()];
+}
+
+function afsTurnoverByMachinePeriod({
+  revenueBudgets,
+  machineActuals,
+  months,
+}: {
+  revenueBudgets: RevenueBudgetRow[];
+  machineActuals: AfsMachineActualRow[];
+  months: string[];
+}) {
+  const monthSet = new Set(months);
+  const values = new Map<string, number>();
+  const explicitBudgetKeys = new Set<string>();
+
+  for (const budget of revenueBudgets) {
+    if (budget.channel !== "bold_afs") continue;
+    if (!budget.machine_id) continue;
+    if (!monthSet.has(budget.period)) continue;
+
+    const amount = Number(budget.amount ?? 0);
+    if (!Number.isFinite(amount)) continue;
+
+    const key = afsMachinePeriodKey(budget.machine_id, budget.period);
+    explicitBudgetKeys.add(key);
+    values.set(key, (values.get(key) ?? 0) + amount);
+  }
+
+  for (const actual of machineActuals) {
+    if (!actual.machine_id) continue;
+    if (!monthSet.has(actual.period)) continue;
+
+    const key = afsMachinePeriodKey(actual.machine_id, actual.period);
+    if (explicitBudgetKeys.has(key)) continue;
+
+    values.set(key, Number(actual.net_total ?? actual.gross_total ?? 0));
+  }
+
+  return values;
+}
+
+function afsMachinePeriodKey(machineId: string, period: string) {
+  return `${machineId}|${period}`;
+}
+
+function calculateAfsRentalCost(agreement: AfsRentalAgreementRow, turnoverNet: number) {
+  const fixedFeeNet = roundMoney(agreement.fixed_fee_net);
+  const energyCostNet = roundMoney(agreement.energy_cost_net);
+  const thresholdNet = roundMoney(agreement.turnover_threshold_net);
+  const ratePercent = Number(agreement.turnover_rate_percent ?? 0);
+  const variableBaseNet = Math.max(0, roundMoney(turnoverNet) - thresholdNet);
+  const variableFeeNet = roundMoney((variableBaseNet * ratePercent) / 100);
+
+  return roundMoney(fixedFeeNet + energyCostNet + variableFeeNet);
 }
 
 function blankInputCells(months: string[]) {
@@ -2341,6 +2558,7 @@ function buildProfitLoss({
   months,
   glRows,
   salesRows,
+  afsRentalInvoices,
   budgetLines,
   revenueBudgets,
   accounts,
@@ -2348,6 +2566,7 @@ function buildProfitLoss({
   months: string[];
   glRows: GlPeriodRow[];
   salesRows: SalesPeriodRow[];
+  afsRentalInvoices: AfsRentalInvoiceRow[];
   budgetLines: PlBudgetLine[];
   revenueBudgets: RevenueBudgetRow[];
   accounts: GlAccount[];
@@ -2357,7 +2576,14 @@ function buildProfitLoss({
   const rows: PlRow[] = [];
   const revenueBudgetByChannel = revenueBudgetValuesByChannel(revenueBudgets, budgetLines, months);
   const budgetBySection = budgetLinesBySection(budgetLines, months);
-  const budgetRowsBySection = budgetOnlyRowsBySection(budgetLines, months);
+  const budgetByLineKey = budgetLinesByKey(budgetLines, months);
+  const afsRentalInvoiceValues = afsRentalInvoiceValuesByPeriod(afsRentalInvoices, months);
+  const hasAfsRentalInvoiceValues = hasAnyValue(afsRentalInvoiceValues);
+  const budgetRowsBySection = budgetOnlyRowsBySection(
+    budgetLines,
+    months,
+    hasAfsRentalInvoiceValues ? new Set([AFS_RENT_BUDGET_LINE_KEY]) : undefined,
+  );
 
   for (const row of salesRows) {
     add(ownRevenue, `${row.period}|${row.channel}`, Number(row.net_total ?? 0));
@@ -2433,6 +2659,7 @@ function buildProfitLoss({
       sort: number;
       values: Record<string, number>;
       accountCode: string;
+      budgetLineKey?: string;
     }
   >();
   for (const row of glRows) {
@@ -2452,6 +2679,17 @@ function buildProfitLoss({
       });
     }
     nonRevenueAccounts.get(key)!.values[row.period] += Number(row.amount ?? 0);
+  }
+
+  if (hasAfsRentalInvoiceValues) {
+    nonRevenueAccounts.set("synthetic-afs-rental-invoices", {
+      label: AFS_RENT_LINE_LABEL,
+      section: "housing",
+      sort: 430,
+      values: afsRentalInvoiceValues,
+      accountCode: "afs-rental-invoices",
+      budgetLineKey: AFS_RENT_BUDGET_LINE_KEY,
+    });
   }
 
   const accountsBySection = [...nonRevenueAccounts.values()].sort((a, b) => {
@@ -2561,16 +2799,19 @@ function buildProfitLoss({
       flushSection();
       currentSection = account.section;
     }
-    const detailByPeriod = Object.fromEntries(
-      months.map((period) => [
-        period,
-        {
-          source: "gl" as const,
-          label: account.label,
-          accountCodes: [account.accountCode],
-        },
-      ]),
-    );
+    const detailByPeriod =
+      account.accountCode === "afs-rental-invoices"
+        ? undefined
+        : Object.fromEntries(
+            months.map((period) => [
+              period,
+              {
+                source: "gl" as const,
+                label: account.label,
+                accountCodes: [account.accountCode],
+              },
+            ]),
+          );
     rows.push(
       makeRow(
         `account-${account.accountCode}`,
@@ -2581,9 +2822,13 @@ function buildProfitLoss({
         account.values,
         months,
         detailByPeriod,
+        undefined,
+        undefined,
+        account.budgetLineKey ? budgetByLineKey.get(account.budgetLineKey) : undefined,
       ),
     );
-    sectionAccountCodes.push(account.accountCode);
+    if (account.accountCode !== "afs-rental-invoices")
+      sectionAccountCodes.push(account.accountCode);
     for (const period of months) sectionValues[period] += account.values[period] ?? 0;
   }
   flushSection();
@@ -3193,10 +3438,32 @@ function budgetLinesBySection(budgetLines: PlBudgetLine[], months: string[]) {
   return result;
 }
 
-function budgetOnlyRowsBySection(budgetLines: PlBudgetLine[], months: string[]) {
+function afsRentalInvoiceValuesByPeriod(invoices: AfsRentalInvoiceRow[], months: string[]) {
+  const monthSet = new Set(months);
+  const values = blankValues(months);
+
+  for (const invoice of invoices) {
+    if (!monthSet.has(invoice.period)) continue;
+    if (String(invoice.status ?? "").toLowerCase() === "canceled") continue;
+    values[invoice.period] += Number(invoice.subtotal_net ?? 0);
+  }
+
+  return values;
+}
+
+function hasAnyValue(values: Record<string, number>) {
+  return Object.values(values).some((value) => Math.abs(Number(value ?? 0)) >= 0.005);
+}
+
+function budgetOnlyRowsBySection(
+  budgetLines: PlBudgetLine[],
+  months: string[],
+  hiddenLineKeys = new Set<string>(),
+) {
   const grouped = new Map<string, Map<string, PlBudgetLine[]>>();
   for (const line of budgetLines) {
     if (line.kind === "revenue") continue;
+    if (hiddenLineKeys.has(line.line_key)) continue;
     if (!grouped.has(line.section)) grouped.set(line.section, new Map());
     const section = grouped.get(line.section)!;
     if (!section.has(line.line_key)) section.set(line.line_key, []);
