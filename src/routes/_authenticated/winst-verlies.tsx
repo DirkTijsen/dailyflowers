@@ -136,6 +136,7 @@ const PL_STICKY_BODY_FIRST = "sticky left-0 z-20 w-44 min-w-[11rem] px-3 py-2";
 const PL_STICKY_BODY_SECOND = "sticky left-[11rem] z-20 w-72 min-w-[18rem] px-3 py-2";
 const MANUAL_PL_BUDGET_SOURCE_WORKBOOK = "W&V budgetregels";
 const COST_DRIVER_SOURCE_WORKBOOK = "Kostprijs omzet drivers";
+const PL_PARAMETER_SOURCE_WORKBOOK = "W&V parameters";
 const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
   "budget-afs-inkoop",
   "budget-afs-vaste-machinekosten",
@@ -143,6 +144,7 @@ const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
   "budget-winkels-verspilling",
   "budget-webshop-inkoop",
   "budget-webshop-bezorgkosten",
+  "budget-webshop-advertentiekosten",
   "budget-winkels-overhead",
   "budget-webshop-overhead",
   "budget-winkels-aflossing",
@@ -179,14 +181,6 @@ const MANUAL_PL_BUDGET_DEFINITIONS: ManualPlBudgetDefinition[] = [
     sourceSheet: "Webshop",
     sourceLabel: "Auto's",
     sortOrder: 630,
-  },
-  {
-    section: "sales_marketing",
-    lineKey: "budget-webshop-advertentiekosten",
-    lineLabel: "Marketing - Marketingkosten/verkoopkosten",
-    sourceSheet: "Marketing",
-    sourceLabel: "Marketingkosten/verkoopkosten",
-    sortOrder: 510,
   },
   {
     section: "personnel",
@@ -379,7 +373,27 @@ const SHOP_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
   },
 ];
 const COST_DRIVER_DEFINITIONS = [...AFS_COST_DRIVER_DEFINITIONS, ...SHOP_COST_DRIVER_DEFINITIONS];
-const COST_DRIVER_KEYS = COST_DRIVER_DEFINITIONS.map((driver) => driver.driver_key);
+const PL_PARAMETER_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
+  {
+    driver_key: "marketing_verkoopkosten",
+    driver_label: "Marketing - Marketingkosten/verkoopkosten",
+    calculation_type: "percentage_of_revenue",
+    section: "sales_marketing",
+    line_key: "budget-webshop-advertentiekosten",
+    line_label: "Marketing - Marketingkosten/verkoopkosten",
+    source_label: "Marketingkosten/verkoopkosten (% van totale budgetomzet)",
+    source_sheet: "Marketing",
+    source_workbook: PL_PARAMETER_SOURCE_WORKBOOK,
+    input_label: "% van totale budgetomzet",
+    revenue_channels: [...CHANNELS],
+    fallback_line_key: "budget-webshop-advertentiekosten",
+    sort_order: 510,
+    defaultAmount: 0,
+    defaultBasisAmount: null,
+  },
+];
+const BUDGET_DRIVER_DEFINITIONS = [...COST_DRIVER_DEFINITIONS, ...PL_PARAMETER_DRIVER_DEFINITIONS];
+const BUDGET_DRIVER_KEYS = BUDGET_DRIVER_DEFINITIONS.map((driver) => driver.driver_key);
 
 type DetailBase = {
   source: "gl" | "sales";
@@ -455,10 +469,12 @@ type CostDriverDefinition = {
   line_label: string;
   source_label: string;
   source_sheet: string;
+  source_workbook?: string;
   input_label: string;
   revenue_channel?: string;
   revenue_channels?: string[];
   depends_on_driver_key?: string;
+  fallback_line_key?: string;
   sort_order: number;
   defaultAmount: number;
   defaultBasisAmount: number | null;
@@ -694,7 +710,7 @@ function ProfitLossPage() {
         .select(
           "id,driver_key,driver_label,calculation_type,amount,basis_amount,machine_count,section,line_key,line_label,source_label,sort_order,from_period,to_period",
         )
-        .in("driver_key", COST_DRIVER_KEYS)
+        .in("driver_key", BUDGET_DRIVER_KEYS)
         .order("driver_key")
         .order("from_period");
       if (error) throw error;
@@ -987,9 +1003,9 @@ function ProfitLossPage() {
             : formatDriverInput(driver, field === "amount" ? nextAmount : nextBasisAmount),
       }));
       qc.invalidateQueries({ queryKey: ["wv-cost-driver-rules"] });
-      toast.success("Kostprijsdriver opgeslagen");
+      toast.success("Budgetparameter opgeslagen");
     } catch (error) {
-      toast.error("Kostprijsdriver opslaan mislukt", {
+      toast.error("Budgetparameter opslaan mislukt", {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -1474,7 +1490,24 @@ function BudgetInputsPanel({
         </CardContent>
       </Card>
 
-      <CostDriversCard
+      <DriverInputsCard
+        title="Kostprijs omzet"
+        driverDefinitions={COST_DRIVER_DEFINITIONS}
+        showAfsMachineCountRow
+        months={months}
+        revenueBudgets={revenueBudgets}
+        budgetLines={budgetLines}
+        driverRules={driverRules}
+        activeAfsCount={activeAfsCount}
+        drafts={drafts}
+        savingCell={savingCell}
+        onDraftChange={onDraftChange}
+        onSave={onSaveCostDriver}
+      />
+
+      <DriverInputsCard
+        title="W&V parameters"
+        driverDefinitions={PL_PARAMETER_DRIVER_DEFINITIONS}
         months={months}
         revenueBudgets={revenueBudgets}
         budgetLines={budgetLines}
@@ -1569,7 +1602,10 @@ function profitLossStickyCellClass(row: PlRow, column: "section" | "label") {
   return cn(column === "section" ? PL_STICKY_BODY_FIRST : PL_STICKY_BODY_SECOND, rowBackground);
 }
 
-function CostDriversCard({
+function DriverInputsCard({
+  title,
+  driverDefinitions,
+  showAfsMachineCountRow = false,
   months,
   revenueBudgets,
   budgetLines,
@@ -1580,6 +1616,9 @@ function CostDriversCard({
   onDraftChange,
   onSave,
 }: {
+  title: string;
+  driverDefinitions: CostDriverDefinition[];
+  showAfsMachineCountRow?: boolean;
   months: string[];
   revenueBudgets: RevenueBudgetRow[];
   budgetLines: PlBudgetLine[];
@@ -1598,21 +1637,24 @@ function CostDriversCard({
   const rows = useMemo(
     () =>
       buildCostDriverInputRows({
+        driverDefinitions,
         driverRules,
         revenueBudgets,
         budgetLines,
         months,
         activeAfsCount,
       }),
-    [activeAfsCount, budgetLines, driverRules, months, revenueBudgets],
+    [activeAfsCount, budgetLines, driverDefinitions, driverRules, months, revenueBudgets],
   );
-  const afsMachineCountDriver = rows.find((row) => row.driver_key === AFS_MACHINE_COUNT_DRIVER_KEY);
+  const afsMachineCountDriver = showAfsMachineCountRow
+    ? rows.find((row) => row.driver_key === AFS_MACHINE_COUNT_DRIVER_KEY)
+    : undefined;
   const tableMinWidth = Math.max(1020, 380 + months.length * 156 + 140);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Kostprijs omzet</CardTitle>
+        <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
@@ -1652,7 +1694,7 @@ function CostDriversCard({
                   ) : null}
                   <tr className="group border-t hover:bg-muted/30">
                     <td className={BUDGET_STICKY_BODY_FIRST}>
-                      <Badge variant="outline">Kostprijs omzet</Badge>
+                      <Badge variant="outline">{sectionLabel(row.section)}</Badge>
                     </td>
                     <td className={cn(BUDGET_STICKY_BODY_SECOND, STICKY_SEPARATOR_SHADOW)}>
                       <div className="font-medium">{row.driver_label}</div>
@@ -1956,12 +1998,14 @@ function buildPlBudgetInputRows(budgetLines: PlBudgetLine[], months: string[]) {
 }
 
 function buildCostDriverInputRows({
+  driverDefinitions,
   driverRules,
   revenueBudgets,
   budgetLines,
   months,
   activeAfsCount,
 }: {
+  driverDefinitions: CostDriverDefinition[];
   driverRules: PlBudgetDriverRule[];
   revenueBudgets: RevenueBudgetRow[];
   budgetLines: PlBudgetLine[];
@@ -1972,7 +2016,12 @@ function buildCostDriverInputRows({
   const calculatedByDriver = new Map<string, Record<string, number>>();
   const sharedAfsMachineCountByPeriod = sharedAfsMachineCountOverrides(driverRules, months);
 
-  return COST_DRIVER_DEFINITIONS.map((driver) => {
+  const legacyBudgetValuesByKey = budgetLinesByKey(
+    budgetLines.filter((line) => line.kind === "cost"),
+    months,
+  );
+
+  return driverDefinitions.map((driver) => {
     const rules = driverRules
       .filter((rule) => rule.driver_key === driver.driver_key)
       .sort((a, b) => comparePeriods(a.from_period, b.from_period));
@@ -1984,7 +2033,13 @@ function buildCostDriverInputRows({
 
     for (const period of months) {
       const rule = activeRuleForPeriod(rules, period);
-      const amount = Number(rule?.amount ?? driver.defaultAmount);
+      const fallbackAmount = fallbackDriverPercentageAmount({
+        driver,
+        period,
+        revenue: revenueValues[period] ?? 0,
+        legacyBudgetValuesByKey,
+      });
+      const amount = Number(rule?.amount ?? fallbackAmount ?? driver.defaultAmount);
       const basisAmount = Number(rule?.basis_amount ?? driver.defaultBasisAmount ?? 0) || null;
       const standardMachineCount =
         driver.calculation_type === "amount_per_afs" ? activeAfsCount : null;
@@ -2045,6 +2100,29 @@ function revenueValuesForDriver(
   return values;
 }
 
+function fallbackDriverPercentageAmount({
+  driver,
+  period,
+  revenue,
+  legacyBudgetValuesByKey,
+}: {
+  driver: CostDriverDefinition;
+  period: string;
+  revenue: number;
+  legacyBudgetValuesByKey: Map<string, Record<string, number>>;
+}) {
+  if (driver.calculation_type !== "percentage_of_revenue" || !driver.fallback_line_key) return null;
+  if (Math.abs(revenue) < 0.005) return null;
+
+  const legacyValues = legacyBudgetValuesByKey.get(driver.fallback_line_key);
+  if (!legacyValues) return null;
+
+  const legacyAmount = Number(legacyValues[period] ?? 0);
+  if (!Number.isFinite(legacyAmount)) return null;
+
+  return (legacyAmount / revenue) * 100;
+}
+
 function buildEffectiveBudgetLines({
   budgetLines,
   driverRules,
@@ -2062,6 +2140,7 @@ function buildEffectiveBudgetLines({
     .filter((line) => line.kind === "revenue" || !EXCLUDED_PL_BUDGET_LINE_KEYS.has(line.line_key))
     .map(normalizeManualBudgetLine);
   const driverRows = buildCostDriverInputRows({
+    driverDefinitions: BUDGET_DRIVER_DEFINITIONS,
     driverRules,
     revenueBudgets,
     budgetLines,
@@ -2078,7 +2157,7 @@ function buildEffectiveBudgetLines({
       line_label: driver.line_label,
       kind: "cost" as const,
       amount: driver.values[period]?.calculatedAmount ?? 0,
-      source_workbook: COST_DRIVER_SOURCE_WORKBOOK,
+      source_workbook: driver.source_workbook ?? COST_DRIVER_SOURCE_WORKBOOK,
       source_sheet: driver.source_sheet,
       source_label: driver.source_label,
       sort_order: driver.sort_order,
