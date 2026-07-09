@@ -716,6 +716,10 @@ function ProfitLossPage() {
       }),
     [accountsQ.data, effectiveBudgetLines, glQ.data, months, revenueBudgetsQ.data, salesQ.data],
   );
+  const revenueActualsByChannel = useMemo(
+    () => buildRevenueActualsByChannel(salesQ.data ?? [], months),
+    [months, salesQ.data],
+  );
 
   useEffect(() => {
     setBudgetDrafts({});
@@ -1292,6 +1296,7 @@ function ProfitLossPage() {
           <BudgetInputsPanel
             months={months}
             revenueBudgets={revenueBudgetsQ.data ?? []}
+            revenueActualsByChannel={revenueActualsByChannel}
             budgetLines={budgetsQ.data ?? []}
             driverRules={costDriverRulesQ.data ?? []}
             activeAfsCount={activeAfsCountQ.data ?? 0}
@@ -1313,6 +1318,7 @@ function ProfitLossPage() {
 function BudgetInputsPanel({
   months,
   revenueBudgets,
+  revenueActualsByChannel,
   budgetLines,
   driverRules,
   activeAfsCount,
@@ -1325,6 +1331,7 @@ function BudgetInputsPanel({
 }: {
   months: string[];
   revenueBudgets: RevenueBudgetRow[];
+  revenueActualsByChannel: Map<string, Record<string, number>>;
   budgetLines: PlBudgetLine[];
   driverRules: PlBudgetDriverRule[];
   activeAfsCount: number;
@@ -1379,6 +1386,10 @@ function BudgetInputsPanel({
                     </td>
                     {months.map((period) => {
                       const cellKey = revenueBudgetCellKey(row.key, period);
+                      const actualAmount =
+                        row.level === 0
+                          ? (revenueActualsByChannel.get(row.channel)?.[period] ?? 0)
+                          : null;
                       return (
                         <td key={period} className="border-l px-2 py-1">
                           <BudgetInputField
@@ -1389,11 +1400,24 @@ function BudgetInputsPanel({
                             onDraftChange={onDraftChange}
                             onSave={(rawValue) => onSaveRevenue(row, period, rawValue)}
                           />
+                          {actualAmount !== null && (
+                            <div className="mt-1 whitespace-nowrap text-right text-[11px] text-muted-foreground tabular-nums">
+                              Real. {formatEUR(actualAmount)}
+                            </div>
+                          )}
                         </td>
                       );
                     })}
                     <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
-                      {formatEUR(sumInputCells(row.values, months))}
+                      <div>{formatEUR(sumInputCells(row.values, months))}</div>
+                      {row.level === 0 && (
+                        <div className="mt-1 whitespace-nowrap text-[11px] font-normal text-muted-foreground">
+                          Real.{" "}
+                          {formatEUR(
+                            sumValues(revenueActualsByChannel.get(row.channel) ?? {}, months),
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -2974,6 +2998,19 @@ function revenueBudgetValuesByChannel(
     for (const period of months) {
       if (Math.abs(values[period] ?? 0) < 0.005) values[period] = fallback[period] ?? 0;
     }
+  }
+
+  return result;
+}
+
+function buildRevenueActualsByChannel(salesRows: SalesPeriodRow[], months: string[]) {
+  const result = new Map<string, Record<string, number>>();
+  for (const channel of CHANNELS) result.set(channel, blankValues(months));
+
+  for (const row of salesRows) {
+    if (!CHANNELS.includes(row.channel as (typeof CHANNELS)[number])) continue;
+    if (!months.includes(row.period)) continue;
+    result.get(row.channel)![row.period] += Number(row.net_total ?? 0);
   }
 
   return result;
