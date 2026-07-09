@@ -173,6 +173,14 @@ const MANUAL_PL_BUDGET_DEFINITIONS: ManualPlBudgetDefinition[] = [
     sortOrder: 320,
   },
   {
+    section: "general_admin",
+    lineKey: "budget-webshop-autos",
+    lineLabel: "Webshop - Auto's",
+    sourceSheet: "Webshop",
+    sourceLabel: "Auto's",
+    sortOrder: 630,
+  },
+  {
     section: "sales_marketing",
     lineKey: "budget-webshop-advertentiekosten",
     lineLabel: "Marketing - Marketingkosten/verkoopkosten",
@@ -341,15 +349,15 @@ const SHOP_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
   },
   {
     driver_key: "webshop_inkoop",
-    driver_label: "Webshop - Inkoop",
+    driver_label: "Webshop/Mollie - Inkoop",
     calculation_type: "percentage_of_revenue",
     section: "cost_of_goods",
     line_key: "budget-webshop-inkoop",
-    line_label: "Webshop - Inkoop",
-    source_label: "Inkoop (% van webshop omzet)",
+    line_label: "Webshop/Mollie - Inkoop",
+    source_label: "Inkoop (% van webshop + Mollie omzet)",
     source_sheet: "Winkels/Webshop kostprijs",
-    input_label: "% van webshop omzet",
-    revenue_channel: "shopify_webshop",
+    input_label: "% van webshop + Mollie omzet",
+    revenue_channels: ["shopify_webshop", "mollie_facturen"],
     sort_order: 230,
     defaultAmount: 33.333333,
     defaultBasisAmount: null,
@@ -449,6 +457,7 @@ type CostDriverDefinition = {
   source_sheet: string;
   input_label: string;
   revenue_channel?: string;
+  revenue_channels?: string[];
   depends_on_driver_key?: string;
   sort_order: number;
   defaultAmount: number;
@@ -1968,9 +1977,7 @@ function buildCostDriverInputRows({
       .filter((rule) => rule.driver_key === driver.driver_key)
       .sort((a, b) => comparePeriods(a.from_period, b.from_period));
     const values = blankCostDriverCells(months);
-    const revenueValues = driver.revenue_channel
-      ? (revenueBudgetByChannel.get(driver.revenue_channel) ?? blankValues(months))
-      : blankValues(months);
+    const revenueValues = revenueValuesForDriver(driver, revenueBudgetByChannel, months);
     const dependencyValues = driver.depends_on_driver_key
       ? (calculatedByDriver.get(driver.depends_on_driver_key) ?? blankValues(months))
       : blankValues(months);
@@ -2018,6 +2025,24 @@ function buildCostDriverInputRows({
       total: months.reduce((sum, period) => sum + (values[period]?.calculatedAmount ?? 0), 0),
     };
   });
+}
+
+function revenueValuesForDriver(
+  driver: CostDriverDefinition,
+  revenueBudgetByChannel: Map<string, Record<string, number>>,
+  months: string[],
+) {
+  const channels =
+    driver.revenue_channels ?? (driver.revenue_channel ? [driver.revenue_channel] : []);
+  const values = blankValues(months);
+
+  for (const channel of channels) {
+    const channelValues = revenueBudgetByChannel.get(channel);
+    if (!channelValues) continue;
+    for (const period of months) values[period] += channelValues[period] ?? 0;
+  }
+
+  return values;
 }
 
 function buildEffectiveBudgetLines({
