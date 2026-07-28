@@ -2,7 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Download, ExternalLink, RefreshCw, Upload } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  FileSpreadsheet,
+  Presentation,
+  RefreshCw,
+  Upload,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,6 +62,12 @@ import {
   type CashflowReportRow,
   type CashflowValues,
 } from "@/lib/cashflow";
+import {
+  exportFinancialPresentation,
+  exportFinancialWorkbook,
+  type FinancialExportData,
+  type FinancialInputRow,
+} from "@/lib/financial-export";
 
 export const Route = createFileRoute("/_authenticated/winst-verlies")({
   head: () => ({ meta: [{ title: "W&V / Cashflow - Daily Flowers" }] }),
@@ -689,6 +702,7 @@ function ProfitLossPage() {
   ]);
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [exactSyncing, setExactSyncing] = useState(false);
+  const [exporting, setExporting] = useState<"excel" | "presentation" | null>(null);
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
   const [savingBudgetCell, setSavingBudgetCell] = useState<string | null>(null);
   const [cashflowDrafts, setCashflowDrafts] = useState<Record<string, string>>({});
@@ -901,6 +915,22 @@ function ProfitLossPage() {
       return (data ?? []).length;
     },
   });
+  const exportDataLoading = [
+    accountsQ,
+    glQ,
+    salesQ,
+    budgetsQ,
+    revenueBudgetsQ,
+    afsBudgetMachinesQ,
+    afsBudgetMachineRevenuesQ,
+    afsRentalAgreementsQ,
+    afsRentalInvoicesQ,
+    afsMachineActualsQ,
+    costDriverRulesQ,
+    cashflowInputsQ,
+    cashflowAfsBlocksQ,
+    activeAfsCountQ,
+  ].some((query) => query.isPending);
 
   const effectiveRevenueBudgets = useMemo(
     () =>
@@ -996,6 +1026,249 @@ function ProfitLossPage() {
       }
       return orderPlMetricColumns([...current, column]);
     });
+  }
+
+  function buildCurrentFinancialExportData(): FinancialExportData {
+    const revenueInputRows = buildRevenueBudgetInputRows(revenueBudgetsQ.data ?? [], months);
+    const afsBudgetMachineInputRows = buildAfsBudgetMachineInputRows(
+      afsBudgetMachinesQ.data ?? [],
+      afsBudgetMachineRevenuesQ.data ?? [],
+      months,
+    );
+    const driverRows = buildCostDriverInputRows({
+      driverDefinitions: BUDGET_DRIVER_DEFINITIONS,
+      driverRules: costDriverRulesQ.data ?? [],
+      revenueBudgets: effectiveRevenueBudgets,
+      budgetLines: budgetsQ.data ?? [],
+      months,
+      activeAfsCount: activeAfsCountQ.data ?? 0,
+    });
+    const manualRows = buildPlBudgetInputRows(budgetsQ.data ?? [], months);
+    const budgetInputRows: FinancialInputRow[] = [];
+
+    for (const row of revenueInputRows) {
+      budgetInputRows.push({
+        group: "Omzetbudgetten",
+        category: channelLabel(row.channel),
+        label: row.label,
+        note: row.level === 0 ? "Kanaalbudget" : "Budget bestaande AFS",
+        values: Object.fromEntries(
+          months.map((period) => [period, Number(row.values[period]?.amount ?? 0)]),
+        ),
+        numberFormat: "currency",
+      });
+      if (row.level === 0) {
+        budgetInputRows.push({
+          group: "Omzetbudgetten",
+          category: channelLabel(row.channel),
+          label: "Realisatie ter referentie",
+          note: "Zoals getoond onder het kanaalbudget",
+          values: revenueActualsByChannel.get(row.channel) ?? blankValues(months),
+          numberFormat: "currency",
+        });
+      }
+    }
+
+    for (const row of afsBudgetMachineInputRows) {
+      budgetInputRows.push({
+        group: "Omzet nieuwe AFS-budgetmachines",
+        category: monthHeaderLabel(row.start_period, true),
+        label: row.display_name,
+        note: `Actief vanaf ${row.start_period}`,
+        values: Object.fromEntries(
+          months.map((period) => [
+            period,
+            period < row.start_period ? 0 : Number(row.values[period]?.amount ?? 0),
+          ]),
+        ),
+        numberFormat: "currency",
+      });
+    }
+
+    for (const driver of driverRows) {
+      const percentageInput =
+        driver.calculation_type === "percentage_of_revenue" ||
+        driver.calculation_type === "percentage_of_driver";
+      budgetInputRows.push({
+        group: PL_PARAMETER_DRIVER_DEFINITIONS.some(
+          (definition) => definition.driver_key === driver.driver_key,
+        )
+          ? "W&V parameters"
+          : "Kostprijs omzet",
+        category: sectionLabel(driver.section),
+        label: `${driver.driver_label} — invoer`,
+        note: driver.input_label,
+        values: Object.fromEntries(
+          months.map((period) => [
+            period,
+            percentageInput
+              ? Number(driver.values[period]?.amount ?? 0) / 100
+              : Number(driver.values[period]?.amount ?? 0),
+          ]),
+        ),
+        numberFormat: percentageInput ? "percentage" : "currency",
+      });
+      if (driver.calculation_type === "orders_from_revenue") {
+        budgetInputRows.push({
+          group: "Kostprijs omzet",
+          category: sectionLabel(driver.section),
+          label: `${driver.driver_label} — orderwaarde`,
+          note: "Basisbedrag per bestelling",
+          values: Object.fromEntries(
+            months.map((period) => [period, Number(driver.values[period]?.basisAmount ?? 0)]),
+          ),
+          numberFormat: "currency",
+        });
+      }
+      budgetInputRows.push({
+        group: PL_PARAMETER_DRIVER_DEFINITIONS.some(
+          (definition) => definition.driver_key === driver.driver_key,
+        )
+          ? "W&V parameters"
+          : "Kostprijs omzet",
+        category: sectionLabel(driver.section),
+        label: `${driver.driver_label} — berekend budget`,
+        note: driver.source_label,
+        values: Object.fromEntries(
+          months.map((period) => [period, Number(driver.values[period]?.calculatedAmount ?? 0)]),
+        ),
+        numberFormat: "currency",
+      });
+    }
+
+    const afsCountDriver = driverRows.find(
+      (driver) => driver.driver_key === AFS_MACHINE_COUNT_DRIVER_KEY,
+    );
+    if (afsCountDriver) {
+      budgetInputRows.push({
+        group: "Kostprijs omzet",
+        category: "AFS-volume",
+        label: "Aantal AFS'en",
+        note: "Gedeeld volume voor schoonmaak, onderhoud en logistiek",
+        values: Object.fromEntries(
+          months.map((period) => [
+            period,
+            Number(afsCountDriver.values[period]?.machineCount ?? 0),
+          ]),
+        ),
+        numberFormat: "integer",
+      });
+    }
+
+    for (const row of manualRows) {
+      budgetInputRows.push({
+        group: "W&V-budgetregels",
+        category: sectionLabel(row.section),
+        label: row.lineLabel,
+        note: row.sourceLabel,
+        values: Object.fromEntries(
+          months.map((period) => [period, Number(row.values[period]?.amount ?? 0)]),
+        ),
+        numberFormat: "currency",
+      });
+    }
+
+    const afsCashOut = buildAfsInvestmentValues(
+      cashflowInputsQ.data ?? [],
+      cashflowAfsBlocksQ.data ?? [],
+      months,
+    );
+    const machineCounts = {
+      actual: blankValues(months),
+      budget: blankValues(months),
+    };
+    for (const input of cashflowInputsQ.data ?? []) {
+      if (input.line_key !== AFS_MACHINE_INPUT_KEY || !months.includes(input.period)) continue;
+      machineCounts.actual[input.period] = Number(input.actual_machine_count ?? 0);
+      machineCounts.budget[input.period] = Number(input.budget_machine_count ?? 0);
+    }
+    const cashflowInputRows = [
+      {
+        group: "Investeringen",
+        label: "AFS'en: aantal machines",
+        actual: machineCounts.actual,
+        budget: machineCounts.budget,
+        numberFormat: "integer" as const,
+      },
+      {
+        group: "Investeringen",
+        label: "Cash-out investering AFS'en",
+        actual: afsCashOut.actual,
+        budget: afsCashOut.budget,
+        numberFormat: "currency" as const,
+      },
+      ...CASHFLOW_INPUT_DEFINITIONS.map((definition) => {
+        const values = cashflowInputValues(cashflowInputsQ.data ?? [], definition.key, months);
+        return {
+          group:
+            definition.group === "investments"
+              ? "Investeringen"
+              : definition.group === "debt"
+                ? "Vreemd vermogen"
+                : "Eigen vermogen",
+          label: definition.label,
+          actual: values.actual,
+          budget: values.budget,
+          numberFormat: "currency" as const,
+        };
+      }),
+    ];
+
+    const afsBlockRows = (cashflowAfsBlocksQ.data ?? []).flatMap((block) => [
+      ...AFS_INVESTMENT_COMPONENTS.map((component) => ({
+        block: `Blok ${block.block_number}`,
+        component: component.label,
+        amount: Number(block[component.field] ?? 0),
+        referenceMachineCount: Number(block.reference_machine_count ?? 0),
+        amountPerMachine: afsInvestmentAmountPerMachine(block),
+      })),
+      {
+        block: `Blok ${block.block_number}`,
+        component: "Totaal pakket",
+        amount: afsInvestmentPackageTotal(block),
+        referenceMachineCount: Number(block.reference_machine_count ?? 0),
+        amountPerMachine: afsInvestmentAmountPerMachine(block),
+      },
+    ]);
+
+    return {
+      title: "Daily Flowers — W&V / Cashflow",
+      selectionLabel: selectionTitle(viewMode, months, year),
+      months,
+      columns: visibleColumns,
+      totalLabel,
+      plRows: rows,
+      budgetInputRows,
+      cashflowInputRows,
+      afsBlockRows,
+      cashflowRows: cashflowRows.map((row) => ({
+        key: row.key,
+        label: row.label,
+        section: row.section,
+        level: row.level,
+        kind: row.kind,
+        values: row.values.actual,
+        budgetValues: row.values.budget,
+      })),
+    };
+  }
+
+  async function runFinancialExport(kind: "excel" | "presentation") {
+    setExporting(kind);
+    try {
+      const exportData = buildCurrentFinancialExportData();
+      if (kind === "excel") await exportFinancialWorkbook(exportData);
+      else await exportFinancialPresentation(exportData);
+      toast.success(
+        kind === "excel" ? "Excel-werkmap geëxporteerd" : "Financiële presentatie geëxporteerd",
+      );
+    } catch (error) {
+      toast.error("Exporteren mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setExporting(null);
+    }
   }
 
   function openDetail(row: PlRow, period: string) {
@@ -1566,6 +1839,30 @@ function ProfitLossPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => runFinancialExport("excel")}
+            disabled={exporting !== null || exportDataLoading}
+          >
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+            {exportDataLoading
+              ? "Gegevens laden..."
+              : exporting === "excel"
+                ? "Excel maken..."
+                : "Excel (4 tabbladen)"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => runFinancialExport("presentation")}
+            disabled={exporting !== null || exportDataLoading}
+          >
+            <Presentation className="mr-2 h-4 w-4" />
+            {exportDataLoading
+              ? "Gegevens laden..."
+              : exporting === "presentation"
+                ? "Presentatie maken..."
+                : "Presentatie"}
+          </Button>
           <Button variant="outline" onClick={syncExact} disabled={exactSyncing}>
             <RefreshCw className={`mr-2 h-4 w-4 ${exactSyncing ? "animate-spin" : ""}`} />
             Exact sync
