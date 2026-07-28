@@ -142,3 +142,65 @@
     color: var(--color-foreground);
   }
 }
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  body[data-bank-print-view] {
+    background: white;
+  }
+
+  body[data-bank-print-view] * {
+    visibility: hidden;
+  }
+
+  body[data-bank-print-view="profit-loss"] .bank-report-sheet[data-bank-report-view="profit-loss"],
+  body[data-bank-print-view="profit-loss"] .bank-report-sheet[data-bank-report-view="profit-loss"] *,
+  body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"],
+  body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"] * {
+    visibility: visible;
+  }
+
+  body[data-bank-print-view] .bank-report-sheet {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    border: 0;
+    box-shadow: none;
+    color: #0f172a;
+  }
+
+  body[data-bank-print-view] .bank-report-no-print {
+    display: none !important;
+  }
+
+  body[data-bank-print-view] .bank-report-table {
+    min-width: 0;
+    font-size: 8pt;
+  }
+
+  body[data-bank-print-view] .bank-report-table thead {
+    display: table-header-group;
+  }
+
+  body[data-bank-print-view] .bank-report-table tr {
+    break-inside: avoid;
+  }
+
+  body[data-bank-print-view] .bank-report-table th,
+  body[data-bank-print-view] .bank-report-table td {
+    padding: 3px 5px;
+  }
+
+  body[data-bank-print-view] .bank-report-footer {
+    break-inside: avoid;
+  }
+
+  body[data-bank-print-view] .bank-report-accent {
+    background: #047857 !important;
+    print-color-adjust: exact;
+  }
+}
