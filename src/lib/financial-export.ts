@@ -632,7 +632,6 @@ function selectPlPresentationRows(rows: FinancialStatementRow[]) {
     "gross-margin",
     "gross-margin-percentage",
     "subtotal-personnel",
-    "subtotal-afs_fulfillment_logistics",
     "subtotal-housing",
     "subtotal-sales_marketing",
     "subtotal-general_admin",
