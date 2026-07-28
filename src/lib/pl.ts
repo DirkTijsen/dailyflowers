@@ -577,7 +577,9 @@ function normalizeSection(
 
   const code = accountCode.trim();
   const name = `${accountName} ${classification}`.toLowerCase();
-  if (code === "7600" || name.includes("uitbesteed werk")) return "afs_fulfillment_logistics";
+  if (name.includes("verpakk")) return "cost_of_goods";
+  if (name.includes("autokost") || /\bauto('|’)?s?\b/.test(name)) return "general_admin";
+  if (code === "7600" || name.includes("uitbesteed werk")) return "cost_of_goods";
   if (/^7/.test(code) || name.includes("kostprijs") || name.includes("inkoop")) return "cost_of_goods";
   if (name.includes("rente") || name.includes("bankkosten") || name.includes("financier")) return "financial";
   if (/^8/.test(code) || name.includes("omzet") || name.includes("opbreng")) return "revenue";

@@ -6,6 +6,7 @@ import {
   Download,
   ExternalLink,
   FileSpreadsheet,
+  Printer,
   Presentation,
   RefreshCw,
   Upload,
@@ -213,6 +214,9 @@ const PL_PARAMETER_SOURCE_WORKBOOK = "W&V parameters";
 const AFS_RENT_SOURCE_WORKBOOK = "AFS huurafspraken";
 const AFS_RENT_BUDGET_LINE_KEY = "budget-afs-huurkosten";
 const AFS_RENT_LINE_LABEL = "AFS - Huurkosten";
+const AFS_RENT_COST_OF_GOODS_LINE_KEY = "budget-afs-huurkosten-kostprijs";
+const AFS_RENT_MONTHLY_RETAINED_AMOUNT = 17_250;
+const AFS_DELIVERY_PERSONNEL_MONTHLY_TRANSFER = 7_125;
 const AFS_BUDGET_MACHINE_RENT_LINE_KEY = "budget-afs-huurkosten-budgetmachines";
 const AFS_BUDGET_MACHINE_RENT_LINE_LABEL = "AFS - Huurkosten budgettranches (gemiddeld)";
 const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
@@ -270,12 +274,12 @@ const MANUAL_PL_BUDGET_DEFINITIONS: ManualPlBudgetDefinition[] = [
     sortOrder: 330,
   },
   {
-    section: "afs_fulfillment_logistics",
+    section: "general_admin",
     lineKey: "budget-afs-autos",
     lineLabel: "AFS - Auto's",
     sourceSheet: "AFS",
     sourceLabel: "Auto's",
-    sortOrder: 360,
+    sortOrder: 620,
   },
   {
     section: "personnel",
@@ -708,12 +712,27 @@ function ProfitLossPage() {
   const [savingBudgetCell, setSavingBudgetCell] = useState<string | null>(null);
   const [cashflowDrafts, setCashflowDrafts] = useState<Record<string, string>>({});
   const [savingCashflowCell, setSavingCashflowCell] = useState<string | null>(null);
+  const [bankReportYear, setBankReportYear] = useState(thisYear);
+  const [bankActualThroughMonth, setBankActualThroughMonth] = useState(
+    String(Math.max(1, Number(thisMonthNumber) - 1)).padStart(2, "0"),
+  );
   const months = useMemo(() => {
     if (viewMode === "month") return [composePeriod(year, month)];
     if (viewMode === "year") return yearPeriods(year);
     if (viewMode === "multiYear") return multiYearPeriods(selectedYears, selectedMonths);
     return periodsBetween(composePeriod(year, fromMonth), composePeriod(year, toMonth));
   }, [fromMonth, month, selectedMonths, selectedYears, toMonth, viewMode, year]);
+  const bankMonths = useMemo(
+    () => [
+      ...yearPeriods(bankReportYear),
+      ...yearPeriods(String(Number(bankReportYear) + 1)),
+    ],
+    [bankReportYear],
+  );
+  const queryMonths = useMemo(
+    () => uniqueSorted([...months, ...bankMonths]),
+    [bankMonths, months],
+  );
   const periodColumns = visibleColumns;
   const totalColumns = visibleColumns;
   const totalLabel = aggregateLabel(viewMode, months);
@@ -733,66 +752,66 @@ function ProfitLossPage() {
   });
 
   const glQ = useQuery({
-    queryKey: ["wv-gl-monthly", months],
+    queryKey: ["wv-gl-monthly", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<GlPeriodRow>("vw_gl_monthly_account")
         .select("*")
-        .in("period", months);
+        .in("period", queryMonths);
       if (error) throw error;
       return (data ?? []) as GlPeriodRow[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const salesQ = useQuery({
-    queryKey: ["wv-sales-monthly", months],
+    queryKey: ["wv-sales-monthly", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<SalesPeriodRow>("vw_monthly_revenue_actuals")
         .select("*")
-        .in("period", months);
+        .in("period", queryMonths);
       if (error) throw error;
       return (data ?? []) as SalesPeriodRow[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const budgetsQ = useQuery({
-    queryKey: ["wv-pl-budget-lines", months],
+    queryKey: ["wv-pl-budget-lines", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<PlBudgetLine>("pl_budget_lines")
         .select(
           "id,period,budget_year,section,line_key,line_label,kind,amount,source_workbook,source_sheet,source_label,sort_order",
         )
-        .in("period", months)
+        .in("period", queryMonths)
         .order("sort_order")
         .order("line_label");
       if (error) throw error;
       return (data ?? []) as PlBudgetLine[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const revenueBudgetsQ = useQuery({
-    queryKey: ["wv-revenue-budgets", months],
+    queryKey: ["wv-revenue-budgets", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<RevenueBudgetRow>("budgets")
         .select("id,period,channel,machine_id,amount,machines(display_name,afs_number)")
-        .in("period", months);
+        .in("period", queryMonths);
       if (error) throw error;
       return (data ?? []) as RevenueBudgetRow[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const afsBudgetTranchesQ = useQuery({
-    queryKey: ["wv-afs-budget-tranches", months],
+    queryKey: ["wv-afs-budget-tranches", queryMonths],
     queryFn: async () => {
-      const years = [...new Set(months.map((period) => Number(period.split("-")[0])))];
-      const tranchePeriods = years.flatMap(yearPeriods);
+      const years = [...new Set(queryMonths.map((period) => Number(period.split("-")[0])))];
+      const tranchePeriods = years.flatMap((trancheYear) => yearPeriods(String(trancheYear)));
       const { data, error } = await db
         .from<CashflowInputRecord>("cashflow_inputs")
         .select("id,period,budget_machine_count")
@@ -816,20 +835,20 @@ function ProfitLossPage() {
         } satisfies AfsBudgetTrancheRow;
       });
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const afsBudgetTrancheRevenuesQ = useQuery({
-    queryKey: ["wv-afs-budget-tranche-revenues", months],
+    queryKey: ["wv-afs-budget-tranche-revenues", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<AfsBudgetTrancheRevenueRow>("afs_budget_tranche_revenues")
         .select("id,cashflow_input_id,period,amount")
-        .in("period", months);
+        .in("period", queryMonths);
       if (error) throw error;
       return (data ?? []) as AfsBudgetTrancheRevenueRow[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const afsRentalAgreementsQ = useQuery({
@@ -847,31 +866,31 @@ function ProfitLossPage() {
   });
 
   const afsRentalInvoicesQ = useQuery({
-    queryKey: ["wv-afs-rental-invoices", months],
+    queryKey: ["wv-afs-rental-invoices", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<AfsRentalInvoiceRow>("afs_rental_invoices")
         .select("id,period,machine_id,subtotal_net,status")
-        .in("period", months)
+        .in("period", queryMonths)
         .neq("status", "canceled");
       if (error) throw error;
       return (data ?? []) as AfsRentalInvoiceRow[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const afsMachineActualsQ = useQuery({
-    queryKey: ["wv-afs-machine-actuals", months],
+    queryKey: ["wv-afs-machine-actuals", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<AfsMachineActualRow>("vw_monthly_machine")
         .select("period,machine_id,net_total,gross_total")
-        .in("period", months)
+        .in("period", queryMonths)
         .eq("channel", "bold_afs");
       if (error) throw error;
       return (data ?? []) as AfsMachineActualRow[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const costDriverRulesQ = useQuery({
@@ -891,20 +910,20 @@ function ProfitLossPage() {
   });
 
   const cashflowInputsQ = useQuery({
-    queryKey: ["cashflow-inputs", months],
+    queryKey: ["cashflow-inputs", queryMonths],
     queryFn: async () => {
       const { data, error } = await db
         .from<CashflowInputRecord>("cashflow_inputs")
         .select(
           "id,period,line_key,actual_amount,budget_amount,actual_machine_count,budget_machine_count,actual_afs_block_id,budget_afs_block_id",
         )
-        .in("period", months)
+        .in("period", queryMonths)
         .order("period")
         .order("line_key");
       if (error) throw error;
       return (data ?? []) as CashflowInputRecord[];
     },
-    enabled: months.length > 0,
+    enabled: queryMonths.length > 0,
   });
 
   const cashflowAfsBlocksQ = useQuery({
@@ -955,9 +974,9 @@ function ProfitLossPage() {
         revenueBudgets: revenueBudgetsQ.data ?? [],
         budgetTranches: afsBudgetTranchesQ.data ?? [],
         budgetTrancheRevenues: afsBudgetTrancheRevenuesQ.data ?? [],
-        months,
+        months: queryMonths,
       }),
-    [afsBudgetTrancheRevenuesQ.data, afsBudgetTranchesQ.data, months, revenueBudgetsQ.data],
+    [afsBudgetTrancheRevenuesQ.data, afsBudgetTranchesQ.data, queryMonths, revenueBudgetsQ.data],
   );
 
   const effectiveBudgetLines = useMemo(
@@ -970,7 +989,7 @@ function ProfitLossPage() {
         afsMachineActuals: afsMachineActualsQ.data ?? [],
         afsBudgetTranches: afsBudgetTranchesQ.data ?? [],
         afsBudgetTrancheRevenues: afsBudgetTrancheRevenuesQ.data ?? [],
-        months,
+        months: queryMonths,
         activeAfsCount: activeAfsCountQ.data ?? 0,
       }),
     [
@@ -982,7 +1001,7 @@ function ProfitLossPage() {
       costDriverRulesQ.data,
       budgetsQ.data,
       effectiveRevenueBudgets,
-      months,
+      queryMonths,
     ],
   );
 
@@ -1016,6 +1035,42 @@ function ProfitLossPage() {
         afsBlocks: cashflowAfsBlocksQ.data ?? [],
       }),
     [cashflowAfsBlocksQ.data, cashflowInputsQ.data, months, operatingResult],
+  );
+  const { rows: bankProfitLossRows, operatingResult: bankOperatingResult } = useMemo(
+    () =>
+      buildProfitLoss({
+        months: bankMonths,
+        glRows: glQ.data ?? [],
+        salesRows: salesQ.data ?? [],
+        afsRentalInvoices: afsRentalInvoicesQ.data ?? [],
+        budgetLines: effectiveBudgetLines,
+        revenueBudgets: effectiveRevenueBudgets,
+        accounts: accountsQ.data ?? [],
+      }),
+    [
+      accountsQ.data,
+      afsRentalInvoicesQ.data,
+      bankMonths,
+      effectiveBudgetLines,
+      effectiveRevenueBudgets,
+      glQ.data,
+      salesQ.data,
+    ],
+  );
+  const bankCashflowRows = useMemo(
+    () =>
+      buildCashflowReport({
+        months: bankMonths,
+        inputs: cashflowInputsQ.data ?? [],
+        operatingResult: bankOperatingResult,
+        afsBlocks: cashflowAfsBlocksQ.data ?? [],
+      }),
+    [
+      bankMonths,
+      bankOperatingResult,
+      cashflowAfsBlocksQ.data,
+      cashflowInputsQ.data,
+    ],
   );
   const revenueActualsByChannel = useMemo(
     () => buildRevenueActualsByChannel(salesQ.data ?? [], months),
@@ -1914,6 +1969,7 @@ function ProfitLossPage() {
           <TabsTrigger value="budget-inputs">Budget inputs</TabsTrigger>
           <TabsTrigger value="cashflow-inputs">Cashflow inputs</TabsTrigger>
           <TabsTrigger value="cashflow">Cashflow</TabsTrigger>
+          <TabsTrigger value="bank">Bankrapportage</TabsTrigger>
         </TabsList>
 
         <Card>
@@ -2184,6 +2240,18 @@ function ProfitLossPage() {
             totalLabel={totalLabel}
             viewMode={viewMode}
             year={year}
+          />
+        </TabsContent>
+
+        <TabsContent value="bank" className="space-y-4">
+          <BankReportingPanel
+            reportYear={bankReportYear}
+            actualThroughMonth={bankActualThroughMonth}
+            profitLossRows={bankProfitLossRows}
+            cashflowRows={bankCashflowRows}
+            loading={exportDataLoading}
+            onReportYearChange={setBankReportYear}
+            onActualThroughMonthChange={setBankActualThroughMonth}
           />
         </TabsContent>
       </Tabs>
@@ -3166,6 +3234,336 @@ function CashflowReportPanel({
   );
 }
 
+type BankStatementRow = {
+  key: string;
+  label: string;
+  section: string;
+  level: 0 | 1 | 2;
+  kind: "normal" | "heading" | "subtotal" | "result";
+  actual: Record<string, number>;
+  budget: Record<string, number>;
+};
+
+function BankReportingPanel({
+  reportYear,
+  actualThroughMonth,
+  profitLossRows,
+  cashflowRows,
+  loading,
+  onReportYearChange,
+  onActualThroughMonthChange,
+}: {
+  reportYear: string;
+  actualThroughMonth: string;
+  profitLossRows: PlRow[];
+  cashflowRows: CashflowReportRow[];
+  loading: boolean;
+  onReportYearChange: (year: string) => void;
+  onActualThroughMonthChange: (month: string) => void;
+}) {
+  const actualThroughPeriod = `${reportYear}-${actualThroughMonth}`;
+  const nextYear = String(Number(reportYear) + 1);
+  const actualThroughLabel = monthLabel(actualThroughPeriod);
+  const generatedLabel = new Date().toLocaleDateString("nl-NL", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+  const bankProfitLossRows: BankStatementRow[] = profitLossRows
+    .filter((row) => row.valueFormat !== "percentage")
+    .map((row) => ({
+      key: row.key,
+      label: row.label,
+      section: sectionLabel(row.section),
+      level: row.level,
+      kind: row.kind,
+      actual: row.values,
+      budget: row.budgetValues ?? blankValues([...yearPeriods(reportYear), ...yearPeriods(nextYear)]),
+    }));
+  const bankCashflowStatementRows: BankStatementRow[] = cashflowRows.map((row) => ({
+    key: row.key,
+    label: row.label,
+    section: row.section,
+    level: row.level,
+    kind: row.kind,
+    actual: row.values.actual,
+    budget: row.values.budget,
+  }));
+
+  return (
+    <div className="bank-report-print-root space-y-4">
+      <Card className="bank-report-no-print">
+        <CardHeader>
+          <CardTitle className="text-base">Bankrapportage instellen</CardTitle>
+          <CardDescription>
+            De jaarprognose gebruikt actuals t/m de gekozen maand en schakelt daarna automatisch
+            over op budget. Het opvolgende jaar wordt volledig als budget getoond.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Rapportagejaar">
+              <Select value={reportYear} onValueChange={onReportYearChange}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {yearOptions().map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={`Actuals rapporteren t/m (${reportYear})`}>
+              <Select value={actualThroughMonth} onValueChange={onActualThroughMonthChange}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {monthOptions().map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm lg:col-span-2">
+              <span className="font-medium">Rapportagelogica: </span>
+              actuals t/m {actualThroughLabel},{" "}
+              {actualThroughMonth === "12"
+                ? `daarna ${nextYear} volledig budget.`
+                : `budget van ${monthLabel(`${reportYear}-${String(Number(actualThroughMonth) + 1).padStart(2, "0")}`)} t/m december en ${nextYear} volledig budget.`}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <BankStatementSheet
+        view="profit-loss"
+        title="Resultaten & prognose"
+        description={`Actuals t/m ${actualThroughLabel}; daarna budget. Inclusief budget ${nextYear}.`}
+        reportYear={reportYear}
+        nextYear={nextYear}
+        actualThroughMonth={actualThroughMonth}
+        generatedLabel={generatedLabel}
+        rows={bankProfitLossRows}
+        loading={loading}
+      />
+      <BankStatementSheet
+        view="cashflow"
+        title="Cashflow & financieringsbehoefte"
+        description={`Operationele, investerings- en financieringscashflow op basis van actuals t/m ${actualThroughLabel} en budget daarna.`}
+        reportYear={reportYear}
+        nextYear={nextYear}
+        actualThroughMonth={actualThroughMonth}
+        generatedLabel={generatedLabel}
+        rows={bankCashflowStatementRows}
+        loading={loading}
+      />
+    </div>
+  );
+}
+
+function BankStatementSheet({
+  view,
+  title,
+  description,
+  reportYear,
+  nextYear,
+  actualThroughMonth,
+  generatedLabel,
+  rows,
+  loading,
+}: {
+  view: "profit-loss" | "cashflow";
+  title: string;
+  description: string;
+  reportYear: string;
+  nextYear: string;
+  actualThroughMonth: string;
+  generatedLabel: string;
+  rows: BankStatementRow[];
+  loading: boolean;
+}) {
+  const throughMonthLabel = shortMonthName(actualThroughMonth);
+  const remainingStartMonth = String(Math.min(12, Number(actualThroughMonth) + 1)).padStart(2, "0");
+  const remainingLabel =
+    actualThroughMonth === "12" ? "Geen restant" : `${shortMonthName(remainingStartMonth)}–dec`;
+
+  return (
+    <Card className="bank-report-sheet overflow-hidden" data-bank-report-view={view}>
+      <div className="bank-report-accent h-2 bg-emerald-700" />
+      <CardHeader className="border-b">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+              Daily Flowers · Bankrapportage
+            </div>
+            <CardTitle className="text-xl">{title}</CardTitle>
+            <CardDescription className="mt-1">{description}</CardDescription>
+          </div>
+          <Button
+            className="bank-report-no-print"
+            variant="outline"
+            onClick={() => printBankReport(view)}
+            disabled={loading}
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            {loading ? "Gegevens laden..." : "Print deze view"}
+          </Button>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+          <div className="rounded border px-3 py-2">
+            <div className="text-muted-foreground">Peildatum</div>
+            <div className="font-semibold">Actuals t/m {throughMonthLabel} {reportYear}</div>
+          </div>
+          <div className="rounded border px-3 py-2">
+            <div className="text-muted-foreground">Prognosebasis</div>
+            <div className="font-semibold">Actual + resterend budget</div>
+          </div>
+          <div className="rounded border px-3 py-2">
+            <div className="text-muted-foreground">Opvolgend jaar</div>
+            <div className="font-semibold">{nextYear} volledig budget</div>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="bank-report-table w-full min-w-[1120px] text-xs">
+            <thead>
+              <tr className="bg-slate-900 text-white">
+                <th className="w-48 px-3 py-2 text-left">Rubriek</th>
+                <th className="min-w-64 px-3 py-2 text-left">Regel</th>
+                <th className="px-3 py-2 text-right">Actual t/m {throughMonthLabel}</th>
+                <th className="px-3 py-2 text-right">Budget t/m {throughMonthLabel}</th>
+                <th className="px-3 py-2 text-right">Budget {remainingLabel}</th>
+                <th className="bg-emerald-800 px-3 py-2 text-right">Prognose {reportYear}</th>
+                <th className="px-3 py-2 text-right">Budget {reportYear}</th>
+                <th className="px-3 py-2 text-right">Verschil</th>
+                <th className="bg-emerald-800 px-3 py-2 text-right">Budget {nextYear}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const values = bankReportValues(row, reportYear, nextYear, actualThroughMonth);
+                const strong = row.kind !== "normal";
+                return (
+                  <tr
+                    key={row.key}
+                    className={cn(
+                      "border-t",
+                      row.kind === "result"
+                        ? "bg-emerald-50"
+                        : row.kind === "subtotal" || row.kind === "heading"
+                          ? "bg-slate-100"
+                          : "bg-white",
+                    )}
+                  >
+                    <td className="px-3 py-1.5">
+                      {row.level === 0 ? row.section : ""}
+                    </td>
+                    <td
+                      className={cn(
+                        "px-3 py-1.5",
+                        strong && "font-semibold",
+                        row.level === 1 && "pl-6",
+                        row.level === 2 && "pl-10 text-muted-foreground",
+                      )}
+                    >
+                      {row.label}
+                    </td>
+                    {row.kind === "heading" ? (
+                      <td colSpan={7} />
+                    ) : (
+                      <>
+                        <BankValue value={values.actualYtd} strong={strong} />
+                        <BankValue value={values.budgetYtd} strong={strong} />
+                        <BankValue value={values.budgetRemainder} strong={strong} />
+                        <BankValue value={values.forecast} strong className="bg-emerald-50/70" />
+                        <BankValue value={values.yearBudget} strong={strong} />
+                        <BankValue value={values.variance} strong={strong} variance />
+                        <BankValue value={values.nextYearBudget} strong className="bg-emerald-50/70" />
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+      <div className="bank-report-footer flex justify-between border-t px-6 py-3 text-[10px] text-muted-foreground">
+        <span>Daily Flowers · Vertrouwelijk</span>
+        <span>Gegenereerd op {generatedLabel}</span>
+      </div>
+    </Card>
+  );
+}
+
+function BankValue({
+  value,
+  strong = false,
+  variance = false,
+  className,
+}: {
+  value: number;
+  strong?: boolean;
+  variance?: boolean;
+  className?: string;
+}) {
+  return (
+    <td
+      className={cn(
+        "whitespace-nowrap px-3 py-1.5 text-right tabular-nums",
+        strong && "font-semibold",
+        variance && value < -0.005 && "text-red-700",
+        variance && value > 0.005 && "text-emerald-700",
+        className,
+      )}
+    >
+      {formatEUR(value)}
+    </td>
+  );
+}
+
+function bankReportValues(
+  row: BankStatementRow,
+  reportYear: string,
+  nextYear: string,
+  actualThroughMonth: string,
+) {
+  const reportPeriods = yearPeriods(reportYear);
+  const cutoff = `${reportYear}-${actualThroughMonth}`;
+  const actualPeriods = reportPeriods.filter((period) => period <= cutoff);
+  const remainingPeriods = reportPeriods.filter((period) => period > cutoff);
+  const actualYtd = sumValues(row.actual, actualPeriods);
+  const budgetYtd = sumValues(row.budget, actualPeriods);
+  const budgetRemainder = sumValues(row.budget, remainingPeriods);
+  const forecast = actualYtd + budgetRemainder;
+  const yearBudget = budgetYtd + budgetRemainder;
+  return {
+    actualYtd,
+    budgetYtd,
+    budgetRemainder,
+    forecast,
+    yearBudget,
+    variance: forecast - yearBudget,
+    nextYearBudget: sumValues(row.budget, yearPeriods(nextYear)),
+  };
+}
+
+function printBankReport(view: "profit-loss" | "cashflow") {
+  document.body.dataset.bankPrintView = view;
+  const cleanup = () => {
+    delete document.body.dataset.bankPrintView;
+  };
+  window.addEventListener("afterprint", cleanup, { once: true });
+  window.requestAnimationFrame(() => window.print());
+}
+
 function profitLossStickyCellClass(row: PlRow, column: "section" | "label") {
   const rowBackground =
     row.kind === "subtotal" || row.kind === "result"
@@ -3861,7 +4259,7 @@ function buildAfsRentalBudgetLines({
     months,
   });
 
-  return months.map((period) => {
+  return months.flatMap((period) => {
     const activeAgreements = activeAfsRentalAgreementsForPeriod(agreements, period);
     const amount = activeAgreements.reduce((sum, agreement) => {
       const turnover =
@@ -3869,20 +4267,38 @@ function buildAfsRentalBudgetLines({
       return sum + calculateAfsRentalCost(agreement, turnover);
     }, 0);
 
-    return {
-      id: `afs-rent:${period}`,
-      period,
-      budget_year: Number(period.split("-")[0]),
-      section: "housing",
-      line_key: AFS_RENT_BUDGET_LINE_KEY,
-      line_label: AFS_RENT_LINE_LABEL,
-      kind: "cost" as const,
-      amount: roundMoney(amount),
-      source_workbook: AFS_RENT_SOURCE_WORKBOOK,
-      source_sheet: "AFS huurafspraken",
-      source_label: "Vaste fee + energie + omzetafhankelijke huur",
-      sort_order: 430,
-    };
+    const retainedAmount = Math.min(AFS_RENT_MONTHLY_RETAINED_AMOUNT, amount);
+    const costOfGoodsAmount = Math.max(0, amount - retainedAmount);
+    return [
+      {
+        id: `afs-rent:${period}`,
+        period,
+        budget_year: Number(period.split("-")[0]),
+        section: "housing",
+        line_key: AFS_RENT_BUDGET_LINE_KEY,
+        line_label: `${AFS_RENT_LINE_LABEL} (basis)`,
+        kind: "cost" as const,
+        amount: roundMoney(retainedAmount),
+        source_workbook: AFS_RENT_SOURCE_WORKBOOK,
+        source_sheet: "AFS huurafspraken",
+        source_label: `Maandelijks basisbedrag van maximaal ${formatEUR(AFS_RENT_MONTHLY_RETAINED_AMOUNT)}`,
+        sort_order: 430,
+      },
+      {
+        id: `afs-rent-cogs:${period}`,
+        period,
+        budget_year: Number(period.split("-")[0]),
+        section: "cost_of_goods",
+        line_key: AFS_RENT_COST_OF_GOODS_LINE_KEY,
+        line_label: `${AFS_RENT_LINE_LABEL} naar kostprijs`,
+        kind: "cost" as const,
+        amount: roundMoney(costOfGoodsAmount),
+        source_workbook: AFS_RENT_SOURCE_WORKBOOK,
+        source_sheet: "AFS huurafspraken",
+        source_label: `Huur boven ${formatEUR(AFS_RENT_MONTHLY_RETAINED_AMOUNT)} per maand`,
+        sort_order: 295,
+      },
+    ];
   });
 }
 
@@ -3931,7 +4347,7 @@ function buildAfsBudgetTrancheRentalBudgetLines({
       id: `afs-budget-machine-rent:${period}`,
       period,
       budget_year: Number(period.split("-")[0]),
-      section: "housing",
+      section: "cost_of_goods",
       line_key: AFS_BUDGET_MACHINE_RENT_LINE_KEY,
       line_label: AFS_BUDGET_MACHINE_RENT_LINE_LABEL,
       kind: "cost" as const,
@@ -3939,7 +4355,7 @@ function buildAfsBudgetTrancheRentalBudgetLines({
       source_workbook: AFS_RENT_SOURCE_WORKBOOK,
       source_sheet: "AFS budgettranches",
       source_label: "Gemiddelde bestaande huurafspraak per machine in de nieuwe tranches",
-      sort_order: 431,
+      sort_order: 296,
     };
   });
 }
@@ -4216,7 +4632,9 @@ function buildProfitLoss({
   const budgetRowsBySection = budgetOnlyRowsBySection(
     budgetLines,
     months,
-    hasAfsRentalInvoiceValues ? new Set([AFS_RENT_BUDGET_LINE_KEY]) : undefined,
+    hasAfsRentalInvoiceValues
+      ? new Set([AFS_RENT_BUDGET_LINE_KEY, AFS_RENT_COST_OF_GOODS_LINE_KEY])
+      : undefined,
   );
 
   for (const row of salesRows) {
@@ -4318,13 +4736,57 @@ function buildProfitLoss({
   }
 
   if (hasAfsRentalInvoiceValues) {
+    const retainedRentalValues = blankValues(months);
+    const costOfGoodsRentalValues = blankValues(months);
+    for (const period of months) {
+      const amount = Math.max(0, afsRentalInvoiceValues[period] ?? 0);
+      retainedRentalValues[period] = Math.min(AFS_RENT_MONTHLY_RETAINED_AMOUNT, amount);
+      costOfGoodsRentalValues[period] = Math.max(0, amount - retainedRentalValues[period]);
+    }
     nonRevenueAccounts.set("synthetic-afs-rental-invoices", {
-      label: AFS_RENT_LINE_LABEL,
+      label: `${AFS_RENT_LINE_LABEL} (basis)`,
       section: "housing",
       sort: 430,
-      values: afsRentalInvoiceValues,
+      values: retainedRentalValues,
       accountCode: "afs-rental-invoices",
       budgetLineKey: AFS_RENT_BUDGET_LINE_KEY,
+    });
+    nonRevenueAccounts.set("synthetic-afs-rental-invoices-cogs", {
+      label: `${AFS_RENT_LINE_LABEL} naar kostprijs`,
+      section: "cost_of_goods",
+      sort: 295,
+      values: costOfGoodsRentalValues,
+      accountCode: "afs-rental-invoices-cogs",
+      budgetLineKey: AFS_RENT_COST_OF_GOODS_LINE_KEY,
+    });
+  }
+
+  const personnelActualPeriods = new Set(
+    glRows
+      .filter((row) => row.pl_section === "personnel" && Math.abs(Number(row.amount ?? 0)) >= 0.005)
+      .map((row) => row.period),
+  );
+  if (personnelActualPeriods.size > 0) {
+    const deliveryCostValues = blankValues(months);
+    const personnelCorrectionValues = blankValues(months);
+    for (const period of months) {
+      if (!personnelActualPeriods.has(period)) continue;
+      deliveryCostValues[period] = AFS_DELIVERY_PERSONNEL_MONTHLY_TRANSFER;
+      personnelCorrectionValues[period] = -AFS_DELIVERY_PERSONNEL_MONTHLY_TRANSFER;
+    }
+    nonRevenueAccounts.set("synthetic-afs-delivery-personnel-cogs", {
+      label: "AFS bezorgers vanuit personeelskosten",
+      section: "cost_of_goods",
+      sort: 294,
+      values: deliveryCostValues,
+      accountCode: "afs-delivery-personnel-cogs",
+    });
+    nonRevenueAccounts.set("synthetic-afs-delivery-personnel-correction", {
+      label: "Herclassificatie AFS bezorgers naar kostprijs",
+      section: "personnel",
+      sort: 399,
+      values: personnelCorrectionValues,
+      accountCode: "afs-delivery-personnel-correction",
     });
   }
 
@@ -4441,7 +4903,7 @@ function buildProfitLoss({
       currentSection = account.section;
     }
     const detailByPeriod =
-      account.accountCode === "afs-rental-invoices"
+      account.accountCode.startsWith("afs-rental-invoices")
         ? undefined
         : Object.fromEntries(
             months.map((period) => [
@@ -4468,7 +4930,7 @@ function buildProfitLoss({
         account.budgetLineKey ? budgetByLineKey.get(account.budgetLineKey) : undefined,
       ),
     );
-    if (account.accountCode !== "afs-rental-invoices")
+    if (!account.accountCode.startsWith("afs-rental-invoices") && !account.accountCode.startsWith("afs-delivery-personnel-"))
       sectionAccountCodes.push(account.accountCode);
     for (const period of months) sectionValues[period] += account.values[period] ?? 0;
   }
