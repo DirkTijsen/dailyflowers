@@ -39,11 +39,16 @@ import {
   type GlAccount,
 } from "@/lib/pl";
 import {
-  AFS_INVESTMENT_INPUTS,
+  AFS_INVESTMENT_COMPONENTS,
+  AFS_MACHINE_INPUT_KEY,
   CASHFLOW_INPUT_DEFINITIONS,
+  afsInvestmentAmountPerMachine,
+  afsInvestmentPackageTotal,
+  buildAfsInvestmentValues,
   buildCashflowReport,
   cashflowInputValues,
-  sumCashflowValues,
+  type CashflowAfsBlock,
+  type CashflowAfsBlockField,
   type CashflowInputDefinition,
   type CashflowInputMetric,
   type CashflowInputRecord,
@@ -810,7 +815,9 @@ function ProfitLossPage() {
     queryFn: async () => {
       const { data, error } = await db
         .from<CashflowInputRecord>("cashflow_inputs")
-        .select("id,period,line_key,actual_amount,budget_amount")
+        .select(
+          "id,period,line_key,actual_amount,budget_amount,actual_machine_count,budget_machine_count,actual_afs_block_id,budget_afs_block_id",
+        )
         .in("period", months)
         .order("period")
         .order("line_key");
@@ -818,6 +825,20 @@ function ProfitLossPage() {
       return (data ?? []) as CashflowInputRecord[];
     },
     enabled: months.length > 0,
+  });
+
+  const cashflowAfsBlocksQ = useQuery({
+    queryKey: ["cashflow-afs-blocks"],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<CashflowAfsBlock>("cashflow_afs_blocks")
+        .select(
+          "id,block_number,reference_machine_count,afs_amount,roofs_140_amount,shipping_amount,quality_check_amount,installation_amount,kpn_mollie_amount,location_renovation_amount",
+        )
+        .order("block_number");
+      if (error) throw error;
+      return (data ?? []) as CashflowAfsBlock[];
+    },
   });
 
   const activeAfsCountQ = useQuery({
@@ -881,8 +902,9 @@ function ProfitLossPage() {
         months,
         inputs: cashflowInputsQ.data ?? [],
         operatingResult,
+        afsBlocks: cashflowAfsBlocksQ.data ?? [],
       }),
-    [cashflowInputsQ.data, months, operatingResult],
+    [cashflowAfsBlocksQ.data, cashflowInputsQ.data, months, operatingResult],
   );
   const revenueActualsByChannel = useMemo(
     () => buildRevenueActualsByChannel(salesQ.data ?? [], months),
@@ -895,7 +917,7 @@ function ProfitLossPage() {
 
   useEffect(() => {
     setCashflowDrafts({});
-  }, [cashflowInputsQ.data, months]);
+  }, [cashflowAfsBlocksQ.data, cashflowInputsQ.data, months]);
 
   function toggleColumn(column: PlMetricColumn) {
     setVisibleColumns((current) => {
@@ -976,6 +998,160 @@ function ProfitLossPage() {
       });
     } finally {
       setSavingCashflowCell(null);
+    }
+  }
+
+  async function saveAfsMachineCount(
+    period: string,
+    metric: CashflowInputMetric,
+    rawValue: string,
+  ) {
+    const count = parseBudgetInput(rawValue);
+    const cellKey = cashflowMachineCountCellKey(period, metric);
+    const existing = (cashflowInputsQ.data ?? []).find(
+      (input) => input.line_key === AFS_MACHINE_INPUT_KEY && input.period === period,
+    );
+    const existingCount = Number(
+      metric === "actual"
+        ? (existing?.actual_machine_count ?? 0)
+        : (existing?.budget_machine_count ?? 0),
+    );
+    if (!Number.isInteger(count) || count < 0) {
+      toast.error("Aantal machines moet een positief heel getal zijn");
+      setCashflowDrafts((current) => ({
+        ...current,
+        [cellKey]: formatMachineCountInput(existingCount),
+      }));
+      return;
+    }
+    if (count === existingCount) return;
+
+    setSavingCashflowCell(cellKey);
+    try {
+      const { error } = await db.from("cashflow_inputs").upsert(
+        {
+          period,
+          line_key: AFS_MACHINE_INPUT_KEY,
+          actual_amount: Number(existing?.actual_amount ?? 0),
+          budget_amount: Number(existing?.budget_amount ?? 0),
+          actual_machine_count:
+            metric === "actual" ? count : Number(existing?.actual_machine_count ?? 0),
+          budget_machine_count:
+            metric === "budget" ? count : Number(existing?.budget_machine_count ?? 0),
+          actual_afs_block_id: existing?.actual_afs_block_id ?? null,
+          budget_afs_block_id: existing?.budget_afs_block_id ?? null,
+        },
+        { onConflict: "period,line_key" },
+      );
+      if (error) throw error;
+      qc.invalidateQueries({ queryKey: ["cashflow-inputs"] });
+      toast.success("Aantal AFS'en opgeslagen");
+    } catch (error) {
+      toast.error("Aantal AFS'en opslaan mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingCashflowCell(null);
+    }
+  }
+
+  async function saveAfsBlockSelection(
+    period: string,
+    metric: CashflowInputMetric,
+    blockId: string,
+  ) {
+    const existing = (cashflowInputsQ.data ?? []).find(
+      (input) => input.line_key === AFS_MACHINE_INPUT_KEY && input.period === period,
+    );
+    try {
+      const { error } = await db.from("cashflow_inputs").upsert(
+        {
+          period,
+          line_key: AFS_MACHINE_INPUT_KEY,
+          actual_amount: Number(existing?.actual_amount ?? 0),
+          budget_amount: Number(existing?.budget_amount ?? 0),
+          actual_machine_count: Number(existing?.actual_machine_count ?? 0),
+          budget_machine_count: Number(existing?.budget_machine_count ?? 0),
+          actual_afs_block_id:
+            metric === "actual" ? blockId : (existing?.actual_afs_block_id ?? null),
+          budget_afs_block_id:
+            metric === "budget" ? blockId : (existing?.budget_afs_block_id ?? null),
+        },
+        { onConflict: "period,line_key" },
+      );
+      if (error) throw error;
+      qc.invalidateQueries({ queryKey: ["cashflow-inputs"] });
+      toast.success("AFS-blok geselecteerd");
+    } catch (error) {
+      toast.error("AFS-blok selecteren mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function saveAfsBlockSetting(
+    block: CashflowAfsBlock,
+    field: CashflowAfsBlockField,
+    rawValue: string,
+  ) {
+    const value = parseBudgetInput(rawValue);
+    const cellKey = cashflowAfsBlockCellKey(block.id, field);
+    const currentValue = Number(block[field] ?? 0);
+    const isMachineCount = field === "reference_machine_count";
+    const invalid =
+      !Number.isFinite(value) ||
+      value < 0 ||
+      (isMachineCount && (!Number.isInteger(value) || value <= 0));
+    if (invalid) {
+      toast.error(
+        isMachineCount
+          ? "Referentie-aantal moet een heel getal groter dan 0 zijn"
+          : "Vul een positief bedrag in",
+      );
+      setCashflowDrafts((drafts) => ({
+        ...drafts,
+        [cellKey]: isMachineCount
+          ? formatMachineCountInput(currentValue)
+          : formatAmountInput(currentValue),
+      }));
+      return;
+    }
+    if (Math.abs(value - currentValue) < 0.005) return;
+
+    setSavingCashflowCell(cellKey);
+    try {
+      const { error } = await db
+        .from("cashflow_afs_blocks")
+        .update({ [field]: value })
+        .eq("id", block.id);
+      if (error) throw error;
+      qc.invalidateQueries({ queryKey: ["cashflow-afs-blocks"] });
+      toast.success("AFS-investeringsparameter opgeslagen");
+    } catch (error) {
+      toast.error("AFS-investeringsparameter opslaan mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingCashflowCell(null);
+    }
+  }
+
+  async function addAfsBlock() {
+    const nextNumber =
+      Math.max(0, ...(cashflowAfsBlocksQ.data ?? []).map((block) => Number(block.block_number))) +
+      1;
+    try {
+      const { error } = await db.from("cashflow_afs_blocks").insert({
+        block_number: nextNumber,
+        reference_machine_count: 1,
+      });
+      if (error) throw error;
+      qc.invalidateQueries({ queryKey: ["cashflow-afs-blocks"] });
+      toast.success(`AFS-blok ${nextNumber} toegevoegd`);
+    } catch (error) {
+      toast.error("AFS-blok toevoegen mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1554,10 +1730,15 @@ function ProfitLossPage() {
           <CashflowInputsPanel
             months={months}
             inputs={cashflowInputsQ.data ?? []}
+            afsBlocks={cashflowAfsBlocksQ.data ?? []}
             drafts={cashflowDrafts}
             savingCell={savingCashflowCell}
             onDraftChange={updateCashflowDraft}
             onSave={saveCashflowInput}
+            onSaveAfsMachineCount={saveAfsMachineCount}
+            onSaveAfsBlockSelection={saveAfsBlockSelection}
+            onSaveAfsBlockSetting={saveAfsBlockSetting}
+            onAddAfsBlock={addAfsBlock}
           />
         </TabsContent>
 
@@ -1807,16 +1988,118 @@ function BudgetInputsPanel({
   );
 }
 
-function CashflowInputsPanel({
-  months,
-  inputs,
+function AfsInvestmentBlocksCard({
+  blocks,
   drafts,
   savingCell,
   onDraftChange,
   onSave,
+  onAdd,
+}: {
+  blocks: CashflowAfsBlock[];
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (block: CashflowAfsBlock, field: CashflowAfsBlockField, rawValue: string) => void;
+  onAdd: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle className="text-base">AFS-investeringsblokken</CardTitle>
+          <CardDescription>
+            Leg per blok het totale pakket en het bijbehorende aantal machines vast. Het bedrag per
+            machine wordt automatisch berekend.
+          </CardDescription>
+        </div>
+        <Button type="button" variant="outline" onClick={onAdd}>
+          + Blok toevoegen
+        </Button>
+      </CardHeader>
+      <CardContent className="grid gap-4 xl:grid-cols-2">
+        {blocks.map((block) => {
+          const total = afsInvestmentPackageTotal(block);
+          const amountPerMachine = afsInvestmentAmountPerMachine(block);
+          const machineCountKey = cashflowAfsBlockCellKey(block.id, "reference_machine_count");
+          return (
+            <div key={block.id} className="overflow-hidden rounded-md border">
+              <div className="flex items-center justify-between gap-3 bg-muted/30 px-3 py-2">
+                <div className="font-semibold">Blok {block.block_number}</div>
+                <div className="text-right text-xs text-muted-foreground">
+                  <div>Totaal {formatEUR(total)}</div>
+                  <div>Per machine {formatEUR(amountPerMachine)}</div>
+                </div>
+              </div>
+              <div className="divide-y">
+                {AFS_INVESTMENT_COMPONENTS.map((component) => {
+                  const cellKey = cashflowAfsBlockCellKey(block.id, component.field);
+                  return (
+                    <div
+                      key={component.key}
+                      className="grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 px-3 py-2"
+                    >
+                      <div className="text-sm">{component.label}</div>
+                      <BudgetInputField
+                        cellKey={cellKey}
+                        cell={{ amount: Number(block[component.field] ?? 0) }}
+                        draft={drafts[cellKey]}
+                        saving={savingCell === cellKey}
+                        onDraftChange={onDraftChange}
+                        onSave={(rawValue) => onSave(block, component.field, rawValue)}
+                      />
+                    </div>
+                  );
+                })}
+                <div className="grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 bg-muted/20 px-3 py-2">
+                  <div>
+                    <div className="text-sm font-medium">Aantal machines in dit pakket</div>
+                    <div className="text-xs text-muted-foreground">
+                      Basis voor de prijs per machine
+                    </div>
+                  </div>
+                  <Input
+                    value={
+                      drafts[machineCountKey] ??
+                      formatMachineCountInput(Number(block.reference_machine_count))
+                    }
+                    inputMode="numeric"
+                    disabled={savingCell === machineCountKey}
+                    className="h-8 text-right tabular-nums"
+                    onChange={(event) => onDraftChange(machineCountKey, event.target.value)}
+                    onBlur={(event) =>
+                      onSave(block, "reference_machine_count", event.currentTarget.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CashflowInputsPanel({
+  months,
+  inputs,
+  afsBlocks,
+  drafts,
+  savingCell,
+  onDraftChange,
+  onSave,
+  onSaveAfsMachineCount,
+  onSaveAfsBlockSelection,
+  onSaveAfsBlockSetting,
+  onAddAfsBlock,
 }: {
   months: string[];
   inputs: CashflowInputRecord[];
+  afsBlocks: CashflowAfsBlock[];
   drafts: Record<string, string>;
   savingCell: string | null;
   onDraftChange: (cellKey: string, value: string) => void;
@@ -1826,16 +2109,18 @@ function CashflowInputsPanel({
     metric: CashflowInputMetric,
     rawValue: string,
   ) => void;
+  onSaveAfsMachineCount: (period: string, metric: CashflowInputMetric, rawValue: string) => void;
+  onSaveAfsBlockSelection: (period: string, metric: CashflowInputMetric, blockId: string) => void;
+  onSaveAfsBlockSetting: (
+    block: CashflowAfsBlock,
+    field: CashflowAfsBlockField,
+    rawValue: string,
+  ) => void;
+  onAddAfsBlock: () => void;
 }) {
-  const afsTotal = useMemo(
-    () =>
-      sumCashflowValues(
-        AFS_INVESTMENT_INPUTS.map((definition) =>
-          cashflowInputValues(inputs, definition.key, months),
-        ),
-        months,
-      ),
-    [inputs, months],
+  const afsCashOut = useMemo(
+    () => buildAfsInvestmentValues(inputs, afsBlocks, months),
+    [afsBlocks, inputs, months],
   );
   const tableMinWidth = Math.max(1100, 360 + months.length * 264 + 264);
   const groups: Array<{
@@ -1861,114 +2146,240 @@ function CashflowInputsPanel({
   ];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Cashflow inputs</CardTitle>
-        <CardDescription>
-          Voer positieve bedragen in. Uitgaande kasstromen worden in de cashflow automatisch
-          negatief weergegeven.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
-            <thead className="bg-muted/50 text-left">
-              <tr>
-                <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")} rowSpan={2}>
-                  Rubriek
-                </th>
-                <th
-                  className={cn(
-                    BUDGET_STICKY_HEADER_SECOND,
-                    STICKY_SEPARATOR_SHADOW,
-                    "font-medium",
-                  )}
-                  rowSpan={2}
-                >
-                  Cashflowregel
-                </th>
-                {months.map((period) => (
-                  <th
-                    key={period}
-                    className="border-l px-3 py-2 text-center font-medium"
-                    colSpan={2}
-                  >
-                    <span className="block">{monthHeaderLabel(period, true)}</span>
-                    <span className="block text-[11px] font-normal text-muted-foreground">
-                      {quarterHeaderLabel(period, true)}
-                    </span>
+    <>
+      <AfsInvestmentBlocksCard
+        blocks={afsBlocks}
+        drafts={drafts}
+        savingCell={savingCell}
+        onDraftChange={onDraftChange}
+        onSave={onSaveAfsBlockSetting}
+        onAdd={onAddAfsBlock}
+      />
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cashflow inputs per maand</CardTitle>
+          <CardDescription>
+            Vul voor AFS alleen het aantal machines in. De cash-out wordt berekend met het
+            investeringsbedrag per machine uit het blok hierboven.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
+              <thead className="bg-muted/50 text-left">
+                <tr>
+                  <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")} rowSpan={2}>
+                    Rubriek
                   </th>
-                ))}
-                <th className="border-l px-3 py-2 text-center font-medium" colSpan={2}>
-                  Totaal
-                </th>
-              </tr>
-              <tr>
-                {months.map((period) => (
-                  <Fragment key={`${period}-cashflow-input-headers`}>
-                    <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
-                    <th className="px-3 py-2 text-right font-medium">Budget</th>
+                  <th
+                    className={cn(
+                      BUDGET_STICKY_HEADER_SECOND,
+                      STICKY_SEPARATOR_SHADOW,
+                      "font-medium",
+                    )}
+                    rowSpan={2}
+                  >
+                    Cashflowregel
+                  </th>
+                  {months.map((period) => (
+                    <th
+                      key={period}
+                      className="border-l px-3 py-2 text-center font-medium"
+                      colSpan={2}
+                    >
+                      <span className="block">{monthHeaderLabel(period, true)}</span>
+                      <span className="block text-[11px] font-normal text-muted-foreground">
+                        {quarterHeaderLabel(period, true)}
+                      </span>
+                    </th>
+                  ))}
+                  <th className="border-l px-3 py-2 text-center font-medium" colSpan={2}>
+                    Totaal
+                  </th>
+                </tr>
+                <tr>
+                  {months.map((period) => (
+                    <Fragment key={`${period}-cashflow-input-headers`}>
+                      <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
+                      <th className="px-3 py-2 text-right font-medium">Budget</th>
+                    </Fragment>
+                  ))}
+                  <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
+                  <th className="px-3 py-2 text-right font-medium">Budget</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((group) => (
+                  <Fragment key={group.key}>
+                    <tr className="border-t bg-muted/30">
+                      <td className={cn(BUDGET_STICKY_BODY_FIRST, "bg-muted/30 font-semibold")}>
+                        <Badge variant="outline">
+                          {group.key === "investments" ? "Investeringen" : "Financiering"}
+                        </Badge>
+                      </td>
+                      <td
+                        className={cn(
+                          BUDGET_STICKY_BODY_SECOND,
+                          STICKY_SEPARATOR_SHADOW,
+                          "bg-muted/30 font-semibold",
+                        )}
+                      >
+                        {group.label}
+                      </td>
+                      <td colSpan={months.length * 2 + 2} />
+                    </tr>
+                    {group.key === "investments" && (
+                      <>
+                        <CashflowAfsMachineCountRow
+                          months={months}
+                          inputs={inputs}
+                          afsBlocks={afsBlocks}
+                          drafts={drafts}
+                          savingCell={savingCell}
+                          onDraftChange={onDraftChange}
+                          onSave={onSaveAfsMachineCount}
+                          onSelectBlock={onSaveAfsBlockSelection}
+                        />
+                        <CashflowInputTotalRow
+                          label="Cash-out investering AFS'en"
+                          description="Automatisch: bedrag per machine × aantal machines"
+                          months={months}
+                          values={afsCashOut}
+                        />
+                      </>
+                    )}
+                    {group.definitions.map((definition) => (
+                      <CashflowInputRow
+                        key={definition.key}
+                        definition={definition}
+                        months={months}
+                        inputs={inputs}
+                        drafts={drafts}
+                        savingCell={savingCell}
+                        onDraftChange={onDraftChange}
+                        onSave={onSave}
+                      />
+                    ))}
                   </Fragment>
                 ))}
-                <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
-                <th className="px-3 py-2 text-right font-medium">Budget</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map((group) => (
-                <Fragment key={group.key}>
-                  <tr className="border-t bg-muted/30">
-                    <td className={cn(BUDGET_STICKY_BODY_FIRST, "bg-muted/30 font-semibold")}>
-                      <Badge variant="outline">
-                        {group.key === "investments" ? "Investeringen" : "Financiering"}
-                      </Badge>
-                    </td>
-                    <td
-                      className={cn(
-                        BUDGET_STICKY_BODY_SECOND,
-                        STICKY_SEPARATOR_SHADOW,
-                        "bg-muted/30 font-semibold",
-                      )}
-                    >
-                      {group.label}
-                    </td>
-                    <td colSpan={months.length * 2 + 2} />
-                  </tr>
-                  {group.key === "investments" && (
-                    <CashflowInputTotalRow
-                      label="Investering AFS'en"
-                      months={months}
-                      values={afsTotal}
-                    />
-                  )}
-                  {group.definitions.map((definition) => (
-                    <CashflowInputRow
-                      key={definition.key}
-                      definition={definition}
-                      months={months}
-                      inputs={inputs}
-                      drafts={drafts}
-                      savingCell={savingCell}
-                      onDraftChange={onDraftChange}
-                      onSave={onSave}
-                    />
-                  ))}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function CashflowAfsMachineCountRow({
+  months,
+  inputs,
+  afsBlocks,
+  drafts,
+  savingCell,
+  onDraftChange,
+  onSave,
+  onSelectBlock,
+}: {
+  months: string[];
+  inputs: CashflowInputRecord[];
+  afsBlocks: CashflowAfsBlock[];
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (period: string, metric: CashflowInputMetric, rawValue: string) => void;
+  onSelectBlock: (period: string, metric: CashflowInputMetric, blockId: string) => void;
+}) {
+  const machineCounts = {
+    actual: Object.fromEntries(months.map((period) => [period, 0])),
+    budget: Object.fromEntries(months.map((period) => [period, 0])),
+  };
+  for (const input of inputs) {
+    if (input.line_key !== AFS_MACHINE_INPUT_KEY || !months.includes(input.period)) continue;
+    machineCounts.actual[input.period] = Number(input.actual_machine_count ?? 0);
+    machineCounts.budget[input.period] = Number(input.budget_machine_count ?? 0);
+  }
+
+  return (
+    <tr className="group border-t hover:bg-muted/30">
+      <td className={BUDGET_STICKY_BODY_FIRST} />
+      <td className={cn(BUDGET_STICKY_BODY_SECOND, STICKY_SEPARATOR_SHADOW, "font-medium")}>
+        AFS&apos;en: blok en aantal
+        <div className="text-xs font-normal text-muted-foreground">
+          Kies per kolom het pakket en vul het aantal machines in
         </div>
-      </CardContent>
-    </Card>
+      </td>
+      {months.map((period) => {
+        const input = inputs.find(
+          (item) => item.line_key === AFS_MACHINE_INPUT_KEY && item.period === period,
+        );
+        return (
+          <Fragment key={period}>
+            {(["actual", "budget"] as CashflowInputMetric[]).map((metric, index) => {
+              const selectedBlockId =
+                metric === "actual" ? input?.actual_afs_block_id : input?.budget_afs_block_id;
+              const selectedBlock = afsBlocks.find((block) => block.id === selectedBlockId);
+              const count = Number(
+                metric === "actual"
+                  ? (input?.actual_machine_count ?? 0)
+                  : (input?.budget_machine_count ?? 0),
+              );
+              const cellKey = cashflowMachineCountCellKey(period, metric);
+              return (
+                <td key={metric} className={cn(index === 0 && "border-l", "px-2 py-1 align-top")}>
+                  <Select
+                    value={selectedBlockId ?? undefined}
+                    onValueChange={(blockId) => onSelectBlock(period, metric, blockId)}
+                  >
+                    <SelectTrigger className="mb-1 h-8 min-w-28">
+                      <SelectValue placeholder="Kies blok" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {afsBlocks.map((block) => (
+                        <SelectItem key={block.id} value={block.id}>
+                          Blok {block.block_number}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    value={drafts[cellKey] ?? formatMachineCountInput(count)}
+                    inputMode="numeric"
+                    disabled={savingCell === cellKey}
+                    className="h-8 min-w-28 text-right tabular-nums"
+                    onChange={(event) => onDraftChange(cellKey, event.target.value)}
+                    onBlur={(event) => onSave(period, metric, event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                    }}
+                  />
+                  <div className="mt-1 whitespace-nowrap text-right text-[11px] text-muted-foreground">
+                    Cash-out {formatEUR(-count * afsInvestmentAmountPerMachine(selectedBlock))}
+                  </div>
+                </td>
+              );
+            })}
+          </Fragment>
+        );
+      })}
+      <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+        {sumValues(machineCounts.actual, months)}
+      </td>
+      <td className="px-3 py-2 text-right font-semibold tabular-nums">
+        {sumValues(machineCounts.budget, months)}
+      </td>
+    </tr>
   );
 }
 
 function CashflowInputTotalRow({
   label,
+  description,
   months,
   values,
 }: {
   label: string;
+  description: string;
   months: string[];
   values: CashflowValues;
 }) {
@@ -1983,9 +2394,7 @@ function CashflowInputTotalRow({
         )}
       >
         {label}
-        <div className="text-xs font-normal text-muted-foreground">
-          Automatisch totaal van de onderdelen hieronder
-        </div>
+        <div className="text-xs font-normal text-muted-foreground">{description}</div>
       </td>
       {months.map((period) => (
         <Fragment key={period}>
@@ -2972,6 +3381,14 @@ function plBudgetCellKey(rowKey: string, period: string) {
 
 function cashflowInputCellKey(lineKey: string, period: string, metric: CashflowInputMetric) {
   return `cashflow-input|${lineKey}|${period}|${metric}`;
+}
+
+function cashflowMachineCountCellKey(period: string, metric: CashflowInputMetric) {
+  return `cashflow-afs-machines|${period}|${metric}`;
+}
+
+function cashflowAfsBlockCellKey(blockId: string, field: CashflowAfsBlockField) {
+  return `cashflow-afs-block|${blockId}|${field}`;
 }
 
 function costDriverCellKey(

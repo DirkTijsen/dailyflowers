@@ -6,6 +6,31 @@ export type CashflowInputRecord = {
   line_key: string;
   actual_amount: number | string;
   budget_amount: number | string;
+  actual_machine_count: number | string;
+  budget_machine_count: number | string;
+  actual_afs_block_id: string | null;
+  budget_afs_block_id: string | null;
+};
+
+export type CashflowAfsBlock = {
+  id: string;
+  block_number: number | string;
+  reference_machine_count: number | string;
+  afs_amount: number | string;
+  roofs_140_amount: number | string;
+  shipping_amount: number | string;
+  quality_check_amount: number | string;
+  installation_amount: number | string;
+  kpn_mollie_amount: number | string;
+  location_renovation_amount: number | string;
+};
+
+export type CashflowAfsBlockField = Exclude<keyof CashflowAfsBlock, "id" | "block_number">;
+
+export type AfsInvestmentComponent = {
+  key: string;
+  label: string;
+  field: Exclude<CashflowAfsBlockField, "reference_machine_count">;
 };
 
 export type CashflowInputDefinition = {
@@ -30,54 +55,23 @@ export type CashflowReportRow = {
   values: CashflowValues;
 };
 
-export const AFS_INVESTMENT_INPUTS: CashflowInputDefinition[] = [
-  { key: "investment_afs", label: "AFS", group: "investments", direction: -1, level: 2 },
+export const AFS_MACHINE_INPUT_KEY = "investment_afs_machines";
+
+export const AFS_INVESTMENT_COMPONENTS: AfsInvestmentComponent[] = [
+  { key: "afs", label: "AFS", field: "afs_amount" },
+  { key: "roofs-140", label: "140 daken", field: "roofs_140_amount" },
+  { key: "shipping", label: "Shipping", field: "shipping_amount" },
+  { key: "quality-check", label: "Quality check", field: "quality_check_amount" },
+  { key: "installation", label: "Plaatsing", field: "installation_amount" },
+  { key: "kpn-mollie", label: "KPN/Mollie", field: "kpn_mollie_amount" },
   {
-    key: "investment_afs_140_roofs",
-    label: "140 daken",
-    group: "investments",
-    direction: -1,
-    level: 2,
-  },
-  {
-    key: "investment_afs_shipping",
-    label: "Shipping",
-    group: "investments",
-    direction: -1,
-    level: 2,
-  },
-  {
-    key: "investment_afs_quality_check",
-    label: "Quality check",
-    group: "investments",
-    direction: -1,
-    level: 2,
-  },
-  {
-    key: "investment_afs_installation",
-    label: "Plaatsing",
-    group: "investments",
-    direction: -1,
-    level: 2,
-  },
-  {
-    key: "investment_afs_kpn_mollie",
-    label: "KPN/Mollie",
-    group: "investments",
-    direction: -1,
-    level: 2,
-  },
-  {
-    key: "investment_afs_location_renovation",
+    key: "location-renovation",
     label: "Achtergrond/verbouwing locatie",
-    group: "investments",
-    direction: -1,
-    level: 2,
+    field: "location_renovation_amount",
   },
 ];
 
 export const CASHFLOW_INPUT_DEFINITIONS: CashflowInputDefinition[] = [
-  ...AFS_INVESTMENT_INPUTS,
   {
     key: "investment_office_property",
     label: "Kantoor- en pandinrichting",
@@ -140,10 +134,12 @@ export function buildCashflowReport({
   months,
   inputs,
   operatingResult,
+  afsBlocks,
 }: {
   months: string[];
   inputs: CashflowInputRecord[];
   operatingResult: CashflowValues;
+  afsBlocks: CashflowAfsBlock[];
 }): CashflowReportRow[] {
   const byKey = new Map<string, CashflowValues>();
   for (const definition of CASHFLOW_INPUT_DEFINITIONS) {
@@ -171,10 +167,7 @@ export function buildCashflowReport({
     values: byKey.get(definition.key) ?? blankCashflowValues(months),
   });
 
-  const afsTotal = sumCashflowValues(
-    AFS_INVESTMENT_INPUTS.map((definition) => byKey.get(definition.key)!),
-    months,
-  );
+  const afsTotal = buildAfsInvestmentValues(inputs, afsBlocks, months);
   const office = byKey.get("investment_office_property")!;
   const otherAssets = byKey.get("investment_other_fixed_assets")!;
   const investmentTotal = sumCashflowValues([afsTotal, office, otherAssets], months);
@@ -255,6 +248,37 @@ export function buildCashflowReport({
       values: netCashflow,
     },
   ];
+}
+
+export function buildAfsInvestmentValues(
+  inputs: CashflowInputRecord[],
+  blocks: CashflowAfsBlock[],
+  months: string[],
+): CashflowValues {
+  const values = blankCashflowValues(months);
+  for (const input of inputs) {
+    if (input.line_key !== AFS_MACHINE_INPUT_KEY || !months.includes(input.period)) continue;
+    const actualBlock = blocks.find((block) => block.id === input.actual_afs_block_id);
+    const budgetBlock = blocks.find((block) => block.id === input.budget_afs_block_id);
+    values.actual[input.period] =
+      -Number(input.actual_machine_count ?? 0) * afsInvestmentAmountPerMachine(actualBlock);
+    values.budget[input.period] =
+      -Number(input.budget_machine_count ?? 0) * afsInvestmentAmountPerMachine(budgetBlock);
+  }
+  return values;
+}
+
+export function afsInvestmentPackageTotal(block: CashflowAfsBlock) {
+  return AFS_INVESTMENT_COMPONENTS.reduce(
+    (sum, component) => sum + Number(block[component.field] ?? 0),
+    0,
+  );
+}
+
+export function afsInvestmentAmountPerMachine(block: CashflowAfsBlock | undefined) {
+  if (!block) return 0;
+  const referenceCount = Number(block.reference_machine_count ?? 0);
+  return referenceCount > 0 ? afsInvestmentPackageTotal(block) / referenceCount : 0;
 }
 
 export function cashflowInputValues(

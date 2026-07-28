@@ -169,6 +169,11 @@ async function main() {
       "public.cashflow_inputs",
       "20260728120000_add_cashflow_inputs.sql",
     );
+    await applyMigrationIfMissing(
+      app,
+      "public.cashflow_afs_blocks",
+      "20260728143000_add_afs_cashflow_blocks.sql",
+    );
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);
