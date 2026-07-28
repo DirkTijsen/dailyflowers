@@ -182,6 +182,7 @@ async function main() {
     await applyMigration(app, "20260728183000_group_afs_budget_revenue_by_tranche.sql");
     await applyMigration(app, "20260728203000_correct_packaging_and_afs_car_cost_sections.sql");
     await applyMigration(app, "20260728210000_finalize_cost_sections.sql");
+    await applyMigration(app, "20260728215000_move_cleaning_costs_to_cogs.sql");
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);
