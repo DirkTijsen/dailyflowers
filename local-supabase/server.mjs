@@ -186,6 +186,24 @@ const resources = {
     ],
     writable: true,
   },
+  afs_budget_machines: {
+    table: "public.afs_budget_machines",
+    columns: [
+      "id",
+      "budget_year",
+      "machine_number",
+      "display_name",
+      "start_period",
+      "created_at",
+      "updated_at",
+    ],
+    writable: true,
+  },
+  afs_budget_machine_revenues: {
+    table: "public.afs_budget_machine_revenues",
+    columns: ["id", "budget_machine_id", "period", "amount", "created_at", "updated_at"],
+    writable: true,
+  },
   machines: {
     table: "public.machines",
     columns: [
