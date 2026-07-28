@@ -4,7 +4,6 @@ export const PL_SECTIONS = [
   { value: "revenue", label: "Omzet" },
   { value: "cost_of_goods", label: "Kostprijs omzet" },
   { value: "personnel", label: "Personeelskosten" },
-  { value: "afs_fulfillment_logistics", label: "Vulling- en logistieke kosten AFS'en" },
   { value: "housing", label: "Huisvestingskosten" },
   { value: "sales_marketing", label: "Verkoop en marketing" },
   { value: "general_admin", label: "Algemene kosten" },
@@ -565,7 +564,7 @@ function normalizeSection(
       "uitbesteed_werk_afs",
     ].includes(value)
   ) {
-    return "afs_fulfillment_logistics";
+    return "cost_of_goods";
   }
   if (["personeel", "personeelskosten", "lonen"].includes(value)) return "personnel";
   if (["huisvesting", "huur"].includes(value)) return "housing";
@@ -577,6 +576,7 @@ function normalizeSection(
 
   const code = accountCode.trim();
   const name = `${accountName} ${classification}`.toLowerCase();
+  if (code === "4520" || code === "4995") return "general_admin";
   if (name.includes("verpakk")) return "cost_of_goods";
   if (name.includes("autokost") || /\bauto('|’)?s?\b/.test(name)) return "general_admin";
   if (code === "7600" || name.includes("uitbesteed werk")) return "cost_of_goods";
