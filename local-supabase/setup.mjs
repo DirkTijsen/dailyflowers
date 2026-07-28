@@ -164,6 +164,11 @@ async function main() {
     );
     await applyMigration(app, "20260708113500_add_shop_webshop_cost_drivers.sql");
     await applyMigration(app, "20260708115000_use_afs_machine_count_as_override.sql");
+    await applyMigrationIfMissing(
+      app,
+      "public.cashflow_inputs",
+      "20260728120000_add_cashflow_inputs.sql",
+    );
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);

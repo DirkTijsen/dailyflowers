@@ -56,7 +56,7 @@ const nav = [
   { to: "/budgetten", label: "Omzet monitoring", icon: Target },
   { to: "/omzet-graph", label: "Omzet graph", icon: TrendingUp },
   { to: "/omzet-kaart", label: "Omzet kaart", icon: MapPinned },
-  { to: "/winst-verlies", label: "W&V", icon: BarChart3 },
+  { to: "/winst-verlies", label: "W&V / Cashflow", icon: BarChart3 },
   { to: "/btw-export", label: "Btw-export", icon: FileSpreadsheet },
   { to: "/afs-huur", label: "AFS huurafspraken", icon: HandCoins },
   { to: "/openstaand-klanten", label: "Openstaand klanten", icon: Users },

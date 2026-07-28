@@ -38,9 +38,21 @@ import {
   sectionLabel,
   type GlAccount,
 } from "@/lib/pl";
+import {
+  AFS_INVESTMENT_INPUTS,
+  CASHFLOW_INPUT_DEFINITIONS,
+  buildCashflowReport,
+  cashflowInputValues,
+  sumCashflowValues,
+  type CashflowInputDefinition,
+  type CashflowInputMetric,
+  type CashflowInputRecord,
+  type CashflowReportRow,
+  type CashflowValues,
+} from "@/lib/cashflow";
 
 export const Route = createFileRoute("/_authenticated/winst-verlies")({
-  head: () => ({ meta: [{ title: "W&V - Daily Flowers" }] }),
+  head: () => ({ meta: [{ title: "W&V / Cashflow - Daily Flowers" }] }),
   component: ProfitLossPage,
 });
 
@@ -653,6 +665,8 @@ function ProfitLossPage() {
   const [exactSyncing, setExactSyncing] = useState(false);
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
   const [savingBudgetCell, setSavingBudgetCell] = useState<string | null>(null);
+  const [cashflowDrafts, setCashflowDrafts] = useState<Record<string, string>>({});
+  const [savingCashflowCell, setSavingCashflowCell] = useState<string | null>(null);
   const months = useMemo(() => {
     if (viewMode === "month") return [composePeriod(year, month)];
     if (viewMode === "year") return yearPeriods(year);
@@ -791,6 +805,21 @@ function ProfitLossPage() {
     },
   });
 
+  const cashflowInputsQ = useQuery({
+    queryKey: ["cashflow-inputs", months],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<CashflowInputRecord>("cashflow_inputs")
+        .select("id,period,line_key,actual_amount,budget_amount")
+        .in("period", months)
+        .order("period")
+        .order("line_key");
+      if (error) throw error;
+      return (data ?? []) as CashflowInputRecord[];
+    },
+    enabled: months.length > 0,
+  });
+
   const activeAfsCountQ = useQuery({
     queryKey: ["machines-active-afs-count"],
     queryFn: async () => {
@@ -825,7 +854,7 @@ function ProfitLossPage() {
     ],
   );
 
-  const { rows } = useMemo(
+  const { rows, operatingResult } = useMemo(
     () =>
       buildProfitLoss({
         months,
@@ -846,6 +875,15 @@ function ProfitLossPage() {
       salesQ.data,
     ],
   );
+  const cashflowRows = useMemo(
+    () =>
+      buildCashflowReport({
+        months,
+        inputs: cashflowInputsQ.data ?? [],
+        operatingResult,
+      }),
+    [cashflowInputsQ.data, months, operatingResult],
+  );
   const revenueActualsByChannel = useMemo(
     () => buildRevenueActualsByChannel(salesQ.data ?? [], months),
     [months, salesQ.data],
@@ -854,6 +892,10 @@ function ProfitLossPage() {
   useEffect(() => {
     setBudgetDrafts({});
   }, [costDriverRulesQ.data, budgetsQ.data, months, revenueBudgetsQ.data]);
+
+  useEffect(() => {
+    setCashflowDrafts({});
+  }, [cashflowInputsQ.data, months]);
 
   function toggleColumn(column: PlMetricColumn) {
     setVisibleColumns((current) => {
@@ -879,6 +921,62 @@ function ProfitLossPage() {
 
   function updateBudgetDraft(cellKey: string, value: string) {
     setBudgetDrafts((current) => ({ ...current, [cellKey]: value }));
+  }
+
+  function updateCashflowDraft(cellKey: string, value: string) {
+    setCashflowDrafts((current) => ({ ...current, [cellKey]: value }));
+  }
+
+  async function saveCashflowInput(
+    definition: CashflowInputDefinition,
+    period: string,
+    metric: CashflowInputMetric,
+    rawValue: string,
+  ) {
+    const amount = parseBudgetInput(rawValue);
+    const cellKey = cashflowInputCellKey(definition.key, period, metric);
+    const existing = (cashflowInputsQ.data ?? []).find(
+      (input) => input.line_key === definition.key && input.period === period,
+    );
+    const existingAmount = Number(
+      metric === "actual" ? (existing?.actual_amount ?? 0) : (existing?.budget_amount ?? 0),
+    );
+    if (!Number.isFinite(amount) || amount < 0) {
+      toast.error("Vul een positief bedrag in");
+      setCashflowDrafts((current) => ({
+        ...current,
+        [cellKey]: formatAmountInput(existingAmount),
+      }));
+      return;
+    }
+    if (Math.abs(amount - existingAmount) < 0.005) return;
+
+    const payload = {
+      period,
+      line_key: definition.key,
+      actual_amount: metric === "actual" ? amount : Number(existing?.actual_amount ?? 0),
+      budget_amount: metric === "budget" ? amount : Number(existing?.budget_amount ?? 0),
+    };
+
+    setSavingCashflowCell(cellKey);
+    try {
+      const { error } = await db
+        .from("cashflow_inputs")
+        .upsert(payload, { onConflict: "period,line_key" });
+      if (error) throw error;
+      setCashflowDrafts((current) => ({
+        ...current,
+        [cellKey]: formatAmountInput(amount),
+      }));
+      qc.invalidateQueries({ queryKey: ["cashflow-inputs"] });
+      toast.success("Cashflow-input opgeslagen");
+    } catch (error) {
+      toast.error("Cashflow-input opslaan mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingCashflowCell(null);
+    }
   }
 
   async function saveRevenueBudgetInput(
@@ -1170,10 +1268,10 @@ function ProfitLossPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">W&V</h1>
+          <h1 className="text-2xl font-semibold">W&V / Cashflow</h1>
           <p className="text-sm text-muted-foreground">
             Maandrapportage met omzet uit eigen verkoopdata, omzetbudget uit omzet monitoring en
-            kosten uit het grootboek.
+            kosten uit het grootboek, aangevuld met indirecte cashflow.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1204,9 +1302,11 @@ function ProfitLossPage() {
       </div>
 
       <Tabs defaultValue="wv" className="space-y-4">
-        <TabsList>
+        <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="wv">W&V</TabsTrigger>
           <TabsTrigger value="budget-inputs">Budget inputs</TabsTrigger>
+          <TabsTrigger value="cashflow-inputs">Cashflow inputs</TabsTrigger>
+          <TabsTrigger value="cashflow">Cashflow</TabsTrigger>
         </TabsList>
 
         <Card>
@@ -1449,6 +1549,28 @@ function ProfitLossPage() {
             onSaveCostDriver={saveCostDriverInput}
           />
         </TabsContent>
+
+        <TabsContent value="cashflow-inputs" className="space-y-4">
+          <CashflowInputsPanel
+            months={months}
+            inputs={cashflowInputsQ.data ?? []}
+            drafts={cashflowDrafts}
+            savingCell={savingCashflowCell}
+            onDraftChange={updateCashflowDraft}
+            onSave={saveCashflowInput}
+          />
+        </TabsContent>
+
+        <TabsContent value="cashflow" className="space-y-4">
+          <CashflowReportPanel
+            months={months}
+            rows={cashflowRows}
+            columns={visibleColumns}
+            totalLabel={totalLabel}
+            viewMode={viewMode}
+            year={year}
+          />
+        </TabsContent>
       </Tabs>
 
       <TransactionDetailDialog detail={detail} onOpenChange={(open) => !open && setDetail(null)} />
@@ -1682,6 +1804,418 @@ function BudgetInputsPanel({
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function CashflowInputsPanel({
+  months,
+  inputs,
+  drafts,
+  savingCell,
+  onDraftChange,
+  onSave,
+}: {
+  months: string[];
+  inputs: CashflowInputRecord[];
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (
+    definition: CashflowInputDefinition,
+    period: string,
+    metric: CashflowInputMetric,
+    rawValue: string,
+  ) => void;
+}) {
+  const afsTotal = useMemo(
+    () =>
+      sumCashflowValues(
+        AFS_INVESTMENT_INPUTS.map((definition) =>
+          cashflowInputValues(inputs, definition.key, months),
+        ),
+        months,
+      ),
+    [inputs, months],
+  );
+  const tableMinWidth = Math.max(1100, 360 + months.length * 264 + 264);
+  const groups: Array<{
+    key: string;
+    label: string;
+    definitions: CashflowInputDefinition[];
+  }> = [
+    {
+      key: "investments",
+      label: "Investeringen",
+      definitions: CASHFLOW_INPUT_DEFINITIONS.filter((item) => item.group === "investments"),
+    },
+    {
+      key: "debt",
+      label: "Vreemd vermogen",
+      definitions: CASHFLOW_INPUT_DEFINITIONS.filter((item) => item.group === "debt"),
+    },
+    {
+      key: "equity",
+      label: "Eigen vermogen",
+      definitions: CASHFLOW_INPUT_DEFINITIONS.filter((item) => item.group === "equity"),
+    },
+  ];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Cashflow inputs</CardTitle>
+        <CardDescription>
+          Voer positieve bedragen in. Uitgaande kasstromen worden in de cashflow automatisch
+          negatief weergegeven.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
+            <thead className="bg-muted/50 text-left">
+              <tr>
+                <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")} rowSpan={2}>
+                  Rubriek
+                </th>
+                <th
+                  className={cn(
+                    BUDGET_STICKY_HEADER_SECOND,
+                    STICKY_SEPARATOR_SHADOW,
+                    "font-medium",
+                  )}
+                  rowSpan={2}
+                >
+                  Cashflowregel
+                </th>
+                {months.map((period) => (
+                  <th
+                    key={period}
+                    className="border-l px-3 py-2 text-center font-medium"
+                    colSpan={2}
+                  >
+                    <span className="block">{monthHeaderLabel(period, true)}</span>
+                    <span className="block text-[11px] font-normal text-muted-foreground">
+                      {quarterHeaderLabel(period, true)}
+                    </span>
+                  </th>
+                ))}
+                <th className="border-l px-3 py-2 text-center font-medium" colSpan={2}>
+                  Totaal
+                </th>
+              </tr>
+              <tr>
+                {months.map((period) => (
+                  <Fragment key={`${period}-cashflow-input-headers`}>
+                    <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
+                    <th className="px-3 py-2 text-right font-medium">Budget</th>
+                  </Fragment>
+                ))}
+                <th className="border-l px-3 py-2 text-right font-medium">Actueel</th>
+                <th className="px-3 py-2 text-right font-medium">Budget</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((group) => (
+                <Fragment key={group.key}>
+                  <tr className="border-t bg-muted/30">
+                    <td className={cn(BUDGET_STICKY_BODY_FIRST, "bg-muted/30 font-semibold")}>
+                      <Badge variant="outline">
+                        {group.key === "investments" ? "Investeringen" : "Financiering"}
+                      </Badge>
+                    </td>
+                    <td
+                      className={cn(
+                        BUDGET_STICKY_BODY_SECOND,
+                        STICKY_SEPARATOR_SHADOW,
+                        "bg-muted/30 font-semibold",
+                      )}
+                    >
+                      {group.label}
+                    </td>
+                    <td colSpan={months.length * 2 + 2} />
+                  </tr>
+                  {group.key === "investments" && (
+                    <CashflowInputTotalRow
+                      label="Investering AFS'en"
+                      months={months}
+                      values={afsTotal}
+                    />
+                  )}
+                  {group.definitions.map((definition) => (
+                    <CashflowInputRow
+                      key={definition.key}
+                      definition={definition}
+                      months={months}
+                      inputs={inputs}
+                      drafts={drafts}
+                      savingCell={savingCell}
+                      onDraftChange={onDraftChange}
+                      onSave={onSave}
+                    />
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CashflowInputTotalRow({
+  label,
+  months,
+  values,
+}: {
+  label: string;
+  months: string[];
+  values: CashflowValues;
+}) {
+  return (
+    <tr className="group border-t bg-muted/20">
+      <td className={cn(BUDGET_STICKY_BODY_FIRST, "bg-muted/20")} />
+      <td
+        className={cn(
+          BUDGET_STICKY_BODY_SECOND,
+          STICKY_SEPARATOR_SHADOW,
+          "bg-muted/20 font-semibold",
+        )}
+      >
+        {label}
+        <div className="text-xs font-normal text-muted-foreground">
+          Automatisch totaal van de onderdelen hieronder
+        </div>
+      </td>
+      {months.map((period) => (
+        <Fragment key={period}>
+          <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+            {formatEUR(values.actual[period])}
+          </td>
+          <td className="px-3 py-2 text-right font-semibold tabular-nums">
+            {formatEUR(values.budget[period])}
+          </td>
+        </Fragment>
+      ))}
+      <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+        {formatEUR(sumValues(values.actual, months))}
+      </td>
+      <td className="px-3 py-2 text-right font-semibold tabular-nums">
+        {formatEUR(sumValues(values.budget, months))}
+      </td>
+    </tr>
+  );
+}
+
+function CashflowInputRow({
+  definition,
+  months,
+  inputs,
+  drafts,
+  savingCell,
+  onDraftChange,
+  onSave,
+}: {
+  definition: CashflowInputDefinition;
+  months: string[];
+  inputs: CashflowInputRecord[];
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (
+    definition: CashflowInputDefinition,
+    period: string,
+    metric: CashflowInputMetric,
+    rawValue: string,
+  ) => void;
+}) {
+  const values = cashflowInputValues(inputs, definition.key, months);
+  return (
+    <tr className="group border-t hover:bg-muted/30">
+      <td className={BUDGET_STICKY_BODY_FIRST} />
+      <td
+        className={cn(
+          BUDGET_STICKY_BODY_SECOND,
+          STICKY_SEPARATOR_SHADOW,
+          definition.level === 2 && "pl-8",
+        )}
+      >
+        {definition.label}
+      </td>
+      {months.map((period) => {
+        const input = inputs.find(
+          (item) => item.line_key === definition.key && item.period === period,
+        );
+        return (
+          <Fragment key={period}>
+            {(["actual", "budget"] as CashflowInputMetric[]).map((metric, index) => {
+              const cellKey = cashflowInputCellKey(definition.key, period, metric);
+              const amount = Number(
+                metric === "actual" ? (input?.actual_amount ?? 0) : (input?.budget_amount ?? 0),
+              );
+              return (
+                <td key={metric} className={cn(index === 0 && "border-l", "px-2 py-1")}>
+                  <BudgetInputField
+                    cellKey={cellKey}
+                    cell={{ amount }}
+                    draft={drafts[cellKey]}
+                    saving={savingCell === cellKey}
+                    onDraftChange={onDraftChange}
+                    onSave={(rawValue) => onSave(definition, period, metric, rawValue)}
+                  />
+                </td>
+              );
+            })}
+          </Fragment>
+        );
+      })}
+      <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+        {formatEUR(sumValues(values.actual, months))}
+      </td>
+      <td className="px-3 py-2 text-right font-semibold tabular-nums">
+        {formatEUR(sumValues(values.budget, months))}
+      </td>
+    </tr>
+  );
+}
+
+function CashflowReportPanel({
+  months,
+  rows,
+  columns,
+  totalLabel,
+  viewMode,
+  year,
+}: {
+  months: string[];
+  rows: CashflowReportRow[];
+  columns: PlMetricColumn[];
+  totalLabel: string;
+  viewMode: ViewMode;
+  year: string;
+}) {
+  const tableColSpan = 2 + months.length * columns.length + columns.length;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{selectionTitle(viewMode, months, year)}</CardTitle>
+        <CardDescription>
+          Bedrijfsresultaat uit de W&amp;V, aangevuld met handmatige investerings- en
+          financieringskasstromen.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1680px] text-sm">
+            <thead className="bg-muted/50 text-left">
+              <tr>
+                <th className={cn(PL_STICKY_HEADER_FIRST, "font-medium")} rowSpan={2}>
+                  Rubriek
+                </th>
+                <th
+                  className={cn(PL_STICKY_HEADER_SECOND, STICKY_SEPARATOR_SHADOW, "font-medium")}
+                  rowSpan={2}
+                >
+                  Regel
+                </th>
+                {months.map((period) => (
+                  <th
+                    key={period}
+                    className="border-l px-3 py-2 text-center font-medium"
+                    colSpan={columns.length}
+                  >
+                    <span className="block">
+                      {monthHeaderLabel(period, viewMode === "multiYear")}
+                    </span>
+                    <span className="block text-[11px] font-normal text-muted-foreground">
+                      {quarterHeaderLabel(period, viewMode === "multiYear")}
+                    </span>
+                  </th>
+                ))}
+                <th className="border-l px-3 py-2 text-center font-medium" colSpan={columns.length}>
+                  {totalLabel}
+                </th>
+              </tr>
+              <tr>
+                {months.map((period) => (
+                  <BudgetHeaderCells key={`${period}-cashflow-headers`} columns={columns} />
+                ))}
+                <BudgetHeaderCells columns={columns} totalLabel={totalLabel} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const strong = row.kind !== "normal";
+                const rowBackground =
+                  row.kind === "result"
+                    ? "bg-primary/5"
+                    : row.kind === "subtotal" || row.kind === "heading"
+                      ? "bg-muted/20"
+                      : "bg-background";
+                return (
+                  <tr
+                    key={row.key}
+                    className={cn("group border-t hover:bg-muted/30", rowBackground)}
+                  >
+                    <td
+                      className={cn(PL_STICKY_BODY_FIRST, rowBackground, "group-hover:bg-muted/30")}
+                    >
+                      {row.level === 0 ? <Badge variant="outline">{row.section}</Badge> : null}
+                    </td>
+                    <td
+                      className={cn(
+                        PL_STICKY_BODY_SECOND,
+                        STICKY_SEPARATOR_SHADOW,
+                        rowBackground,
+                        "group-hover:bg-muted/30",
+                        strong && "font-semibold",
+                        row.level === 1 && "pl-8",
+                        row.level === 2 && "pl-12 text-muted-foreground",
+                      )}
+                    >
+                      {row.label}
+                    </td>
+                    {months.map((period) =>
+                      row.kind === "heading" ? (
+                        <td key={period} colSpan={columns.length} className="border-l" />
+                      ) : (
+                        <BudgetAmountCells
+                          key={`${row.key}-${period}`}
+                          columns={columns}
+                          value={row.values.actual[period] ?? 0}
+                          budget={row.values.budget[period] ?? 0}
+                          strong={strong}
+                        />
+                      ),
+                    )}
+                    {row.kind === "heading" ? (
+                      <td colSpan={columns.length} className="border-l" />
+                    ) : (
+                      <BudgetAmountCells
+                        columns={columns}
+                        value={sumValues(row.values.actual, months)}
+                        budget={sumValues(row.values.budget, months)}
+                        strong={strong}
+                      />
+                    )}
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={tableColSpan}
+                    className="px-3 py-8 text-center text-muted-foreground"
+                  >
+                    Geen cashflowdata voor deze selectie.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2436,6 +2970,10 @@ function plBudgetCellKey(rowKey: string, period: string) {
   return `pl|${rowKey}|${period}`;
 }
 
+function cashflowInputCellKey(lineKey: string, period: string, metric: CashflowInputMetric) {
+  return `cashflow-input|${lineKey}|${period}|${metric}`;
+}
+
 function costDriverCellKey(
   driverKey: string,
   period: string,
@@ -2649,6 +3187,8 @@ function buildProfitLoss({
 
   const costTotal = blankValues(months);
   const costBudgetTotal = blankValues(months);
+  const operatingCostTotal = blankValues(months);
+  const operatingCostBudgetTotal = blankValues(months);
   const revenueYtd = sumValues(revenueTotal, months);
   const revenueBudgetYtd = sumValues(revenueBudgetTotal, months);
   const nonRevenueAccounts = new Map<
@@ -2708,6 +3248,11 @@ function buildProfitLoss({
     const sectionBudgetValues = budgetBySection.get(currentSection) ?? blankValues(months);
     for (const period of months) costTotal[period] += sectionValues[period] ?? 0;
     for (const period of months) costBudgetTotal[period] += sectionBudgetValues[period] ?? 0;
+    if (currentSection !== "financial" && currentSection !== "tax") {
+      for (const period of months) operatingCostTotal[period] += sectionValues[period] ?? 0;
+      for (const period of months)
+        operatingCostBudgetTotal[period] += sectionBudgetValues[period] ?? 0;
+    }
     const sectionDetails = Object.fromEntries(
       months.map((period) => [
         period,
@@ -2845,9 +3390,14 @@ function buildProfitLoss({
 
   const resultValues = blankValues(months);
   const resultBudgetValues = blankValues(months);
+  const operatingResultValues = blankValues(months);
+  const operatingResultBudgetValues = blankValues(months);
   for (const period of months) {
     resultValues[period] = revenueTotal[period] - costTotal[period];
     resultBudgetValues[period] = revenueBudgetTotal[period] - costBudgetTotal[period];
+    operatingResultValues[period] = revenueTotal[period] - operatingCostTotal[period];
+    operatingResultBudgetValues[period] =
+      revenueBudgetTotal[period] - operatingCostBudgetTotal[period];
   }
   rows.push(
     makeRow(
@@ -2865,7 +3415,13 @@ function buildProfitLoss({
     ),
   );
 
-  return { rows };
+  return {
+    rows,
+    operatingResult: {
+      actual: operatingResultValues,
+      budget: operatingResultBudgetValues,
+    },
+  };
 }
 
 function TransactionDetailDialog({

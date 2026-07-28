@@ -151,6 +151,19 @@ const resources = {
     ],
     writable: true,
   },
+  cashflow_inputs: {
+    table: "public.cashflow_inputs",
+    columns: [
+      "id",
+      "period",
+      "line_key",
+      "actual_amount",
+      "budget_amount",
+      "created_at",
+      "updated_at",
+    ],
+    writable: true,
+  },
   machines: {
     table: "public.machines",
     columns: [
