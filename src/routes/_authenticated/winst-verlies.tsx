@@ -64,8 +64,10 @@ import {
   type CashflowValues,
 } from "@/lib/cashflow";
 import {
+  exportBankWorkbook,
   exportFinancialPresentation,
   exportFinancialWorkbook,
+  type BankExportData,
   type FinancialExportData,
   type FinancialInputRow,
 } from "@/lib/financial-export";
@@ -723,16 +725,10 @@ function ProfitLossPage() {
     return periodsBetween(composePeriod(year, fromMonth), composePeriod(year, toMonth));
   }, [fromMonth, month, selectedMonths, selectedYears, toMonth, viewMode, year]);
   const bankMonths = useMemo(
-    () => [
-      ...yearPeriods(bankReportYear),
-      ...yearPeriods(String(Number(bankReportYear) + 1)),
-    ],
+    () => [...yearPeriods(bankReportYear), ...yearPeriods(String(Number(bankReportYear) + 1))],
     [bankReportYear],
   );
-  const queryMonths = useMemo(
-    () => uniqueSorted([...months, ...bankMonths]),
-    [bankMonths, months],
-  );
+  const queryMonths = useMemo(() => uniqueSorted([...months, ...bankMonths]), [bankMonths, months]);
   const periodColumns = visibleColumns;
   const totalColumns = visibleColumns;
   const totalLabel = aggregateLabel(viewMode, months);
@@ -1065,12 +1061,7 @@ function ProfitLossPage() {
         operatingResult: bankOperatingResult,
         afsBlocks: cashflowAfsBlocksQ.data ?? [],
       }),
-    [
-      bankMonths,
-      bankOperatingResult,
-      cashflowAfsBlocksQ.data,
-      cashflowInputsQ.data,
-    ],
+    [bankMonths, bankOperatingResult, cashflowAfsBlocksQ.data, cashflowInputsQ.data],
   );
   const revenueActualsByChannel = useMemo(
     () => buildRevenueActualsByChannel(salesQ.data ?? [], months),
@@ -3242,6 +3233,16 @@ type BankStatementRow = {
   kind: "normal" | "heading" | "subtotal" | "result";
   actual: Record<string, number>;
   budget: Record<string, number>;
+  projection?: Record<string, number>;
+  aggregation?: "sum" | "ending" | "max";
+};
+
+type BankCashNeedSummary = {
+  peakFundingNeed: number;
+  peakFundingPeriod: string | null;
+  plannedFunding: number;
+  peakAdditionalNeed: number;
+  peakAdditionalPeriod: string | null;
 };
 
 function BankReportingPanel({
@@ -3261,8 +3262,10 @@ function BankReportingPanel({
   onReportYearChange: (year: string) => void;
   onActualThroughMonthChange: (month: string) => void;
 }) {
+  const [exportingBankExcel, setExportingBankExcel] = useState(false);
   const actualThroughPeriod = `${reportYear}-${actualThroughMonth}`;
   const nextYear = String(Number(reportYear) + 1);
+  const reportMonths = [...yearPeriods(reportYear), ...yearPeriods(nextYear)];
   const actualThroughLabel = monthLabel(actualThroughPeriod);
   const generatedLabel = new Date().toLocaleDateString("nl-NL", {
     day: "2-digit",
@@ -3278,7 +3281,8 @@ function BankReportingPanel({
       level: row.level,
       kind: row.kind,
       actual: row.values,
-      budget: row.budgetValues ?? blankValues([...yearPeriods(reportYear), ...yearPeriods(nextYear)]),
+      budget:
+        row.budgetValues ?? blankValues([...yearPeriods(reportYear), ...yearPeriods(nextYear)]),
     }));
   const bankCashflowStatementRows: BankStatementRow[] = cashflowRows.map((row) => ({
     key: row.key,
@@ -3289,6 +3293,35 @@ function BankReportingPanel({
     actual: row.values.actual,
     budget: row.values.budget,
   }));
+  const { rows: bankCashNeedRows, summary: bankCashNeedSummary } = buildBankCashNeedRows(
+    bankCashflowStatementRows,
+    reportMonths,
+    actualThroughPeriod,
+  );
+  const bankCashflowRowsWithNeed = [...bankCashflowStatementRows, ...bankCashNeedRows];
+  const compactProfitLossRows = compactBankProfitLossRows(bankProfitLossRows);
+
+  async function exportBankExcel() {
+    setExportingBankExcel(true);
+    try {
+      const exportData: BankExportData = {
+        reportYear,
+        nextYear,
+        actualThroughMonth,
+        months: reportMonths,
+        profitLossRows: compactProfitLossRows,
+        cashflowRows: bankCashflowRowsWithNeed,
+      };
+      await exportBankWorkbook(exportData);
+      toast.success("Bankrapportage als Excel geëxporteerd");
+    } catch (error) {
+      toast.error("Excel-export mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setExportingBankExcel(false);
+    }
+  }
 
   return (
     <div className="bank-report-print-root space-y-4">
@@ -3301,7 +3334,7 @@ function BankReportingPanel({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Field label="Rapportagejaar">
               <Select value={reportYear} onValueChange={onReportYearChange}>
                 <SelectTrigger>
@@ -3337,6 +3370,14 @@ function BankReportingPanel({
                 ? `daarna ${nextYear} volledig budget.`
                 : `budget van ${monthLabel(`${reportYear}-${String(Number(actualThroughMonth) + 1).padStart(2, "0")}`)} t/m december en ${nextYear} volledig budget.`}
             </div>
+            <Button
+              variant="outline"
+              onClick={exportBankExcel}
+              disabled={loading || exportingBankExcel}
+            >
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              {exportingBankExcel ? "Excel maken..." : "Excel voor bank"}
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -3360,7 +3401,8 @@ function BankReportingPanel({
         nextYear={nextYear}
         actualThroughMonth={actualThroughMonth}
         generatedLabel={generatedLabel}
-        rows={bankCashflowStatementRows}
+        rows={bankCashflowRowsWithNeed}
+        cashNeedSummary={bankCashNeedSummary}
         loading={loading}
       />
     </div>
@@ -3376,6 +3418,7 @@ function BankStatementSheet({
   actualThroughMonth,
   generatedLabel,
   rows,
+  cashNeedSummary,
   loading,
 }: {
   view: "profit-loss" | "cashflow";
@@ -3386,12 +3429,21 @@ function BankStatementSheet({
   actualThroughMonth: string;
   generatedLabel: string;
   rows: BankStatementRow[];
+  cashNeedSummary?: BankCashNeedSummary;
   loading: boolean;
 }) {
+  const [displayMode, setDisplayMode] = useState<"summary" | "monthly">(
+    view === "cashflow" ? "monthly" : "summary",
+  );
+  const [showDetails, setShowDetails] = useState(false);
   const throughMonthLabel = shortMonthName(actualThroughMonth);
   const remainingStartMonth = String(Math.min(12, Number(actualThroughMonth) + 1)).padStart(2, "0");
   const remainingLabel =
     actualThroughMonth === "12" ? "Geen restant" : `${shortMonthName(remainingStartMonth)}–dec`;
+  const cutoff = `${reportYear}-${actualThroughMonth}`;
+  const reportPeriods = [...yearPeriods(reportYear), ...yearPeriods(nextYear)];
+  const visibleRows =
+    view === "profit-loss" && !showDetails ? compactBankProfitLossRows(rows) : rows;
 
   return (
     <Card className="bank-report-sheet overflow-hidden" data-bank-report-view={view}>
@@ -3405,20 +3457,45 @@ function BankStatementSheet({
             <CardTitle className="text-xl">{title}</CardTitle>
             <CardDescription className="mt-1">{description}</CardDescription>
           </div>
-          <Button
-            className="bank-report-no-print"
-            variant="outline"
-            onClick={() => printBankReport(view)}
-            disabled={loading}
-          >
-            <Printer className="mr-2 h-4 w-4" />
-            {loading ? "Gegevens laden..." : "Print deze view"}
-          </Button>
+          <div className="bank-report-no-print flex flex-wrap justify-end gap-2">
+            <div className="flex rounded-md border p-0.5">
+              <Button
+                size="sm"
+                variant={displayMode === "summary" ? "default" : "ghost"}
+                onClick={() => setDisplayMode("summary")}
+              >
+                Samenvatting
+              </Button>
+              <Button
+                size="sm"
+                variant={displayMode === "monthly" ? "default" : "ghost"}
+                onClick={() => setDisplayMode("monthly")}
+              >
+                Per maand
+              </Button>
+            </div>
+            {view === "profit-loss" ? (
+              <Button size="sm" variant="outline" onClick={() => setShowDetails((value) => !value)}>
+                {showDetails ? "Compacte W&V" : "Alle regels"}
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => printBankReport(view)}
+              disabled={loading}
+            >
+              <Printer className="mr-2 h-4 w-4" />
+              {loading ? "Gegevens laden..." : "Print deze view"}
+            </Button>
+          </div>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
           <div className="rounded border px-3 py-2">
             <div className="text-muted-foreground">Peildatum</div>
-            <div className="font-semibold">Actuals t/m {throughMonthLabel} {reportYear}</div>
+            <div className="font-semibold">
+              Actuals t/m {throughMonthLabel} {reportYear}
+            </div>
           </div>
           <div className="rounded border px-3 py-2">
             <div className="text-muted-foreground">Prognosebasis</div>
@@ -3429,26 +3506,119 @@ function BankStatementSheet({
             <div className="font-semibold">{nextYear} volledig budget</div>
           </div>
         </div>
+        {view === "cashflow" && cashNeedSummary ? (
+          <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
+              <div className="text-amber-800">Piek financieringsbehoefte</div>
+              <div className="text-base font-semibold text-amber-950">
+                {formatEUR(cashNeedSummary.peakFundingNeed)}
+              </div>
+              <div className="text-amber-800">
+                {cashNeedSummary.peakFundingPeriod
+                  ? monthHeaderLabel(cashNeedSummary.peakFundingPeriod, true)
+                  : "Geen tekort in de prognose"}
+              </div>
+            </div>
+            <div className="rounded border px-3 py-2">
+              <div className="text-muted-foreground">Geplande financieringsinstroom</div>
+              <div className="text-base font-semibold">
+                {formatEUR(cashNeedSummary.plannedFunding)}
+              </div>
+              <div className="text-muted-foreground">Leningen en aandeelhoudersstortingen</div>
+            </div>
+            <div
+              className={cn(
+                "rounded border px-3 py-2",
+                cashNeedSummary.peakAdditionalNeed > 0.005
+                  ? "border-red-200 bg-red-50"
+                  : "border-emerald-200 bg-emerald-50",
+              )}
+            >
+              <div className="text-muted-foreground">Aanvullende cashbehoefte</div>
+              <div className="text-base font-semibold">
+                {formatEUR(cashNeedSummary.peakAdditionalNeed)}
+              </div>
+              <div className="text-muted-foreground">
+                {cashNeedSummary.peakAdditionalPeriod
+                  ? monthHeaderLabel(cashNeedSummary.peakAdditionalPeriod, true)
+                  : "Afgedekt binnen de huidige planning"}
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {view === "cashflow" ? (
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            De cumulatieve behoefte start op € 0 per januari {reportYear}; een bestaande
+            banksaldo-buffer is niet als beschikbare kas meegenomen.
+          </p>
+        ) : null}
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="bank-report-table w-full min-w-[1120px] text-xs">
-            <thead>
-              <tr className="bg-slate-900 text-white">
-                <th className="w-48 px-3 py-2 text-left">Rubriek</th>
-                <th className="min-w-64 px-3 py-2 text-left">Regel</th>
-                <th className="px-3 py-2 text-right">Actual t/m {throughMonthLabel}</th>
-                <th className="px-3 py-2 text-right">Budget t/m {throughMonthLabel}</th>
-                <th className="px-3 py-2 text-right">Budget {remainingLabel}</th>
-                <th className="bg-emerald-800 px-3 py-2 text-right">Prognose {reportYear}</th>
-                <th className="px-3 py-2 text-right">Budget {reportYear}</th>
-                <th className="px-3 py-2 text-right">Verschil</th>
-                <th className="bg-emerald-800 px-3 py-2 text-right">Budget {nextYear}</th>
-              </tr>
-            </thead>
+          <table
+            className={cn(
+              "bank-report-table w-full text-xs",
+              displayMode === "monthly" ? "min-w-[3000px]" : "min-w-[1120px]",
+            )}
+          >
+            {displayMode === "summary" ? (
+              <thead>
+                <tr className="bg-slate-900 text-white">
+                  <th className="w-48 px-3 py-2 text-left">Rubriek</th>
+                  <th className="min-w-64 px-3 py-2 text-left">Regel</th>
+                  <th className="px-3 py-2 text-right">Actual t/m {throughMonthLabel}</th>
+                  <th className="px-3 py-2 text-right">Budget t/m {throughMonthLabel}</th>
+                  <th className="px-3 py-2 text-right">Budget {remainingLabel}</th>
+                  <th className="bg-emerald-800 px-3 py-2 text-right">Prognose {reportYear}</th>
+                  <th className="px-3 py-2 text-right">Budget {reportYear}</th>
+                  <th className="px-3 py-2 text-right">Verschil</th>
+                  <th className="bg-emerald-800 px-3 py-2 text-right">Budget {nextYear}</th>
+                </tr>
+              </thead>
+            ) : (
+              <thead>
+                <tr className="bg-slate-900 text-white">
+                  <th rowSpan={2} className="w-48 px-3 py-2 text-left">
+                    Rubriek
+                  </th>
+                  <th rowSpan={2} className="min-w-64 px-3 py-2 text-left">
+                    Regel
+                  </th>
+                  <th colSpan={12} className="border-l border-slate-600 px-3 py-2 text-center">
+                    {reportYear}
+                  </th>
+                  <th rowSpan={2} className="bg-emerald-800 px-3 py-2 text-right">
+                    Totaal {reportYear}
+                  </th>
+                  <th colSpan={12} className="border-l border-slate-600 px-3 py-2 text-center">
+                    {nextYear}
+                  </th>
+                  <th rowSpan={2} className="bg-emerald-800 px-3 py-2 text-right">
+                    Totaal {nextYear}
+                  </th>
+                </tr>
+                <tr className="bg-slate-800 text-white">
+                  {reportPeriods.map((period) => (
+                    <th
+                      key={period}
+                      className={cn(
+                        "whitespace-nowrap border-l border-slate-600 px-2 py-2 text-right",
+                        period > cutoff && "bg-emerald-900",
+                      )}
+                    >
+                      {shortMonthName(period.split("-")[1])}
+                      <span className="ml-1 text-[9px] opacity-75">
+                        {period <= cutoff ? "A" : "B"}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            )}
             <tbody>
-              {rows.map((row) => {
+              {visibleRows.map((row) => {
                 const values = bankReportValues(row, reportYear, nextYear, actualThroughMonth);
+                const projection = bankProjectionValues(row, reportPeriods, cutoff);
                 const strong = row.kind !== "normal";
                 return (
                   <tr
@@ -3462,9 +3632,7 @@ function BankStatementSheet({
                           : "bg-white",
                     )}
                   >
-                    <td className="px-3 py-1.5">
-                      {row.level === 0 ? row.section : ""}
-                    </td>
+                    <td className="px-3 py-1.5">{row.level === 0 ? row.section : ""}</td>
                     <td
                       className={cn(
                         "px-3 py-1.5",
@@ -3476,7 +3644,36 @@ function BankStatementSheet({
                       {row.label}
                     </td>
                     {row.kind === "heading" ? (
-                      <td colSpan={7} />
+                      <td colSpan={displayMode === "monthly" ? 26 : 7} />
+                    ) : displayMode === "monthly" ? (
+                      <>
+                        {reportPeriods.slice(0, 12).map((period) => (
+                          <BankValue
+                            key={period}
+                            value={projection[period] ?? 0}
+                            strong={strong}
+                            className={period > cutoff ? "bg-emerald-50/50" : undefined}
+                          />
+                        ))}
+                        <BankValue
+                          value={aggregateBankRow(row, projection, yearPeriods(reportYear))}
+                          strong
+                          className="bg-emerald-50/70"
+                        />
+                        {reportPeriods.slice(12).map((period) => (
+                          <BankValue
+                            key={period}
+                            value={projection[period] ?? 0}
+                            strong={strong}
+                            className="bg-emerald-50/50"
+                          />
+                        ))}
+                        <BankValue
+                          value={aggregateBankRow(row, projection, yearPeriods(nextYear))}
+                          strong
+                          className="bg-emerald-50/70"
+                        />
+                      </>
                     ) : (
                       <>
                         <BankValue value={values.actualYtd} strong={strong} />
@@ -3485,7 +3682,11 @@ function BankStatementSheet({
                         <BankValue value={values.forecast} strong className="bg-emerald-50/70" />
                         <BankValue value={values.yearBudget} strong={strong} />
                         <BankValue value={values.variance} strong={strong} variance />
-                        <BankValue value={values.nextYearBudget} strong className="bg-emerald-50/70" />
+                        <BankValue
+                          value={values.nextYearBudget}
+                          strong
+                          className="bg-emerald-50/70"
+                        />
                       </>
                     )}
                   </tr>
@@ -3529,6 +3730,204 @@ function BankValue({
   );
 }
 
+function compactBankProfitLossRows(rows: BankStatementRow[]) {
+  return rows.filter(
+    (row) =>
+      row.key === "revenue-total" ||
+      row.key === "gross-margin" ||
+      row.key === "result" ||
+      row.key.startsWith("subtotal-"),
+  );
+}
+
+function buildBankCashNeedRows(
+  rows: BankStatementRow[],
+  periods: string[],
+  cutoff: string,
+): { rows: BankStatementRow[]; summary: BankCashNeedSummary } {
+  const rowByKey = new Map(rows.map((row) => [row.key, row]));
+  const preFundingKeys = [
+    "operating-result",
+    "investment-total",
+    "debt_loans_repaid",
+    "debt_interest_paid",
+    "debt_interest_received",
+    "equity_dividend_paid",
+  ];
+  const fundingKeys = ["debt_loans_received", "equity_shareholder_contributions"];
+
+  const scenario = (metric: "actual" | "budget" | "projection") => {
+    const monthlyBeforeFunding = blankValues(periods);
+    const plannedFunding = blankValues(periods);
+    const cumulativeBeforeFunding = blankValues(periods);
+    const fundingNeed = blankValues(periods);
+    const cumulativeAfterFunding = blankValues(periods);
+    const additionalNeed = blankValues(periods);
+    let runningBeforeFunding = 0;
+    let runningAfterFunding = 0;
+
+    for (const period of periods) {
+      const valueFor = (key: string) => {
+        const row = rowByKey.get(key);
+        if (!row) return 0;
+        if (metric === "projection") {
+          return period <= cutoff
+            ? Number(row.actual[period] ?? 0)
+            : Number(row.budget[period] ?? 0);
+        }
+        return Number(row[metric][period] ?? 0);
+      };
+      const beforeFunding = preFundingKeys.reduce((sum, key) => sum + valueFor(key), 0);
+      const funding = fundingKeys.reduce((sum, key) => sum + valueFor(key), 0);
+      const netCashflow = valueFor("net-cashflow");
+      runningBeforeFunding += beforeFunding;
+      runningAfterFunding += netCashflow;
+      monthlyBeforeFunding[period] = beforeFunding;
+      plannedFunding[period] = funding;
+      cumulativeBeforeFunding[period] = runningBeforeFunding;
+      fundingNeed[period] = Math.max(0, -runningBeforeFunding);
+      cumulativeAfterFunding[period] = runningAfterFunding;
+      additionalNeed[period] = Math.max(0, -runningAfterFunding);
+    }
+    return {
+      monthlyBeforeFunding,
+      plannedFunding,
+      cumulativeBeforeFunding,
+      fundingNeed,
+      cumulativeAfterFunding,
+      additionalNeed,
+    };
+  };
+
+  const actual = scenario("actual");
+  const budget = scenario("budget");
+  const projection = scenario("projection");
+  const derivedRows: BankStatementRow[] = [
+    {
+      key: "cash-need-heading",
+      label: "Liquiditeits- en financieringsbehoefte",
+      section: "Liquiditeitsbehoefte",
+      level: 0,
+      kind: "heading",
+      actual: blankValues(periods),
+      budget: blankValues(periods),
+    },
+    {
+      key: "cash-before-funding",
+      label: "Cashflow vóór nieuwe financiering",
+      section: "Liquiditeitsbehoefte",
+      level: 1,
+      kind: "subtotal",
+      actual: actual.monthlyBeforeFunding,
+      budget: budget.monthlyBeforeFunding,
+      projection: projection.monthlyBeforeFunding,
+    },
+    {
+      key: "cumulative-before-funding",
+      label: "Cumulatieve cashpositie vóór financiering",
+      section: "Liquiditeitsbehoefte",
+      level: 1,
+      kind: "result",
+      actual: actual.cumulativeBeforeFunding,
+      budget: budget.cumulativeBeforeFunding,
+      projection: projection.cumulativeBeforeFunding,
+      aggregation: "ending",
+    },
+    {
+      key: "funding-need",
+      label: "Financieringsbehoefte",
+      section: "Liquiditeitsbehoefte",
+      level: 1,
+      kind: "result",
+      actual: actual.fundingNeed,
+      budget: budget.fundingNeed,
+      projection: projection.fundingNeed,
+      aggregation: "max",
+    },
+    {
+      key: "planned-funding",
+      label: "Geplande financieringsinstroom",
+      section: "Liquiditeitsbehoefte",
+      level: 1,
+      kind: "subtotal",
+      actual: actual.plannedFunding,
+      budget: budget.plannedFunding,
+      projection: projection.plannedFunding,
+    },
+    {
+      key: "cumulative-after-funding",
+      label: "Cumulatieve cashpositie na geplande financiering",
+      section: "Liquiditeitsbehoefte",
+      level: 1,
+      kind: "result",
+      actual: actual.cumulativeAfterFunding,
+      budget: budget.cumulativeAfterFunding,
+      projection: projection.cumulativeAfterFunding,
+      aggregation: "ending",
+    },
+    {
+      key: "additional-cash-need",
+      label: "Aanvullende cashbehoefte",
+      section: "Liquiditeitsbehoefte",
+      level: 1,
+      kind: "result",
+      actual: actual.additionalNeed,
+      budget: budget.additionalNeed,
+      projection: projection.additionalNeed,
+      aggregation: "max",
+    },
+  ];
+
+  const peakFunding = peakValue(projection.fundingNeed, periods);
+  const peakAdditional = peakValue(projection.additionalNeed, periods);
+  return {
+    rows: derivedRows,
+    summary: {
+      peakFundingNeed: peakFunding.value,
+      peakFundingPeriod: peakFunding.period,
+      plannedFunding: sumValues(projection.plannedFunding, periods),
+      peakAdditionalNeed: peakAdditional.value,
+      peakAdditionalPeriod: peakAdditional.period,
+    },
+  };
+}
+
+function bankProjectionValues(row: BankStatementRow, periods: string[], cutoff: string) {
+  if (row.projection) return row.projection;
+  return Object.fromEntries(
+    periods.map((period) => [
+      period,
+      period <= cutoff ? Number(row.actual[period] ?? 0) : Number(row.budget[period] ?? 0),
+    ]),
+  );
+}
+
+function aggregateBankRow(
+  row: BankStatementRow,
+  values: Record<string, number>,
+  periods: string[],
+) {
+  if (periods.length === 0) return 0;
+  if (row.aggregation === "ending") return Number(values[periods.at(-1)!] ?? 0);
+  if (row.aggregation === "max") {
+    return Math.max(0, ...periods.map((period) => Number(values[period] ?? 0)));
+  }
+  return sumValues(values, periods);
+}
+
+function peakValue(values: Record<string, number>, periods: string[]) {
+  let value = 0;
+  let period: string | null = null;
+  for (const candidate of periods) {
+    const candidateValue = Number(values[candidate] ?? 0);
+    if (candidateValue > value + 0.005) {
+      value = candidateValue;
+      period = candidate;
+    }
+  }
+  return { value, period };
+}
+
 function bankReportValues(
   row: BankStatementRow,
   reportYear: string,
@@ -3539,11 +3938,16 @@ function bankReportValues(
   const cutoff = `${reportYear}-${actualThroughMonth}`;
   const actualPeriods = reportPeriods.filter((period) => period <= cutoff);
   const remainingPeriods = reportPeriods.filter((period) => period > cutoff);
-  const actualYtd = sumValues(row.actual, actualPeriods);
-  const budgetYtd = sumValues(row.budget, actualPeriods);
-  const budgetRemainder = sumValues(row.budget, remainingPeriods);
-  const forecast = actualYtd + budgetRemainder;
-  const yearBudget = budgetYtd + budgetRemainder;
+  const projection = bankProjectionValues(
+    row,
+    [...reportPeriods, ...yearPeriods(nextYear)],
+    cutoff,
+  );
+  const actualYtd = aggregateBankRow(row, row.actual, actualPeriods);
+  const budgetYtd = aggregateBankRow(row, row.budget, actualPeriods);
+  const budgetRemainder = aggregateBankRow(row, row.budget, remainingPeriods);
+  const forecast = aggregateBankRow(row, projection, reportPeriods);
+  const yearBudget = aggregateBankRow(row, row.budget, reportPeriods);
   return {
     actualYtd,
     budgetYtd,
@@ -3551,7 +3955,7 @@ function bankReportValues(
     forecast,
     yearBudget,
     variance: forecast - yearBudget,
-    nextYearBudget: sumValues(row.budget, yearPeriods(nextYear)),
+    nextYearBudget: aggregateBankRow(row, row.budget, yearPeriods(nextYear)),
   };
 }
 
@@ -4902,19 +5306,18 @@ function buildProfitLoss({
       flushSection();
       currentSection = account.section;
     }
-    const detailByPeriod =
-      account.accountCode.startsWith("afs-rental-invoices")
-        ? undefined
-        : Object.fromEntries(
-            months.map((period) => [
-              period,
-              {
-                source: "gl" as const,
-                label: account.label,
-                accountCodes: [account.accountCode],
-              },
-            ]),
-          );
+    const detailByPeriod = account.accountCode.startsWith("afs-rental-invoices")
+      ? undefined
+      : Object.fromEntries(
+          months.map((period) => [
+            period,
+            {
+              source: "gl" as const,
+              label: account.label,
+              accountCodes: [account.accountCode],
+            },
+          ]),
+        );
     rows.push(
       makeRow(
         `account-${account.accountCode}`,
@@ -4930,7 +5333,10 @@ function buildProfitLoss({
         account.budgetLineKey ? budgetByLineKey.get(account.budgetLineKey) : undefined,
       ),
     );
-    if (!account.accountCode.startsWith("afs-rental-invoices") && !account.accountCode.startsWith("afs-delivery-personnel-"))
+    if (
+      !account.accountCode.startsWith("afs-rental-invoices") &&
+      !account.accountCode.startsWith("afs-delivery-personnel-")
+    )
       sectionAccountCodes.push(account.accountCode);
     for (const period of months) sectionValues[period] += account.values[period] ?? 0;
   }

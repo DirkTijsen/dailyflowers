@@ -52,6 +52,27 @@ export type FinancialExportData = {
   cashflowRows: FinancialStatementRow[];
 };
 
+export type BankExportRow = {
+  key: string;
+  label: string;
+  section: string;
+  level: number;
+  kind: "normal" | "heading" | "subtotal" | "result";
+  actual: Record<string, number>;
+  budget: Record<string, number>;
+  projection?: Record<string, number>;
+  aggregation?: "sum" | "ending" | "max";
+};
+
+export type BankExportData = {
+  reportYear: string;
+  nextYear: string;
+  actualThroughMonth: string;
+  months: string[];
+  profitLossRows: BankExportRow[];
+  cashflowRows: BankExportRow[];
+};
+
 const METRIC_LABELS: Record<FinancialMetricColumn, string> = {
   actual: "Actueel",
   budget: "Budget",
@@ -68,6 +89,52 @@ const COLORS = {
   gray: "6B6B6B",
   line: "E8D8D0",
 };
+
+const BANK_WORKBOOK_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1">
+    <numFmt numFmtId="164" formatCode="€ #,##0;[Red](€ #,##0);-"/>
+  </numFmts>
+  <fonts count="6">
+    <font><sz val="11"/><color rgb="FF1F1F1F"/><name val="Calibri"/><family val="2"/></font>
+    <font><b/><sz val="18"/><color rgb="FFFFFFFF"/><name val="Cambria"/><family val="1"/></font>
+    <font><sz val="10"/><color rgb="FF6B6B6B"/><name val="Calibri"/><family val="2"/></font>
+    <font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>
+    <font><b/><sz val="11"/><color rgb="FF1F1F1F"/><name val="Calibri"/><family val="2"/></font>
+    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>
+  </fonts>
+  <fills count="6">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1F1F1F"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFF8F1E9"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFF5E8E4"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF047857"/><bgColor indexed="64"/></patternFill></fill>
+  </fills>
+  <borders count="3">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <border><left/><right/><top style="thin"><color rgb="FFD99B99"/></top><bottom/><diagonal/></border>
+    <border><left/><right/><top style="medium"><color rgb="FFD99B99"/></top><bottom/><diagonal/></border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="10">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf>
+    <xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+    <xf numFmtId="0" fontId="3" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="5" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="3" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="4" fillId="4" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+    <xf numFmtId="164" fontId="5" fillId="2" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+  </cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+  <dxfs count="0"/>
+  <tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleMedium4"/>
+</styleSheet>`;
 
 export async function exportFinancialWorkbook(data: FinancialExportData) {
   const XLSX = await import("xlsx");
@@ -89,6 +156,133 @@ export async function exportFinancialWorkbook(data: FinancialExportData) {
   XLSX.writeFile(workbook, `Daily Flowers financieel overzicht ${stamp}.xlsx`, {
     cellStyles: true,
   });
+}
+
+export async function exportBankWorkbook(data: BankExportData) {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildBankSummarySheet(XLSX, data, data.profitLossRows, "W&V compact"),
+    "W&V compact",
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildBankMonthlySheet(XLSX, data, data.profitLossRows, "W&V per maand"),
+    "W&V per maand",
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildBankMonthlySheet(XLSX, data, data.cashflowRows, "Cashflow per maand"),
+    "Cashflow per maand",
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildBankSummarySheet(XLSX, data, data.cashflowRows, "Cashflow samenvatting"),
+    "Cashflow samenvatting",
+  );
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const fileName = `Daily Flowers bankrapportage ${data.reportYear}-${data.nextYear} ${stamp}.xlsx`;
+  const rawWorkbook = XLSX.write(workbook, {
+    type: "array",
+    bookType: "xlsx",
+    cellStyles: true,
+  });
+  const styledWorkbook = await styleBankWorkbook(rawWorkbook, data);
+  downloadExcelFile(styledWorkbook, fileName);
+}
+
+async function styleBankWorkbook(rawWorkbook: ArrayBuffer, data: BankExportData) {
+  const { default: JSZip } = await import("jszip");
+  const zip = await JSZip.loadAsync(rawWorkbook);
+  zip.file("xl/styles.xml", BANK_WORKBOOK_STYLES);
+  const sheetRows = [
+    data.profitLossRows,
+    data.profitLossRows,
+    data.cashflowRows,
+    data.cashflowRows,
+  ];
+
+  for (let sheetNumber = 1; sheetNumber <= sheetRows.length; sheetNumber += 1) {
+    const path = `xl/worksheets/sheet${sheetNumber}.xml`;
+    const file = zip.file(path);
+    if (!file) continue;
+    const xml = await file.async("string");
+    zip.file(
+      path,
+      applyBankWorkbookXmlStyles(
+        xml,
+        sheetRows[sheetNumber - 1],
+        sheetNumber === 2 || sheetNumber === 3,
+        data,
+      ),
+    );
+  }
+  return zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+}
+
+function applyBankWorkbookXmlStyles(
+  xml: string,
+  rows: BankExportRow[],
+  monthly: boolean,
+  data: BankExportData,
+) {
+  const cutoffColumn = 2 + Number(data.actualThroughMonth);
+  const styled = xml.replace(
+    /<c r="([A-Z]+)(\d+)"(?: s="\d+")?/g,
+    (match, columnLetters: string, rawRow: string) => {
+      const rowNumber = Number(rawRow);
+      const column = excelColumnNumber(columnLetters);
+      let style = 0;
+      if (rowNumber === 1) style = 2;
+      else if (rowNumber === 2 || rowNumber === 3) style = 3;
+      else if (rowNumber === 5) {
+        const forecastHeader = monthly
+          ? column > cutoffColumn && column <= 26
+          : column === 6 || column === 9;
+        style = forecastHeader ? 7 : 4;
+      } else if (rowNumber >= 6) {
+        const row = rows[rowNumber - 6];
+        const numeric = column >= 3;
+        if (row?.kind === "result") style = numeric ? 9 : 6;
+        else if (row?.kind !== "normal") style = numeric ? 8 : 5;
+        else style = numeric ? 1 : 0;
+      }
+      return `${match.replace(/ s="\d+"/, "")} s="${style}"`;
+    },
+  );
+  return styled
+    .replace(/<sheetView([^>]*)>/, (_match, attributes: string) => {
+      const selfClosing = /\/\s*$/.test(attributes);
+      const cleanAttributes = attributes.replace(/\s+showGridLines="\d"/, "").replace(/\/\s*$/, "");
+      return `<sheetView${cleanAttributes} showGridLines="0"${selfClosing ? "/" : ""}>`;
+    })
+    .replace(/<pageMargins\b[^>]*\/>/g, "")
+    .replace(/<pageSetup\b[^>]*\/>/g, "")
+    .replace(
+      "</worksheet>",
+      '<pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>',
+    );
+}
+
+function downloadExcelFile(content: ArrayBuffer, fileName: string) {
+  const blob = new Blob([content], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function excelColumnNumber(columnLetters: string) {
+  return [...columnLetters].reduce((value, letter) => value * 26 + letter.charCodeAt(0) - 64, 0);
 }
 
 export async function exportFinancialPresentation(data: FinancialExportData) {
@@ -206,6 +400,238 @@ export async function exportFinancialPresentation(data: FinancialExportData) {
     fileName: `Daily Flowers W&V en cashflow ${stamp}.pptx`,
     compression: true,
   });
+}
+
+function buildBankSummarySheet(
+  XLSX: typeof import("xlsx"),
+  data: BankExportData,
+  rows: BankExportRow[],
+  sheetTitle: string,
+) {
+  const actualThroughPeriod = `${data.reportYear}-${data.actualThroughMonth}`;
+  const actualThroughLabel = formatPeriod(actualThroughPeriod);
+  const matrix: Array<Array<string | number | null>> = [
+    [`Daily Flowers — ${sheetTitle}`],
+    [`Actuals t/m ${actualThroughLabel}; daarna budget. ${data.nextYear} volledig budget.`],
+    ["Bedragen in euro · vertrouwelijk · gegenereerd voor bankrapportage"],
+    [],
+    [
+      "Rubriek",
+      "Regel",
+      `Actual t/m ${actualThroughLabel}`,
+      `Budget t/m ${actualThroughLabel}`,
+      `Budget restant ${data.reportYear}`,
+      `Prognose ${data.reportYear}`,
+      `Budget ${data.reportYear}`,
+      "Verschil",
+      `Budget ${data.nextYear}`,
+    ],
+  ];
+
+  for (const row of rows) {
+    const values = bankSummaryValues(row, data);
+    matrix.push([
+      row.level === 0 ? row.section : "",
+      `${row.level > 0 ? "  ".repeat(row.level) : ""}${row.label}`,
+      values.actualYtd,
+      values.budgetYtd,
+      values.budgetRemainder,
+      values.forecast,
+      values.yearBudget,
+      values.variance,
+      values.nextYearBudget,
+    ]);
+  }
+
+  const columnCount = 9;
+  const sheet = XLSX.utils.aoa_to_sheet(matrix);
+  sheet["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: columnCount - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: columnCount - 1 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: columnCount - 1 } },
+  ];
+  sheet["!cols"] = [
+    { wch: 25 },
+    { wch: 42 },
+    ...Array.from({ length: columnCount - 2 }, () => ({ wch: 17 })),
+  ];
+  sheet["!rows"] = [{ hpt: 30 }, { hpt: 20 }, { hpt: 18 }, { hpt: 8 }, { hpt: 30 }];
+  sheet["!autofilter"] = { ref: `A5:I${matrix.length}` };
+  setSheetFreeze(sheet, 5, 2);
+  setBankPrintLayout(sheet);
+  applyBankSheetStyles(sheet, rows, 5, columnCount);
+  return sheet;
+}
+
+function buildBankMonthlySheet(
+  XLSX: typeof import("xlsx"),
+  data: BankExportData,
+  rows: BankExportRow[],
+  sheetTitle: string,
+) {
+  const cutoff = `${data.reportYear}-${data.actualThroughMonth}`;
+  const matrix: Array<Array<string | number | null>> = [
+    [`Daily Flowers — ${sheetTitle}`],
+    [
+      `Actuals t/m ${formatPeriod(cutoff)}; daarna budget. Maandelijkse doorkijk ${data.reportYear}-${data.nextYear}.`,
+    ],
+    ["A = actual · B = budget/prognose · bedragen in euro"],
+    [],
+    [
+      "Rubriek",
+      "Regel",
+      ...data.months.map(
+        (period) => `${formatPeriodShort(period)} ${period <= cutoff ? "A" : "B"}`,
+      ),
+      `Totaal ${data.reportYear}`,
+      `Totaal ${data.nextYear}`,
+    ],
+  ];
+
+  for (const row of rows) {
+    const projection = bankProjection(row, data);
+    matrix.push([
+      row.level === 0 ? row.section : "",
+      `${row.level > 0 ? "  ".repeat(row.level) : ""}${row.label}`,
+      ...data.months.map((period) => projection[period] ?? 0),
+      aggregateBankValues(projection, yearPeriodsForExport(data.reportYear), row.aggregation),
+      aggregateBankValues(projection, yearPeriodsForExport(data.nextYear), row.aggregation),
+    ]);
+  }
+
+  const columnCount = 4 + data.months.length;
+  const sheet = XLSX.utils.aoa_to_sheet(matrix);
+  sheet["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: columnCount - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: columnCount - 1 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: columnCount - 1 } },
+  ];
+  sheet["!cols"] = [
+    { wch: 25 },
+    { wch: 42 },
+    ...Array.from({ length: data.months.length }, () => ({ wch: 13 })),
+    { wch: 17 },
+    { wch: 17 },
+  ];
+  sheet["!rows"] = [{ hpt: 30 }, { hpt: 20 }, { hpt: 18 }, { hpt: 8 }, { hpt: 30 }];
+  sheet["!autofilter"] = {
+    ref: `A5:${columnName(columnCount)}${matrix.length}`,
+  };
+  setSheetFreeze(sheet, 5, 2);
+  setBankPrintLayout(sheet);
+  applyBankSheetStyles(sheet, rows, 5, columnCount);
+
+  for (let index = 0; index < data.months.length; index += 1) {
+    const period = data.months[index];
+    const cell = sheet[cellAddress(4, index + 2)];
+    if (!cell) continue;
+    cell.s = period <= cutoff ? headerStyle() : bankForecastHeaderStyle();
+  }
+  return sheet;
+}
+
+function bankSummaryValues(row: BankExportRow, data: BankExportData) {
+  const reportPeriods = yearPeriodsForExport(data.reportYear);
+  const cutoff = `${data.reportYear}-${data.actualThroughMonth}`;
+  const actualPeriods = reportPeriods.filter((period) => period <= cutoff);
+  const remainingPeriods = reportPeriods.filter((period) => period > cutoff);
+  const projection = bankProjection(row, data);
+  const actualYtd = aggregateBankValues(row.actual, actualPeriods, row.aggregation);
+  const budgetYtd = aggregateBankValues(row.budget, actualPeriods, row.aggregation);
+  const budgetRemainder = aggregateBankValues(row.budget, remainingPeriods, row.aggregation);
+  const forecast = aggregateBankValues(projection, reportPeriods, row.aggregation);
+  const yearBudget = aggregateBankValues(row.budget, reportPeriods, row.aggregation);
+  return {
+    actualYtd,
+    budgetYtd,
+    budgetRemainder,
+    forecast,
+    yearBudget,
+    variance: forecast - yearBudget,
+    nextYearBudget: aggregateBankValues(
+      row.budget,
+      yearPeriodsForExport(data.nextYear),
+      row.aggregation,
+    ),
+  };
+}
+
+function bankProjection(row: BankExportRow, data: BankExportData) {
+  if (row.projection) return row.projection;
+  const cutoff = `${data.reportYear}-${data.actualThroughMonth}`;
+  return Object.fromEntries(
+    data.months.map((period) => [
+      period,
+      period <= cutoff ? Number(row.actual[period] ?? 0) : Number(row.budget[period] ?? 0),
+    ]),
+  );
+}
+
+function aggregateBankValues(
+  values: Record<string, number>,
+  periods: string[],
+  aggregation: BankExportRow["aggregation"] = "sum",
+) {
+  if (periods.length === 0) return 0;
+  if (aggregation === "ending") return Number(values[periods.at(-1)!] ?? 0);
+  if (aggregation === "max") {
+    return Math.max(0, ...periods.map((period) => Number(values[period] ?? 0)));
+  }
+  return periods.reduce((sum, period) => sum + Number(values[period] ?? 0), 0);
+}
+
+function yearPeriodsForExport(year: string) {
+  return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
+}
+
+function setBankPrintLayout(sheet: import("xlsx").WorkSheet) {
+  const printableSheet = sheet as import("xlsx").WorkSheet & {
+    "!pageSetup"?: Record<string, unknown>;
+    "!margins"?: Record<string, number>;
+  };
+  printableSheet["!pageSetup"] = {
+    orientation: "landscape",
+    paperSize: 9,
+    fitToWidth: 1,
+    fitToHeight: 0,
+  };
+  printableSheet["!margins"] = {
+    left: 0.25,
+    right: 0.25,
+    top: 0.5,
+    bottom: 0.5,
+    header: 0.2,
+    footer: 0.2,
+  };
+}
+
+function applyBankSheetStyles(
+  sheet: import("xlsx").WorkSheet,
+  rows: BankExportRow[],
+  dataStartRow: number,
+  columnCount: number,
+) {
+  setRowStyle(sheet, 0, columnCount, titleStyle());
+  setRowStyle(sheet, 1, columnCount, metadataStyle());
+  setRowStyle(sheet, 2, columnCount, metadataStyle());
+  setRowStyle(sheet, 4, columnCount, headerStyle());
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    const sheetRow = dataStartRow + rowIndex;
+    if (row.kind === "result") setRowStyle(sheet, sheetRow, columnCount, resultStyle());
+    else if (row.kind !== "normal") setRowStyle(sheet, sheetRow, columnCount, subtotalStyle());
+    for (let column = 2; column < columnCount; column += 1) {
+      const cell = sheet[cellAddress(sheetRow, column)];
+      if (cell) cell.z = "€ #,##0;[Red](€ #,##0);-";
+    }
+  }
+}
+
+function bankForecastHeaderStyle(): import("xlsx").CellStyle {
+  return {
+    ...headerStyle(),
+    fill: { fgColor: { rgb: "047857" } },
+  };
 }
 
 function buildStatementSheet(
