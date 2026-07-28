@@ -550,6 +550,9 @@ function normalizeSection(
   classification = "",
 ): PlSection {
   if (statementType && !statementType.toLowerCase().includes("winst")) return "other";
+  const code = accountCode.trim();
+  const name = `${accountName} ${classification}`.toLowerCase();
+  if (name.includes("schoonmaak")) return "cost_of_goods";
   const value = raw.toLowerCase().replace(/[\s-]+/g, "_");
   const direct = PL_SECTIONS.find((section) => section.value === value);
   if (direct) return direct.value;
@@ -574,8 +577,6 @@ function normalizeSection(
   if (["financieel", "rente", "bankkosten"].includes(value)) return "financial";
   if (["belasting", "belastingen"].includes(value)) return "tax";
 
-  const code = accountCode.trim();
-  const name = `${accountName} ${classification}`.toLowerCase();
   if (code === "4520" || code === "4995") return "general_admin";
   if (name.includes("verpakk")) return "cost_of_goods";
   if (name.includes("autokost") || /\bauto('|’)?s?\b/.test(name)) return "general_admin";
