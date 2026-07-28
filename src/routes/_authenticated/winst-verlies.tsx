@@ -130,6 +130,21 @@ type RevenueBudgetRow = {
   machines?: { display_name: string | null; afs_number: string | null } | null;
 };
 
+type AfsBudgetMachineRow = {
+  id: string;
+  budget_year: number;
+  machine_number: number;
+  display_name: string;
+  start_period: string;
+};
+
+type AfsBudgetMachineRevenueRow = {
+  id: string;
+  budget_machine_id: string;
+  period: string;
+  amount: number | string;
+};
+
 type AfsRentalAgreementRow = {
   id: string;
   machine_id: string;
@@ -184,6 +199,8 @@ const PL_PARAMETER_SOURCE_WORKBOOK = "W&V parameters";
 const AFS_RENT_SOURCE_WORKBOOK = "AFS huurafspraken";
 const AFS_RENT_BUDGET_LINE_KEY = "budget-afs-huurkosten";
 const AFS_RENT_LINE_LABEL = "AFS - Huurkosten";
+const AFS_BUDGET_MACHINE_RENT_LINE_KEY = "budget-afs-huurkosten-budgetmachines";
+const AFS_BUDGET_MACHINE_RENT_LINE_LABEL = "AFS - Huurkosten budgetmachines (gemiddeld)";
 const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
   "budget-afs-inkoop",
   "budget-afs-vaste-machinekosten",
@@ -486,6 +503,10 @@ type RevenueBudgetInputRow = {
   values: Record<string, BudgetInputCell>;
 };
 
+type AfsBudgetMachineInputRow = AfsBudgetMachineRow & {
+  values: Record<string, BudgetInputCell>;
+};
+
 type PlBudgetInputRow = {
   key: string;
   section: string;
@@ -752,6 +773,34 @@ function ProfitLossPage() {
     enabled: months.length > 0,
   });
 
+  const afsBudgetMachinesQ = useQuery({
+    queryKey: ["wv-afs-budget-machines", months],
+    queryFn: async () => {
+      const years = [...new Set(months.map((period) => Number(period.split("-")[0])))];
+      const { data, error } = await db
+        .from<AfsBudgetMachineRow>("afs_budget_machines")
+        .select("id,budget_year,machine_number,display_name,start_period")
+        .in("budget_year", years)
+        .order("machine_number");
+      if (error) throw error;
+      return (data ?? []) as AfsBudgetMachineRow[];
+    },
+    enabled: months.length > 0,
+  });
+
+  const afsBudgetMachineRevenuesQ = useQuery({
+    queryKey: ["wv-afs-budget-machine-revenues", months],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from<AfsBudgetMachineRevenueRow>("afs_budget_machine_revenues")
+        .select("id,budget_machine_id,period,amount")
+        .in("period", months);
+      if (error) throw error;
+      return (data ?? []) as AfsBudgetMachineRevenueRow[];
+    },
+    enabled: months.length > 0,
+  });
+
   const afsRentalAgreementsQ = useQuery({
     queryKey: ["wv-afs-rental-agreements"],
     queryFn: async () => {
@@ -853,14 +902,26 @@ function ProfitLossPage() {
     },
   });
 
+  const effectiveRevenueBudgets = useMemo(
+    () =>
+      addAfsBudgetMachineRevenue({
+        revenueBudgets: revenueBudgetsQ.data ?? [],
+        budgetMachineRevenues: afsBudgetMachineRevenuesQ.data ?? [],
+        months,
+      }),
+    [afsBudgetMachineRevenuesQ.data, months, revenueBudgetsQ.data],
+  );
+
   const effectiveBudgetLines = useMemo(
     () =>
       buildEffectiveBudgetLines({
         budgetLines: budgetsQ.data ?? [],
         driverRules: costDriverRulesQ.data ?? [],
-        revenueBudgets: revenueBudgetsQ.data ?? [],
+        revenueBudgets: effectiveRevenueBudgets,
         afsRentalAgreements: afsRentalAgreementsQ.data ?? [],
         afsMachineActuals: afsMachineActualsQ.data ?? [],
+        afsBudgetMachines: afsBudgetMachinesQ.data ?? [],
+        afsBudgetMachineRevenues: afsBudgetMachineRevenuesQ.data ?? [],
         months,
         activeAfsCount: activeAfsCountQ.data ?? 0,
       }),
@@ -868,10 +929,12 @@ function ProfitLossPage() {
       activeAfsCountQ.data,
       afsMachineActualsQ.data,
       afsRentalAgreementsQ.data,
+      afsBudgetMachineRevenuesQ.data,
+      afsBudgetMachinesQ.data,
       costDriverRulesQ.data,
       budgetsQ.data,
+      effectiveRevenueBudgets,
       months,
-      revenueBudgetsQ.data,
     ],
   );
 
@@ -883,16 +946,16 @@ function ProfitLossPage() {
         salesRows: salesQ.data ?? [],
         afsRentalInvoices: afsRentalInvoicesQ.data ?? [],
         budgetLines: effectiveBudgetLines,
-        revenueBudgets: revenueBudgetsQ.data ?? [],
+        revenueBudgets: effectiveRevenueBudgets,
         accounts: accountsQ.data ?? [],
       }),
     [
       accountsQ.data,
       afsRentalInvoicesQ.data,
       effectiveBudgetLines,
+      effectiveRevenueBudgets,
       glQ.data,
       months,
-      revenueBudgetsQ.data,
       salesQ.data,
     ],
   );
@@ -913,7 +976,13 @@ function ProfitLossPage() {
 
   useEffect(() => {
     setBudgetDrafts({});
-  }, [costDriverRulesQ.data, budgetsQ.data, months, revenueBudgetsQ.data]);
+  }, [
+    afsBudgetMachineRevenuesQ.data,
+    costDriverRulesQ.data,
+    budgetsQ.data,
+    months,
+    revenueBudgetsQ.data,
+  ]);
 
   useEffect(() => {
     setCashflowDrafts({});
@@ -1200,6 +1269,52 @@ function ProfitLossPage() {
       toast.success("Budget opgeslagen");
     } catch (error) {
       toast.error("Budget opslaan mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSavingBudgetCell(null);
+    }
+  }
+
+  async function saveAfsBudgetMachineRevenue(
+    row: AfsBudgetMachineInputRow,
+    period: string,
+    rawValue: string,
+  ) {
+    const cell = row.values[period];
+    const amount = parseBudgetInput(rawValue);
+    const cellKey = afsBudgetMachineRevenueCellKey(row.id, period);
+    if (!Number.isFinite(amount) || amount < 0) {
+      toast.error("Vul een positief omzetbedrag in");
+      setBudgetDrafts((current) => ({
+        ...current,
+        [cellKey]: formatAmountInput(cell?.amount ?? 0),
+      }));
+      return;
+    }
+    if (period < row.start_period) {
+      toast.error("Deze budgetmachine is in deze maand nog niet actief");
+      return;
+    }
+    if (cell?.id && Math.abs(amount - cell.amount) < 0.005) return;
+    if (!cell?.id && Math.abs(amount) < 0.005) return;
+
+    setSavingBudgetCell(cellKey);
+    try {
+      const { error } = await db.from("afs_budget_machine_revenues").upsert(
+        {
+          budget_machine_id: row.id,
+          period,
+          amount,
+        },
+        { onConflict: "budget_machine_id,period" },
+      );
+      if (error) throw error;
+      setBudgetDrafts((current) => ({ ...current, [cellKey]: formatAmountInput(amount) }));
+      qc.invalidateQueries({ queryKey: ["wv-afs-budget-machine-revenues"] });
+      toast.success("Omzet budgetmachine opgeslagen");
+    } catch (error) {
+      toast.error("Omzet budgetmachine opslaan mislukt", {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -1713,6 +1828,8 @@ function ProfitLossPage() {
           <BudgetInputsPanel
             months={months}
             revenueBudgets={revenueBudgetsQ.data ?? []}
+            afsBudgetMachines={afsBudgetMachinesQ.data ?? []}
+            afsBudgetMachineRevenues={afsBudgetMachineRevenuesQ.data ?? []}
             revenueActualsByChannel={revenueActualsByChannel}
             budgetLines={budgetsQ.data ?? []}
             driverRules={costDriverRulesQ.data ?? []}
@@ -1721,6 +1838,7 @@ function ProfitLossPage() {
             savingCell={savingBudgetCell}
             onDraftChange={updateBudgetDraft}
             onSaveRevenue={saveRevenueBudgetInput}
+            onSaveAfsBudgetMachineRevenue={saveAfsBudgetMachineRevenue}
             onSavePl={savePlBudgetInput}
             onSaveCostDriver={saveCostDriverInput}
           />
@@ -1762,6 +1880,8 @@ function ProfitLossPage() {
 function BudgetInputsPanel({
   months,
   revenueBudgets,
+  afsBudgetMachines,
+  afsBudgetMachineRevenues,
   revenueActualsByChannel,
   budgetLines,
   driverRules,
@@ -1770,11 +1890,14 @@ function BudgetInputsPanel({
   savingCell,
   onDraftChange,
   onSaveRevenue,
+  onSaveAfsBudgetMachineRevenue,
   onSavePl,
   onSaveCostDriver,
 }: {
   months: string[];
   revenueBudgets: RevenueBudgetRow[];
+  afsBudgetMachines: AfsBudgetMachineRow[];
+  afsBudgetMachineRevenues: AfsBudgetMachineRevenueRow[];
   revenueActualsByChannel: Map<string, Record<string, number>>;
   budgetLines: PlBudgetLine[];
   driverRules: PlBudgetDriverRule[];
@@ -1783,6 +1906,11 @@ function BudgetInputsPanel({
   savingCell: string | null;
   onDraftChange: (cellKey: string, value: string) => void;
   onSaveRevenue: (row: RevenueBudgetInputRow, period: string, rawValue: string) => void;
+  onSaveAfsBudgetMachineRevenue: (
+    row: AfsBudgetMachineInputRow,
+    period: string,
+    rawValue: string,
+  ) => void;
   onSavePl: (row: PlBudgetInputRow, period: string, rawValue: string) => void;
   onSaveCostDriver: (
     driver: CostDriverDefinition,
@@ -1794,6 +1922,10 @@ function BudgetInputsPanel({
   const revenueRows = useMemo(
     () => buildRevenueBudgetInputRows(revenueBudgets, months),
     [months, revenueBudgets],
+  );
+  const afsBudgetMachineRows = useMemo(
+    () => buildAfsBudgetMachineInputRows(afsBudgetMachines, afsBudgetMachineRevenues, months),
+    [afsBudgetMachineRevenues, afsBudgetMachines, months],
   );
   const plRows = useMemo(() => buildPlBudgetInputRows(budgetLines, months), [budgetLines, months]);
   const tableMinWidth = Math.max(960, 360 + months.length * 132 + 140);
@@ -1884,6 +2016,91 @@ function BudgetInputsPanel({
           </div>
         </CardContent>
       </Card>
+
+      {afsBudgetMachineRows.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Omzet nieuwe AFS-budgetmachines</CardTitle>
+            <CardDescription>
+              De 200 nieuwe machines volgen de cashflowplanning. Per machine is vanaf de
+              plaatsingsmaand omzet ingevoerd; deze omzet telt automatisch op bij het AFS-budget en
+              bij de gemiddelde huurlijn.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
+                <thead className="bg-muted/50 text-left">
+                  <tr>
+                    <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>Start</th>
+                    <th
+                      className={cn(
+                        BUDGET_STICKY_HEADER_SECOND,
+                        STICKY_SEPARATOR_SHADOW,
+                        "font-medium",
+                      )}
+                    >
+                      Budgetmachine
+                    </th>
+                    {months.map((period) => (
+                      <BudgetInputHeader key={period} period={period} />
+                    ))}
+                    <th className="w-32 border-l px-3 py-2 text-right font-medium">Totaal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {afsBudgetMachineRows.map((row) => (
+                    <tr key={row.id} className="group border-t hover:bg-muted/30">
+                      <td className={BUDGET_STICKY_BODY_FIRST}>
+                        {monthHeaderLabel(row.start_period, true)}
+                      </td>
+                      <td
+                        className={cn(
+                          BUDGET_STICKY_BODY_SECOND,
+                          STICKY_SEPARATOR_SHADOW,
+                          "font-medium",
+                        )}
+                      >
+                        {row.display_name}
+                      </td>
+                      {months.map((period) => {
+                        const cellKey = afsBudgetMachineRevenueCellKey(row.id, period);
+                        if (period < row.start_period) {
+                          return (
+                            <td
+                              key={period}
+                              className="border-l px-3 py-2 text-center text-muted-foreground"
+                            >
+                              —
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={period} className="border-l px-2 py-1">
+                            <BudgetInputField
+                              cellKey={cellKey}
+                              cell={row.values[period]}
+                              draft={drafts[cellKey]}
+                              saving={savingCell === cellKey}
+                              onDraftChange={onDraftChange}
+                              onSave={(rawValue) =>
+                                onSaveAfsBudgetMachineRevenue(row, period, rawValue)
+                              }
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+                        {formatEUR(sumInputCells(row.values, months))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <DriverInputsCard
         title="Kostprijs omzet"
@@ -2981,6 +3198,69 @@ function buildRevenueBudgetInputRows(revenueBudgets: RevenueBudgetRow[], months:
   });
 }
 
+function buildAfsBudgetMachineInputRows(
+  machines: AfsBudgetMachineRow[],
+  revenues: AfsBudgetMachineRevenueRow[],
+  months: string[],
+) {
+  const rows = new Map<string, AfsBudgetMachineInputRow>();
+  for (const machine of machines) {
+    rows.set(machine.id, {
+      ...machine,
+      values: blankInputCells(months),
+    });
+  }
+  for (const revenue of revenues) {
+    const row = rows.get(revenue.budget_machine_id);
+    if (!row || !months.includes(revenue.period)) continue;
+    row.values[revenue.period] = {
+      id: revenue.id,
+      amount: Number(revenue.amount ?? 0),
+    };
+  }
+  return [...rows.values()].sort((a, b) => a.machine_number - b.machine_number);
+}
+
+function addAfsBudgetMachineRevenue({
+  revenueBudgets,
+  budgetMachineRevenues,
+  months,
+}: {
+  revenueBudgets: RevenueBudgetRow[];
+  budgetMachineRevenues: AfsBudgetMachineRevenueRow[];
+  months: string[];
+}) {
+  const result = revenueBudgets.map((budget) => ({ ...budget }));
+  const forecastByPeriod = new Map<string, number>();
+  for (const revenue of budgetMachineRevenues) {
+    if (!months.includes(revenue.period)) continue;
+    forecastByPeriod.set(
+      revenue.period,
+      (forecastByPeriod.get(revenue.period) ?? 0) + Number(revenue.amount ?? 0),
+    );
+  }
+
+  for (const period of months) {
+    const forecastAmount = forecastByPeriod.get(period) ?? 0;
+    if (Math.abs(forecastAmount) < 0.005) continue;
+    const channelBudget = result.find(
+      (budget) => budget.channel === "bold_afs" && budget.period === period && !budget.machine_id,
+    );
+    if (channelBudget) {
+      channelBudget.amount = Number(channelBudget.amount ?? 0) + forecastAmount;
+    } else {
+      result.push({
+        id: `afs-budget-machines:${period}`,
+        period,
+        channel: "bold_afs",
+        machine_id: null,
+        amount: forecastAmount,
+      });
+    }
+  }
+  return result;
+}
+
 function buildPlBudgetInputRows(budgetLines: PlBudgetLine[], months: string[]) {
   const result = new Map<string, PlBudgetInputRow>();
 
@@ -3164,6 +3444,8 @@ function buildEffectiveBudgetLines({
   revenueBudgets,
   afsRentalAgreements,
   afsMachineActuals,
+  afsBudgetMachines,
+  afsBudgetMachineRevenues,
   months,
   activeAfsCount,
 }: {
@@ -3172,6 +3454,8 @@ function buildEffectiveBudgetLines({
   revenueBudgets: RevenueBudgetRow[];
   afsRentalAgreements: AfsRentalAgreementRow[];
   afsMachineActuals: AfsMachineActualRow[];
+  afsBudgetMachines: AfsBudgetMachineRow[];
+  afsBudgetMachineRevenues: AfsBudgetMachineRevenueRow[];
   months: string[];
   activeAfsCount: number;
 }) {
@@ -3208,8 +3492,14 @@ function buildEffectiveBudgetLines({
     machineActuals: afsMachineActuals,
     months,
   });
+  const afsBudgetMachineRentLines = buildAfsBudgetMachineRentalBudgetLines({
+    agreements: afsRentalAgreements,
+    budgetMachines: afsBudgetMachines,
+    budgetMachineRevenues: afsBudgetMachineRevenues,
+    months,
+  });
 
-  return [...manualLines, ...generatedLines, ...afsRentBudgetLines];
+  return [...manualLines, ...generatedLines, ...afsRentBudgetLines, ...afsBudgetMachineRentLines];
 }
 
 function normalizeManualBudgetLine(line: PlBudgetLine): PlBudgetLine {
@@ -3265,6 +3555,61 @@ function buildAfsRentalBudgetLines({
       source_sheet: "AFS huurafspraken",
       source_label: "Vaste fee + energie + omzetafhankelijke huur",
       sort_order: 430,
+    };
+  });
+}
+
+function buildAfsBudgetMachineRentalBudgetLines({
+  agreements,
+  budgetMachines,
+  budgetMachineRevenues,
+  months,
+}: {
+  agreements: AfsRentalAgreementRow[];
+  budgetMachines: AfsBudgetMachineRow[];
+  budgetMachineRevenues: AfsBudgetMachineRevenueRow[];
+  months: string[];
+}): PlBudgetLine[] {
+  if (agreements.length === 0 || budgetMachines.length === 0 || months.length === 0) return [];
+
+  const revenueByMachinePeriod = new Map(
+    budgetMachineRevenues.map((revenue) => [
+      afsMachinePeriodKey(revenue.budget_machine_id, revenue.period),
+      Number(revenue.amount ?? 0),
+    ]),
+  );
+
+  return months.map((period) => {
+    const averageAgreements = activeAfsRentalAgreementsForPeriod(agreements, period);
+    const activeBudgetMachines = budgetMachines.filter((machine) => machine.start_period <= period);
+    const amount =
+      averageAgreements.length === 0
+        ? 0
+        : activeBudgetMachines.reduce((sum, machine) => {
+            const turnover =
+              revenueByMachinePeriod.get(afsMachinePeriodKey(machine.id, period)) ?? 0;
+            const averageRent =
+              averageAgreements.reduce(
+                (agreementSum, agreement) =>
+                  agreementSum + calculateAfsRentalCost(agreement, turnover),
+                0,
+              ) / averageAgreements.length;
+            return sum + averageRent;
+          }, 0);
+
+    return {
+      id: `afs-budget-machine-rent:${period}`,
+      period,
+      budget_year: Number(period.split("-")[0]),
+      section: "housing",
+      line_key: AFS_BUDGET_MACHINE_RENT_LINE_KEY,
+      line_label: AFS_BUDGET_MACHINE_RENT_LINE_LABEL,
+      kind: "cost" as const,
+      amount: roundMoney(amount),
+      source_workbook: AFS_RENT_SOURCE_WORKBOOK,
+      source_sheet: "AFS budgetmachines",
+      source_label: "Gemiddelde bestaande huurafspraak per nieuwe budgetmachine",
+      sort_order: 431,
     };
   });
 }
@@ -3369,6 +3714,10 @@ function revenueBudgetRowKey(channel: string, machineId: string | null) {
 
 function revenueBudgetCellKey(rowKey: string, period: string) {
   return `revenue|${rowKey}|${period}`;
+}
+
+function afsBudgetMachineRevenueCellKey(machineId: string, period: string) {
+  return `afs-budget-machine-revenue|${machineId}|${period}`;
 }
 
 function plBudgetRowKey(lineKey: string) {
