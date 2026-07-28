@@ -179,6 +179,7 @@ async function main() {
       "public.afs_budget_machines",
       "20260728170000_add_2027_afs_budget_machines.sql",
     );
+    await applyMigration(app, "20260728183000_group_afs_budget_revenue_by_tranche.sql");
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);

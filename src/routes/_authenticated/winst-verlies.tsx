@@ -143,17 +143,18 @@ type RevenueBudgetRow = {
   machines?: { display_name: string | null; afs_number: string | null } | null;
 };
 
-type AfsBudgetMachineRow = {
+type AfsBudgetTrancheRow = {
   id: string;
   budget_year: number;
-  machine_number: number;
+  tranche_number: number;
+  machine_count: number;
   display_name: string;
   start_period: string;
 };
 
-type AfsBudgetMachineRevenueRow = {
+type AfsBudgetTrancheRevenueRow = {
   id: string;
-  budget_machine_id: string;
+  cashflow_input_id: string;
   period: string;
   amount: number | string;
 };
@@ -213,7 +214,7 @@ const AFS_RENT_SOURCE_WORKBOOK = "AFS huurafspraken";
 const AFS_RENT_BUDGET_LINE_KEY = "budget-afs-huurkosten";
 const AFS_RENT_LINE_LABEL = "AFS - Huurkosten";
 const AFS_BUDGET_MACHINE_RENT_LINE_KEY = "budget-afs-huurkosten-budgetmachines";
-const AFS_BUDGET_MACHINE_RENT_LINE_LABEL = "AFS - Huurkosten budgetmachines (gemiddeld)";
+const AFS_BUDGET_MACHINE_RENT_LINE_LABEL = "AFS - Huurkosten budgettranches (gemiddeld)";
 const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
   "budget-afs-inkoop",
   "budget-afs-vaste-machinekosten",
@@ -516,7 +517,7 @@ type RevenueBudgetInputRow = {
   values: Record<string, BudgetInputCell>;
 };
 
-type AfsBudgetMachineInputRow = AfsBudgetMachineRow & {
+type AfsBudgetTrancheInputRow = AfsBudgetTrancheRow & {
   values: Record<string, BudgetInputCell>;
 };
 
@@ -787,30 +788,46 @@ function ProfitLossPage() {
     enabled: months.length > 0,
   });
 
-  const afsBudgetMachinesQ = useQuery({
-    queryKey: ["wv-afs-budget-machines", months],
+  const afsBudgetTranchesQ = useQuery({
+    queryKey: ["wv-afs-budget-tranches", months],
     queryFn: async () => {
       const years = [...new Set(months.map((period) => Number(period.split("-")[0])))];
+      const tranchePeriods = years.flatMap(yearPeriods);
       const { data, error } = await db
-        .from<AfsBudgetMachineRow>("afs_budget_machines")
-        .select("id,budget_year,machine_number,display_name,start_period")
-        .in("budget_year", years)
-        .order("machine_number");
+        .from<CashflowInputRecord>("cashflow_inputs")
+        .select("id,period,budget_machine_count")
+        .eq("line_key", AFS_MACHINE_INPUT_KEY)
+        .in("period", tranchePeriods)
+        .gt("budget_machine_count", 0)
+        .order("period");
       if (error) throw error;
-      return (data ?? []) as AfsBudgetMachineRow[];
+      const trancheNumberByYear = new Map<number, number>();
+      return ((data ?? []) as CashflowInputRecord[]).map((input) => {
+        const budgetYear = Number(input.period.split("-")[0]);
+        const trancheNumber = (trancheNumberByYear.get(budgetYear) ?? 0) + 1;
+        trancheNumberByYear.set(budgetYear, trancheNumber);
+        return {
+          id: input.id,
+          budget_year: budgetYear,
+          tranche_number: trancheNumber,
+          machine_count: Number(input.budget_machine_count ?? 0),
+          display_name: `Tranche ${trancheNumber}`,
+          start_period: input.period,
+        } satisfies AfsBudgetTrancheRow;
+      });
     },
     enabled: months.length > 0,
   });
 
-  const afsBudgetMachineRevenuesQ = useQuery({
-    queryKey: ["wv-afs-budget-machine-revenues", months],
+  const afsBudgetTrancheRevenuesQ = useQuery({
+    queryKey: ["wv-afs-budget-tranche-revenues", months],
     queryFn: async () => {
       const { data, error } = await db
-        .from<AfsBudgetMachineRevenueRow>("afs_budget_machine_revenues")
-        .select("id,budget_machine_id,period,amount")
+        .from<AfsBudgetTrancheRevenueRow>("afs_budget_tranche_revenues")
+        .select("id,cashflow_input_id,period,amount")
         .in("period", months);
       if (error) throw error;
-      return (data ?? []) as AfsBudgetMachineRevenueRow[];
+      return (data ?? []) as AfsBudgetTrancheRevenueRow[];
     },
     enabled: months.length > 0,
   });
@@ -921,8 +938,8 @@ function ProfitLossPage() {
     salesQ,
     budgetsQ,
     revenueBudgetsQ,
-    afsBudgetMachinesQ,
-    afsBudgetMachineRevenuesQ,
+    afsBudgetTranchesQ,
+    afsBudgetTrancheRevenuesQ,
     afsRentalAgreementsQ,
     afsRentalInvoicesQ,
     afsMachineActualsQ,
@@ -934,12 +951,13 @@ function ProfitLossPage() {
 
   const effectiveRevenueBudgets = useMemo(
     () =>
-      addAfsBudgetMachineRevenue({
+      addAfsBudgetTrancheRevenue({
         revenueBudgets: revenueBudgetsQ.data ?? [],
-        budgetMachineRevenues: afsBudgetMachineRevenuesQ.data ?? [],
+        budgetTranches: afsBudgetTranchesQ.data ?? [],
+        budgetTrancheRevenues: afsBudgetTrancheRevenuesQ.data ?? [],
         months,
       }),
-    [afsBudgetMachineRevenuesQ.data, months, revenueBudgetsQ.data],
+    [afsBudgetTrancheRevenuesQ.data, afsBudgetTranchesQ.data, months, revenueBudgetsQ.data],
   );
 
   const effectiveBudgetLines = useMemo(
@@ -950,8 +968,8 @@ function ProfitLossPage() {
         revenueBudgets: effectiveRevenueBudgets,
         afsRentalAgreements: afsRentalAgreementsQ.data ?? [],
         afsMachineActuals: afsMachineActualsQ.data ?? [],
-        afsBudgetMachines: afsBudgetMachinesQ.data ?? [],
-        afsBudgetMachineRevenues: afsBudgetMachineRevenuesQ.data ?? [],
+        afsBudgetTranches: afsBudgetTranchesQ.data ?? [],
+        afsBudgetTrancheRevenues: afsBudgetTrancheRevenuesQ.data ?? [],
         months,
         activeAfsCount: activeAfsCountQ.data ?? 0,
       }),
@@ -959,8 +977,8 @@ function ProfitLossPage() {
       activeAfsCountQ.data,
       afsMachineActualsQ.data,
       afsRentalAgreementsQ.data,
-      afsBudgetMachineRevenuesQ.data,
-      afsBudgetMachinesQ.data,
+      afsBudgetTrancheRevenuesQ.data,
+      afsBudgetTranchesQ.data,
       costDriverRulesQ.data,
       budgetsQ.data,
       effectiveRevenueBudgets,
@@ -1007,7 +1025,7 @@ function ProfitLossPage() {
   useEffect(() => {
     setBudgetDrafts({});
   }, [
-    afsBudgetMachineRevenuesQ.data,
+    afsBudgetTrancheRevenuesQ.data,
     costDriverRulesQ.data,
     budgetsQ.data,
     months,
@@ -1030,9 +1048,9 @@ function ProfitLossPage() {
 
   function buildCurrentFinancialExportData(): FinancialExportData {
     const revenueInputRows = buildRevenueBudgetInputRows(revenueBudgetsQ.data ?? [], months);
-    const afsBudgetMachineInputRows = buildAfsBudgetMachineInputRows(
-      afsBudgetMachinesQ.data ?? [],
-      afsBudgetMachineRevenuesQ.data ?? [],
+    const afsBudgetTrancheInputRows = buildAfsBudgetTrancheInputRows(
+      afsBudgetTranchesQ.data ?? [],
+      afsBudgetTrancheRevenuesQ.data ?? [],
       months,
     );
     const driverRows = buildCostDriverInputRows({
@@ -1069,12 +1087,12 @@ function ProfitLossPage() {
       }
     }
 
-    for (const row of afsBudgetMachineInputRows) {
+    for (const row of afsBudgetTrancheInputRows) {
       budgetInputRows.push({
-        group: "Omzet nieuwe AFS-budgetmachines",
+        group: "Omzet nieuwe AFS-tranches",
         category: monthHeaderLabel(row.start_period, true),
-        label: row.display_name,
-        note: `Actief vanaf ${row.start_period}`,
+        label: `${row.display_name} (${row.machine_count} machines)`,
+        note: `Totale trancheomzet, actief vanaf ${row.start_period}`,
         values: Object.fromEntries(
           months.map((period) => [
             period,
@@ -1387,6 +1405,7 @@ function ProfitLossPage() {
       );
       if (error) throw error;
       qc.invalidateQueries({ queryKey: ["cashflow-inputs"] });
+      qc.invalidateQueries({ queryKey: ["wv-afs-budget-tranches"] });
       toast.success("Aantal AFS'en opgeslagen");
     } catch (error) {
       toast.error("Aantal AFS'en opslaan mislukt", {
@@ -1549,14 +1568,14 @@ function ProfitLossPage() {
     }
   }
 
-  async function saveAfsBudgetMachineRevenue(
-    row: AfsBudgetMachineInputRow,
+  async function saveAfsBudgetTrancheRevenue(
+    row: AfsBudgetTrancheInputRow,
     period: string,
     rawValue: string,
   ) {
     const cell = row.values[period];
     const amount = parseBudgetInput(rawValue);
-    const cellKey = afsBudgetMachineRevenueCellKey(row.id, period);
+    const cellKey = afsBudgetTrancheRevenueCellKey(row.id, period);
     if (!Number.isFinite(amount) || amount < 0) {
       toast.error("Vul een positief omzetbedrag in");
       setBudgetDrafts((current) => ({
@@ -1566,7 +1585,7 @@ function ProfitLossPage() {
       return;
     }
     if (period < row.start_period) {
-      toast.error("Deze budgetmachine is in deze maand nog niet actief");
+      toast.error("Deze tranche is in deze maand nog niet actief");
       return;
     }
     if (cell?.id && Math.abs(amount - cell.amount) < 0.005) return;
@@ -1574,20 +1593,20 @@ function ProfitLossPage() {
 
     setSavingBudgetCell(cellKey);
     try {
-      const { error } = await db.from("afs_budget_machine_revenues").upsert(
+      const { error } = await db.from("afs_budget_tranche_revenues").upsert(
         {
-          budget_machine_id: row.id,
+          cashflow_input_id: row.id,
           period,
           amount,
         },
-        { onConflict: "budget_machine_id,period" },
+        { onConflict: "cashflow_input_id,period" },
       );
       if (error) throw error;
       setBudgetDrafts((current) => ({ ...current, [cellKey]: formatAmountInput(amount) }));
-      qc.invalidateQueries({ queryKey: ["wv-afs-budget-machine-revenues"] });
-      toast.success("Omzet budgetmachine opgeslagen");
+      qc.invalidateQueries({ queryKey: ["wv-afs-budget-tranche-revenues"] });
+      toast.success("Totale trancheomzet opgeslagen");
     } catch (error) {
-      toast.error("Omzet budgetmachine opslaan mislukt", {
+      toast.error("Trancheomzet opslaan mislukt", {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -2125,8 +2144,8 @@ function ProfitLossPage() {
           <BudgetInputsPanel
             months={months}
             revenueBudgets={revenueBudgetsQ.data ?? []}
-            afsBudgetMachines={afsBudgetMachinesQ.data ?? []}
-            afsBudgetMachineRevenues={afsBudgetMachineRevenuesQ.data ?? []}
+            afsBudgetTranches={afsBudgetTranchesQ.data ?? []}
+            afsBudgetTrancheRevenues={afsBudgetTrancheRevenuesQ.data ?? []}
             revenueActualsByChannel={revenueActualsByChannel}
             budgetLines={budgetsQ.data ?? []}
             driverRules={costDriverRulesQ.data ?? []}
@@ -2135,7 +2154,7 @@ function ProfitLossPage() {
             savingCell={savingBudgetCell}
             onDraftChange={updateBudgetDraft}
             onSaveRevenue={saveRevenueBudgetInput}
-            onSaveAfsBudgetMachineRevenue={saveAfsBudgetMachineRevenue}
+            onSaveAfsBudgetTrancheRevenue={saveAfsBudgetTrancheRevenue}
             onSavePl={savePlBudgetInput}
             onSaveCostDriver={saveCostDriverInput}
           />
@@ -2177,8 +2196,8 @@ function ProfitLossPage() {
 function BudgetInputsPanel({
   months,
   revenueBudgets,
-  afsBudgetMachines,
-  afsBudgetMachineRevenues,
+  afsBudgetTranches,
+  afsBudgetTrancheRevenues,
   revenueActualsByChannel,
   budgetLines,
   driverRules,
@@ -2187,14 +2206,14 @@ function BudgetInputsPanel({
   savingCell,
   onDraftChange,
   onSaveRevenue,
-  onSaveAfsBudgetMachineRevenue,
+  onSaveAfsBudgetTrancheRevenue,
   onSavePl,
   onSaveCostDriver,
 }: {
   months: string[];
   revenueBudgets: RevenueBudgetRow[];
-  afsBudgetMachines: AfsBudgetMachineRow[];
-  afsBudgetMachineRevenues: AfsBudgetMachineRevenueRow[];
+  afsBudgetTranches: AfsBudgetTrancheRow[];
+  afsBudgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   revenueActualsByChannel: Map<string, Record<string, number>>;
   budgetLines: PlBudgetLine[];
   driverRules: PlBudgetDriverRule[];
@@ -2203,8 +2222,8 @@ function BudgetInputsPanel({
   savingCell: string | null;
   onDraftChange: (cellKey: string, value: string) => void;
   onSaveRevenue: (row: RevenueBudgetInputRow, period: string, rawValue: string) => void;
-  onSaveAfsBudgetMachineRevenue: (
-    row: AfsBudgetMachineInputRow,
+  onSaveAfsBudgetTrancheRevenue: (
+    row: AfsBudgetTrancheInputRow,
     period: string,
     rawValue: string,
   ) => void;
@@ -2220,9 +2239,9 @@ function BudgetInputsPanel({
     () => buildRevenueBudgetInputRows(revenueBudgets, months),
     [months, revenueBudgets],
   );
-  const afsBudgetMachineRows = useMemo(
-    () => buildAfsBudgetMachineInputRows(afsBudgetMachines, afsBudgetMachineRevenues, months),
-    [afsBudgetMachineRevenues, afsBudgetMachines, months],
+  const afsBudgetTrancheRows = useMemo(
+    () => buildAfsBudgetTrancheInputRows(afsBudgetTranches, afsBudgetTrancheRevenues, months),
+    [afsBudgetTrancheRevenues, afsBudgetTranches, months],
   );
   const plRows = useMemo(() => buildPlBudgetInputRows(budgetLines, months), [budgetLines, months]);
   const tableMinWidth = Math.max(960, 360 + months.length * 132 + 140);
@@ -2314,14 +2333,14 @@ function BudgetInputsPanel({
         </CardContent>
       </Card>
 
-      {afsBudgetMachineRows.length > 0 && (
+      {afsBudgetTrancheRows.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Omzet nieuwe AFS-budgetmachines</CardTitle>
+            <CardTitle className="text-base">Omzet nieuwe AFS-tranches</CardTitle>
             <CardDescription>
-              De 200 nieuwe machines volgen de cashflowplanning. Per machine is vanaf de
-              plaatsingsmaand omzet ingevoerd; deze omzet telt automatisch op bij het AFS-budget en
-              bij de gemiddelde huurlijn.
+              Iedere investeringsmaand uit de cashflow vormt één tranche. Vul per maand de totale
+              omzet van alle machines in die tranche in; het trancheaantal wordt automatisch uit de
+              cashflowplanning overgenomen.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -2329,7 +2348,9 @@ function BudgetInputsPanel({
               <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
                 <thead className="bg-muted/50 text-left">
                   <tr>
-                    <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>Start</th>
+                    <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>
+                      Investeringsmoment
+                    </th>
                     <th
                       className={cn(
                         BUDGET_STICKY_HEADER_SECOND,
@@ -2337,7 +2358,7 @@ function BudgetInputsPanel({
                         "font-medium",
                       )}
                     >
-                      Budgetmachine
+                      Tranche
                     </th>
                     {months.map((period) => (
                       <BudgetInputHeader key={period} period={period} />
@@ -2346,7 +2367,7 @@ function BudgetInputsPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {afsBudgetMachineRows.map((row) => (
+                  {afsBudgetTrancheRows.map((row) => (
                     <tr key={row.id} className="group border-t hover:bg-muted/30">
                       <td className={BUDGET_STICKY_BODY_FIRST}>
                         {monthHeaderLabel(row.start_period, true)}
@@ -2358,10 +2379,13 @@ function BudgetInputsPanel({
                           "font-medium",
                         )}
                       >
-                        {row.display_name}
+                        <div>{row.display_name}</div>
+                        <div className="text-xs font-normal text-muted-foreground">
+                          {row.machine_count} machines
+                        </div>
                       </td>
                       {months.map((period) => {
-                        const cellKey = afsBudgetMachineRevenueCellKey(row.id, period);
+                        const cellKey = afsBudgetTrancheRevenueCellKey(row.id, period);
                         if (period < row.start_period) {
                           return (
                             <td
@@ -2381,7 +2405,7 @@ function BudgetInputsPanel({
                               saving={savingCell === cellKey}
                               onDraftChange={onDraftChange}
                               onSave={(rawValue) =>
-                                onSaveAfsBudgetMachineRevenue(row, period, rawValue)
+                                onSaveAfsBudgetTrancheRevenue(row, period, rawValue)
                               }
                             />
                           </td>
@@ -3495,42 +3519,48 @@ function buildRevenueBudgetInputRows(revenueBudgets: RevenueBudgetRow[], months:
   });
 }
 
-function buildAfsBudgetMachineInputRows(
-  machines: AfsBudgetMachineRow[],
-  revenues: AfsBudgetMachineRevenueRow[],
+function buildAfsBudgetTrancheInputRows(
+  tranches: AfsBudgetTrancheRow[],
+  revenues: AfsBudgetTrancheRevenueRow[],
   months: string[],
 ) {
-  const rows = new Map<string, AfsBudgetMachineInputRow>();
-  for (const machine of machines) {
-    rows.set(machine.id, {
-      ...machine,
+  const rows = new Map<string, AfsBudgetTrancheInputRow>();
+  for (const tranche of tranches) {
+    rows.set(tranche.id, {
+      ...tranche,
       values: blankInputCells(months),
     });
   }
   for (const revenue of revenues) {
-    const row = rows.get(revenue.budget_machine_id);
+    const row = rows.get(revenue.cashflow_input_id);
     if (!row || !months.includes(revenue.period)) continue;
     row.values[revenue.period] = {
       id: revenue.id,
       amount: Number(revenue.amount ?? 0),
     };
   }
-  return [...rows.values()].sort((a, b) => a.machine_number - b.machine_number);
+  return [...rows.values()].sort(
+    (a, b) => a.budget_year - b.budget_year || a.tranche_number - b.tranche_number,
+  );
 }
 
-function addAfsBudgetMachineRevenue({
+function addAfsBudgetTrancheRevenue({
   revenueBudgets,
-  budgetMachineRevenues,
+  budgetTranches,
+  budgetTrancheRevenues,
   months,
 }: {
   revenueBudgets: RevenueBudgetRow[];
-  budgetMachineRevenues: AfsBudgetMachineRevenueRow[];
+  budgetTranches: AfsBudgetTrancheRow[];
+  budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   months: string[];
 }) {
   const result = revenueBudgets.map((budget) => ({ ...budget }));
   const forecastByPeriod = new Map<string, number>();
-  for (const revenue of budgetMachineRevenues) {
-    if (!months.includes(revenue.period)) continue;
+  const activeTrancheIds = new Set(budgetTranches.map((tranche) => tranche.id));
+  for (const revenue of budgetTrancheRevenues) {
+    if (!months.includes(revenue.period) || !activeTrancheIds.has(revenue.cashflow_input_id))
+      continue;
     forecastByPeriod.set(
       revenue.period,
       (forecastByPeriod.get(revenue.period) ?? 0) + Number(revenue.amount ?? 0),
@@ -3547,7 +3577,7 @@ function addAfsBudgetMachineRevenue({
       channelBudget.amount = Number(channelBudget.amount ?? 0) + forecastAmount;
     } else {
       result.push({
-        id: `afs-budget-machines:${period}`,
+        id: `afs-budget-tranches:${period}`,
         period,
         channel: "bold_afs",
         machine_id: null,
@@ -3741,8 +3771,8 @@ function buildEffectiveBudgetLines({
   revenueBudgets,
   afsRentalAgreements,
   afsMachineActuals,
-  afsBudgetMachines,
-  afsBudgetMachineRevenues,
+  afsBudgetTranches,
+  afsBudgetTrancheRevenues,
   months,
   activeAfsCount,
 }: {
@@ -3751,8 +3781,8 @@ function buildEffectiveBudgetLines({
   revenueBudgets: RevenueBudgetRow[];
   afsRentalAgreements: AfsRentalAgreementRow[];
   afsMachineActuals: AfsMachineActualRow[];
-  afsBudgetMachines: AfsBudgetMachineRow[];
-  afsBudgetMachineRevenues: AfsBudgetMachineRevenueRow[];
+  afsBudgetTranches: AfsBudgetTrancheRow[];
+  afsBudgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   months: string[];
   activeAfsCount: number;
 }) {
@@ -3789,14 +3819,14 @@ function buildEffectiveBudgetLines({
     machineActuals: afsMachineActuals,
     months,
   });
-  const afsBudgetMachineRentLines = buildAfsBudgetMachineRentalBudgetLines({
+  const afsBudgetTrancheRentLines = buildAfsBudgetTrancheRentalBudgetLines({
     agreements: afsRentalAgreements,
-    budgetMachines: afsBudgetMachines,
-    budgetMachineRevenues: afsBudgetMachineRevenues,
+    budgetTranches: afsBudgetTranches,
+    budgetTrancheRevenues: afsBudgetTrancheRevenues,
     months,
   });
 
-  return [...manualLines, ...generatedLines, ...afsRentBudgetLines, ...afsBudgetMachineRentLines];
+  return [...manualLines, ...generatedLines, ...afsRentBudgetLines, ...afsBudgetTrancheRentLines];
 }
 
 function normalizeManualBudgetLine(line: PlBudgetLine): PlBudgetLine {
@@ -3856,42 +3886,45 @@ function buildAfsRentalBudgetLines({
   });
 }
 
-function buildAfsBudgetMachineRentalBudgetLines({
+function buildAfsBudgetTrancheRentalBudgetLines({
   agreements,
-  budgetMachines,
-  budgetMachineRevenues,
+  budgetTranches,
+  budgetTrancheRevenues,
   months,
 }: {
   agreements: AfsRentalAgreementRow[];
-  budgetMachines: AfsBudgetMachineRow[];
-  budgetMachineRevenues: AfsBudgetMachineRevenueRow[];
+  budgetTranches: AfsBudgetTrancheRow[];
+  budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   months: string[];
 }): PlBudgetLine[] {
-  if (agreements.length === 0 || budgetMachines.length === 0 || months.length === 0) return [];
+  if (agreements.length === 0 || budgetTranches.length === 0 || months.length === 0) return [];
 
-  const revenueByMachinePeriod = new Map(
-    budgetMachineRevenues.map((revenue) => [
-      afsMachinePeriodKey(revenue.budget_machine_id, revenue.period),
+  const revenueByTranchePeriod = new Map(
+    budgetTrancheRevenues.map((revenue) => [
+      afsMachinePeriodKey(revenue.cashflow_input_id, revenue.period),
       Number(revenue.amount ?? 0),
     ]),
   );
 
   return months.map((period) => {
     const averageAgreements = activeAfsRentalAgreementsForPeriod(agreements, period);
-    const activeBudgetMachines = budgetMachines.filter((machine) => machine.start_period <= period);
+    const activeBudgetTranches = budgetTranches.filter(
+      (tranche) => tranche.start_period <= period && tranche.machine_count > 0,
+    );
     const amount =
       averageAgreements.length === 0
         ? 0
-        : activeBudgetMachines.reduce((sum, machine) => {
-            const turnover =
-              revenueByMachinePeriod.get(afsMachinePeriodKey(machine.id, period)) ?? 0;
-            const averageRent =
+        : activeBudgetTranches.reduce((sum, tranche) => {
+            const trancheTurnover =
+              revenueByTranchePeriod.get(afsMachinePeriodKey(tranche.id, period)) ?? 0;
+            const turnoverPerMachine = trancheTurnover / tranche.machine_count;
+            const averageRentPerMachine =
               averageAgreements.reduce(
                 (agreementSum, agreement) =>
-                  agreementSum + calculateAfsRentalCost(agreement, turnover),
+                  agreementSum + calculateAfsRentalCost(agreement, turnoverPerMachine),
                 0,
               ) / averageAgreements.length;
-            return sum + averageRent;
+            return sum + averageRentPerMachine * tranche.machine_count;
           }, 0);
 
     return {
@@ -3904,8 +3937,8 @@ function buildAfsBudgetMachineRentalBudgetLines({
       kind: "cost" as const,
       amount: roundMoney(amount),
       source_workbook: AFS_RENT_SOURCE_WORKBOOK,
-      source_sheet: "AFS budgetmachines",
-      source_label: "Gemiddelde bestaande huurafspraak per nieuwe budgetmachine",
+      source_sheet: "AFS budgettranches",
+      source_label: "Gemiddelde bestaande huurafspraak per machine in de nieuwe tranches",
       sort_order: 431,
     };
   });
@@ -4013,8 +4046,8 @@ function revenueBudgetCellKey(rowKey: string, period: string) {
   return `revenue|${rowKey}|${period}`;
 }
 
-function afsBudgetMachineRevenueCellKey(machineId: string, period: string) {
-  return `afs-budget-machine-revenue|${machineId}|${period}`;
+function afsBudgetTrancheRevenueCellKey(cashflowInputId: string, period: string) {
+  return `afs-budget-tranche-revenue|${cashflowInputId}|${period}`;
 }
 
 function plBudgetRowKey(lineKey: string) {

@@ -204,6 +204,11 @@ const resources = {
     columns: ["id", "budget_machine_id", "period", "amount", "created_at", "updated_at"],
     writable: true,
   },
+  afs_budget_tranche_revenues: {
+    table: "public.afs_budget_tranche_revenues",
+    columns: ["id", "cashflow_input_id", "period", "amount", "created_at", "updated_at"],
+    writable: true,
+  },
   machines: {
     table: "public.machines",
     columns: [
