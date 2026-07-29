@@ -91,6 +91,16 @@ export type BankAfsScenarioData = {
     total: number;
     perMachine: number;
   }>;
+  outlook2028: {
+    machineCount: number;
+    monthlyRevenuePerMachine: number;
+    unitEconomicsRows: Array<{
+      key: string;
+      label: string;
+      total: number;
+      perMachine: number;
+    }>;
+  };
 };
 
 const METRIC_LABELS: Record<FinancialMetricColumn, string> = {
@@ -261,6 +271,8 @@ async function styleBankWorkbook(rawWorkbook: ArrayBuffer, data: BankExportData)
 function applyBankScenarioXmlStyles(xml: string, data: BankAfsScenarioData) {
   const unitHeaderRow = 7 + data.scenarioRows.length;
   const contributionRow = unitHeaderRow + data.unitEconomicsRows.length;
+  const outlookHeaderRow = contributionRow + 2;
+  const outlookContributionRow = outlookHeaderRow + data.outlook2028.unitEconomicsRows.length;
   const highlightedScenarioRows = new Set(
     data.scenarioRows.flatMap((row, index) =>
       row.key === "result" || row.key === "closing-cash" ? [6 + index] : [],
@@ -274,10 +286,13 @@ function applyBankScenarioXmlStyles(xml: string, data: BankAfsScenarioData) {
       let style = 0;
       if (rowNumber === 1) style = 2;
       else if (rowNumber === 2 || rowNumber === 3) style = 3;
-      else if (rowNumber === 5 || rowNumber === unitHeaderRow) {
+      else if (rowNumber === 5 || rowNumber === unitHeaderRow || rowNumber === outlookHeaderRow) {
         style = column === 3 ? 7 : 4;
       } else if (rowNumber >= 6) {
-        const isResult = highlightedScenarioRows.has(rowNumber) || rowNumber === contributionRow;
+        const isResult =
+          highlightedScenarioRows.has(rowNumber) ||
+          rowNumber === contributionRow ||
+          rowNumber === outlookContributionRow;
         style = isResult ? (column >= 2 ? 9 : 6) : column >= 2 ? 1 : 0;
       }
       return `${match.replace(/ s="\d+"/, "")} s="${style}"`;
@@ -627,6 +642,13 @@ function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsSce
     [],
     ["Unit economics nieuwe AFS", `Totaal ${data.machineCount} machines`, "Gemiddeld per machine"],
     ...data.unitEconomicsRows.map((row) => [row.label, row.total, row.perMachine]),
+    [],
+    [
+      "Verwachting 2028 — volledig jaar",
+      `Totaal ${data.outlook2028.machineCount} machines`,
+      "Gemiddeld per machine",
+    ],
+    ...data.outlook2028.unitEconomicsRows.map((row) => [row.label, row.total, row.perMachine]),
   ];
   const columnCount = 4;
   const sheet = XLSX.utils.aoa_to_sheet(matrix);

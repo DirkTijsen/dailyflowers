@@ -768,7 +768,14 @@ function ProfitLossPage() {
     [bankReportYear],
   );
   const queryMonths = useMemo(
-    () => uniqueSorted([...months, ...bankMonths, ...yearPeriods("2026"), ...yearPeriods("2027")]),
+    () =>
+      uniqueSorted([
+        ...months,
+        ...bankMonths,
+        ...yearPeriods("2026"),
+        ...yearPeriods("2027"),
+        ...yearPeriods("2028"),
+      ]),
     [bankMonths, months],
   );
   const periodColumns = visibleColumns;
@@ -3821,7 +3828,7 @@ function buildAfsScenario2027({
     (sum, tranche) => sum + Number(tranche.machine_count ?? 0),
     0,
   );
-  const driverAmount = (driverKey: string, period: string) => {
+  const driverAmount = (driverKey: string, period: string, carryForward = false) => {
     const definition =
       AFS_COST_DRIVER_DEFINITIONS.find((driver) => driver.driver_key === driverKey) ??
       (driverKey === AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key
@@ -3830,7 +3837,11 @@ function buildAfsScenario2027({
     const rules = driverRules
       .filter((rule) => rule.driver_key === driverKey)
       .sort((a, b) => comparePeriods(a.from_period, b.from_period));
-    return Number(activeRuleForPeriod(rules, period)?.amount ?? definition?.defaultAmount ?? 0);
+    const activeRule = activeRuleForPeriod(rules, period);
+    const latestRule = carryForward
+      ? rules.filter((rule) => comparePeriods(rule.from_period, period) <= 0).at(-1)
+      : undefined;
+    return Number(activeRule?.amount ?? latestRule?.amount ?? definition?.defaultAmount ?? 0);
   };
 
   let revenueTotal = 0;
@@ -3968,7 +3979,87 @@ function buildAfsScenario2027({
     },
   ];
 
-  return { year, machineCount, scenarioRows, unitEconomicsRows };
+  const outlook2028MachineCount = 200;
+  const outlook2028MonthlyRevenuePerMachine = 2_000;
+  let outlook2028Revenue = 0;
+  let outlook2028Cleaning = 0;
+  let outlook2028Repair = 0;
+  let outlook2028Filling = 0;
+  let outlook2028Rent = 0;
+  for (const period of yearPeriods("2028")) {
+    const revenue = outlook2028MachineCount * outlook2028MonthlyRevenuePerMachine;
+    outlook2028Revenue += revenue;
+    outlook2028Cleaning += outlook2028MachineCount * driverAmount("afs_schoonmaak", period, true);
+    outlook2028Repair += outlook2028MachineCount * driverAmount("afs_onderhoud", period, true);
+    outlook2028Filling +=
+      revenue * (driverAmount("afs_inkoop", period, true) / 100) +
+      outlook2028MachineCount * driverAmount("afs_logistiek", period, true);
+    outlook2028Rent +=
+      revenue * (driverAmount(AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key, period, true) / 100);
+  }
+  outlook2028Revenue = roundMoney(outlook2028Revenue);
+  outlook2028Cleaning = roundMoney(outlook2028Cleaning);
+  outlook2028Repair = roundMoney(outlook2028Repair);
+  outlook2028Filling = roundMoney(outlook2028Filling);
+  outlook2028Rent = roundMoney(outlook2028Rent);
+  const outlook2028Contribution = roundMoney(
+    outlook2028Revenue -
+      outlook2028Cleaning -
+      outlook2028Repair -
+      outlook2028Filling -
+      outlook2028Rent,
+  );
+  const outlook2028PerMachine = (value: number) => roundMoney(value / outlook2028MachineCount);
+  const outlook2028Rows = [
+    {
+      key: "revenue",
+      label: "Jaaromzet bij € 2.000 per maand",
+      total: outlook2028Revenue,
+      perMachine: outlook2028PerMachine(outlook2028Revenue),
+    },
+    {
+      key: "cleaning",
+      label: "Schoonmaakkosten",
+      total: outlook2028Cleaning,
+      perMachine: outlook2028PerMachine(outlook2028Cleaning),
+    },
+    {
+      key: "repairs",
+      label: "Reparatie en onderhoud",
+      total: outlook2028Repair,
+      perMachine: outlook2028PerMachine(outlook2028Repair),
+    },
+    {
+      key: "filling",
+      label: "Vullingskosten (incl. bloemeninkoop en logistiek)",
+      total: outlook2028Filling,
+      perMachine: outlook2028PerMachine(outlook2028Filling),
+    },
+    {
+      key: "rent",
+      label: "Huurkosten",
+      total: outlook2028Rent,
+      perMachine: outlook2028PerMachine(outlook2028Rent),
+    },
+    {
+      key: "contribution",
+      label: "Margebijdrage",
+      total: outlook2028Contribution,
+      perMachine: outlook2028PerMachine(outlook2028Contribution),
+    },
+  ];
+
+  return {
+    year,
+    machineCount,
+    scenarioRows,
+    unitEconomicsRows,
+    outlook2028: {
+      machineCount: outlook2028MachineCount,
+      monthlyRevenuePerMachine: outlook2028MonthlyRevenuePerMachine,
+      unitEconomicsRows: outlook2028Rows,
+    },
+  };
 }
 
 function BankAfsScenarioSheet({
@@ -3982,6 +4073,12 @@ function BankAfsScenarioSheet({
 }) {
   const contribution = data.unitEconomicsRows.find((row) => row.key === "contribution");
   const revenue = data.unitEconomicsRows.find((row) => row.key === "revenue");
+  const outlook2028Revenue = data.outlook2028.unitEconomicsRows.find(
+    (row) => row.key === "revenue",
+  );
+  const outlook2028Contribution = data.outlook2028.unitEconomicsRows.find(
+    (row) => row.key === "contribution",
+  );
   return (
     <Card className="bank-report-sheet overflow-hidden" data-bank-report-view="scenario">
       <div className="bank-report-accent h-2 bg-emerald-700" />
@@ -3991,7 +4088,7 @@ function BankAfsScenarioSheet({
             <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
               Daily Flowers · Bankrapportage
             </div>
-            <CardTitle className="text-xl">AFS-cases 2027</CardTitle>
+            <CardTitle className="text-xl">AFS-cases 2027 & verwachting 2028</CardTitle>
             <CardDescription className="mt-1">
               W&V- en cashflowvergelijking van het volledige budget met een case zonder de nieuwe
               machines.
@@ -4096,13 +4193,78 @@ function BankAfsScenarioSheet({
             </tbody>
           </table>
         </div>
+        <div className="rounded-lg border bg-slate-50/60 p-4 xl:col-span-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-base font-semibold">Verwachting nieuwe AFS&apos;en 2028</h3>
+              <p className="text-xs text-muted-foreground">
+                Volledig jaar met {data.outlook2028.machineCount} machines op{" "}
+                {formatEUR(data.outlook2028.monthlyRevenuePerMachine)} omzet per machine per maand.
+              </p>
+            </div>
+            <Badge variant="outline">Run-rate 2028</Badge>
+          </div>
+          <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+            <div className="rounded border bg-white px-3 py-2">
+              <div className="text-muted-foreground">Omzet per maand · 200 machines</div>
+              <div className="text-base font-semibold tabular-nums">
+                {formatEUR(
+                  data.outlook2028.machineCount * data.outlook2028.monthlyRevenuePerMachine,
+                )}
+              </div>
+            </div>
+            <div className="rounded border bg-white px-3 py-2">
+              <div className="text-muted-foreground">Jaaromzet 2028</div>
+              <div className="text-base font-semibold tabular-nums">
+                {formatEUR(outlook2028Revenue?.total ?? 0)}
+              </div>
+            </div>
+            <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <div className="text-emerald-800">Margebijdrage 2028</div>
+              <div className="text-base font-semibold tabular-nums text-emerald-950">
+                {formatEUR(outlook2028Contribution?.total ?? 0)}
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="bank-report-table w-full min-w-[680px] text-xs">
+              <thead>
+                <tr className="bg-slate-900 text-white">
+                  <th className="px-3 py-2 text-left">Onderdeel 2028</th>
+                  <th className="px-3 py-2 text-right">
+                    Totaal {data.outlook2028.machineCount} machines
+                  </th>
+                  <th className="bg-emerald-800 px-3 py-2 text-right">Gemiddeld per machine</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.outlook2028.unitEconomicsRows.map((row) => (
+                  <tr
+                    key={row.key}
+                    className={cn(
+                      "border-t bg-white",
+                      row.key === "contribution" && "bg-emerald-50 font-semibold",
+                    )}
+                  >
+                    <td className="px-3 py-2">{row.label}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.total)}</td>
+                    <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
+                      {formatEUR(row.perMachine)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
         <p className="text-[10px] text-muted-foreground xl:col-span-2">
           De case gebruikt de ingevoerde tranche-omzet en fasering. Vullingskosten bestaan uit
           bloemeninkoop plus de logistieke/vullingsdriver. Schoonmaak, reparatie en huur volgen de
           actieve budgetdrivers per maand. De gemiddelde bedragen zijn gedeeld door alle geplande
           nieuwe machines, ook wanneer een tranche later in 2027 start. In de case zonder nieuwe
           machines vervallen de trancheomzet, directe machinekosten en AFS-investeringen; overige
-          bedrijfs- en financieringsaannames blijven gelijk.
+          bedrijfs- en financieringsaannames blijven gelijk. Voor 2028 worden de laatst beschikbare
+          kostendrivers doorgetrokken over twaalf maanden.
         </p>
       </CardContent>
       <div className="bank-report-footer flex justify-between border-t px-6 py-3 text-[10px] text-muted-foreground">
