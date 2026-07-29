@@ -67,6 +67,7 @@ import {
   exportBankWorkbook,
   exportFinancialPresentation,
   exportFinancialWorkbook,
+  type BankAfsScenarioData,
   type BankExportData,
   type FinancialExportData,
   type FinancialInputRow,
@@ -766,7 +767,10 @@ function ProfitLossPage() {
     () => [...yearPeriods(bankReportYear), ...yearPeriods(String(Number(bankReportYear) + 1))],
     [bankReportYear],
   );
-  const queryMonths = useMemo(() => uniqueSorted([...months, ...bankMonths]), [bankMonths, months]);
+  const queryMonths = useMemo(
+    () => uniqueSorted([...months, ...bankMonths, ...yearPeriods("2026"), ...yearPeriods("2027")]),
+    [bankMonths, months],
+  );
   const periodColumns = visibleColumns;
   const totalColumns = visibleColumns;
   const totalLabel = aggregateLabel(viewMode, months);
@@ -1089,6 +1093,47 @@ function ProfitLossPage() {
       effectiveRevenueBudgets,
       glQ.data,
       salesQ.data,
+    ],
+  );
+  const scenarioCashflowMonths = useMemo(
+    () => [...yearPeriods("2026"), ...yearPeriods("2027")],
+    [],
+  );
+  const { rows: scenario2027ProfitLossRows, operatingResult: scenario2027OperatingResult } =
+    useMemo(
+      () =>
+        buildProfitLoss({
+          months: scenarioCashflowMonths,
+          glRows: glQ.data ?? [],
+          salesRows: salesQ.data ?? [],
+          afsRentalInvoices: afsRentalInvoicesQ.data ?? [],
+          budgetLines: effectiveBudgetLines,
+          revenueBudgets: effectiveRevenueBudgets,
+          accounts: accountsQ.data ?? [],
+        }),
+      [
+        accountsQ.data,
+        afsRentalInvoicesQ.data,
+        effectiveBudgetLines,
+        effectiveRevenueBudgets,
+        glQ.data,
+        salesQ.data,
+        scenarioCashflowMonths,
+      ],
+    );
+  const scenario2027CashflowRows = useMemo(
+    () =>
+      buildCashflowReport({
+        months: scenarioCashflowMonths,
+        inputs: cashflowInputsQ.data ?? [],
+        operatingResult: scenario2027OperatingResult,
+        afsBlocks: cashflowAfsBlocksQ.data ?? [],
+      }),
+    [
+      cashflowAfsBlocksQ.data,
+      cashflowInputsQ.data,
+      scenario2027OperatingResult,
+      scenarioCashflowMonths,
     ],
   );
   const bankCashflowRows = useMemo(
@@ -2378,6 +2423,11 @@ function ProfitLossPage() {
             actualThroughMonth={bankActualThroughMonth}
             profitLossRows={bankProfitLossRows}
             cashflowRows={bankCashflowRows}
+            scenario2027ProfitLossRows={scenario2027ProfitLossRows}
+            scenario2027CashflowRows={scenario2027CashflowRows}
+            afsBudgetTranches={afsBudgetTranchesQ.data ?? []}
+            afsBudgetTrancheRevenues={afsBudgetTrancheRevenuesQ.data ?? []}
+            driverRules={costDriverRulesQ.data ?? []}
             loading={exportDataLoading}
             onReportYearChange={setBankReportYear}
             onActualThroughMonthChange={setBankActualThroughMonth}
@@ -3553,6 +3603,11 @@ function BankReportingPanel({
   actualThroughMonth,
   profitLossRows,
   cashflowRows,
+  scenario2027ProfitLossRows,
+  scenario2027CashflowRows,
+  afsBudgetTranches,
+  afsBudgetTrancheRevenues,
+  driverRules,
   loading,
   onReportYearChange,
   onActualThroughMonthChange,
@@ -3561,6 +3616,11 @@ function BankReportingPanel({
   actualThroughMonth: string;
   profitLossRows: PlRow[];
   cashflowRows: CashflowReportRow[];
+  scenario2027ProfitLossRows: PlRow[];
+  scenario2027CashflowRows: CashflowReportRow[];
+  afsBudgetTranches: AfsBudgetTrancheRow[];
+  afsBudgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
+  driverRules: PlBudgetDriverRule[];
   loading: boolean;
   onReportYearChange: (year: string) => void;
   onActualThroughMonthChange: (month: string) => void;
@@ -3604,6 +3664,13 @@ function BankReportingPanel({
   );
   const bankCashflowRowsWithNeed = [...bankCashflowStatementRows, ...bankCashNeedRows];
   const compactProfitLossRows = compactBankProfitLossRows(bankProfitLossRows);
+  const afsScenario2027 = buildAfsScenario2027({
+    profitLossRows: scenario2027ProfitLossRows,
+    cashflowRows: scenario2027CashflowRows,
+    budgetTranches: afsBudgetTranches,
+    budgetTrancheRevenues: afsBudgetTrancheRevenues,
+    driverRules,
+  });
 
   async function exportBankExcel() {
     setExportingBankExcel(true);
@@ -3615,6 +3682,7 @@ function BankReportingPanel({
         months: reportMonths,
         profitLossRows: compactProfitLossRows,
         cashflowRows: bankCashflowRowsWithNeed,
+        afsScenario2027,
       };
       await exportBankWorkbook(exportData);
       toast.success("Bankrapportage als Excel geëxporteerd");
@@ -3686,6 +3754,11 @@ function BankReportingPanel({
         </CardContent>
       </Card>
 
+      <BankAfsScenarioSheet
+        data={afsScenario2027}
+        loading={loading}
+        generatedLabel={generatedLabel}
+      />
       <BankStatementSheet
         view="profit-loss"
         title="Resultaten & prognose"
@@ -3710,6 +3783,333 @@ function BankReportingPanel({
         loading={loading}
       />
     </div>
+  );
+}
+
+function buildAfsScenario2027({
+  profitLossRows,
+  cashflowRows,
+  budgetTranches,
+  budgetTrancheRevenues,
+  driverRules,
+}: {
+  profitLossRows: PlRow[];
+  cashflowRows: CashflowReportRow[];
+  budgetTranches: AfsBudgetTrancheRow[];
+  budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
+  driverRules: PlBudgetDriverRule[];
+}): BankAfsScenarioData {
+  const year = "2027";
+  const periods = yearPeriods(year);
+  const tranches = budgetTranches.filter(
+    (tranche) => tranche.budget_year === Number(year) && tranche.start_period.startsWith(year),
+  );
+  const trancheById = new Map(tranches.map((tranche) => [tranche.id, tranche]));
+  const revenueByPeriod = blankValues(periods);
+  for (const revenue of budgetTrancheRevenues) {
+    const tranche = trancheById.get(revenue.cashflow_input_id);
+    if (!tranche || !periods.includes(revenue.period) || tranche.start_period > revenue.period)
+      continue;
+    const perMachine = Number(revenue.amount_per_machine ?? 0);
+    revenueByPeriod[revenue.period] +=
+      perMachine > 0
+        ? perMachine * Number(tranche.machine_count ?? 0)
+        : Number(revenue.amount ?? 0);
+  }
+
+  const machineCount = tranches.reduce(
+    (sum, tranche) => sum + Number(tranche.machine_count ?? 0),
+    0,
+  );
+  const driverAmount = (driverKey: string, period: string) => {
+    const definition =
+      AFS_COST_DRIVER_DEFINITIONS.find((driver) => driver.driver_key === driverKey) ??
+      (driverKey === AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key
+        ? AFS_BUDGET_MACHINE_RENT_DRIVER
+        : undefined);
+    const rules = driverRules
+      .filter((rule) => rule.driver_key === driverKey)
+      .sort((a, b) => comparePeriods(a.from_period, b.from_period));
+    return Number(activeRuleForPeriod(rules, period)?.amount ?? definition?.defaultAmount ?? 0);
+  };
+
+  let revenueTotal = 0;
+  let cleaningTotal = 0;
+  let repairTotal = 0;
+  let fillingTotal = 0;
+  let rentTotal = 0;
+  for (const period of periods) {
+    const revenue = Number(revenueByPeriod[period] ?? 0);
+    const activeMachineCount = tranches
+      .filter((tranche) => tranche.start_period <= period)
+      .reduce((sum, tranche) => sum + Number(tranche.machine_count ?? 0), 0);
+    revenueTotal += revenue;
+    cleaningTotal += activeMachineCount * driverAmount("afs_schoonmaak", period);
+    repairTotal += activeMachineCount * driverAmount("afs_onderhoud", period);
+    fillingTotal +=
+      revenue * (driverAmount("afs_inkoop", period) / 100) +
+      activeMachineCount * driverAmount("afs_logistiek", period);
+    rentTotal += revenue * (driverAmount(AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key, period) / 100);
+  }
+
+  revenueTotal = roundMoney(revenueTotal);
+  cleaningTotal = roundMoney(cleaningTotal);
+  repairTotal = roundMoney(repairTotal);
+  fillingTotal = roundMoney(fillingTotal);
+  rentTotal = roundMoney(rentTotal);
+  const incrementalCosts = roundMoney(cleaningTotal + repairTotal + fillingTotal + rentTotal);
+  const contribution = roundMoney(revenueTotal - incrementalCosts);
+  const budgetTotal = (key: string) => {
+    const row = profitLossRows.find((candidate) => candidate.key === key);
+    return roundMoney(sumValues(row?.budgetValues ?? {}, periods));
+  };
+  const withRevenue = budgetTotal("revenue-total");
+  const withCostOfGoods = budgetTotal("subtotal-cost_of_goods");
+  const withGrossMargin = budgetTotal("gross-margin");
+  const withResult = budgetTotal("result");
+  const cashflowBudgetTotal = (key: string) => {
+    const row = cashflowRows.find((candidate) => candidate.key === key);
+    return roundMoney(sumValues(row?.values.budget ?? {}, periods));
+  };
+  const afsInvestmentCashflow = cashflowBudgetTotal("investment-afs-total");
+  const withNetCashflow = cashflowBudgetTotal("net-cashflow");
+  const withClosingCash =
+    cashflowRows.find((row) => row.key === "closing-cash-balance")?.values.budget["2027-12"] ?? 0;
+  const incrementalCashImpact = roundMoney(contribution + afsInvestmentCashflow);
+
+  const scenarioRows = [
+    {
+      key: "revenue",
+      label: "Omzet",
+      withoutMachines: roundMoney(withRevenue - revenueTotal),
+      withMachines: withRevenue,
+      difference: revenueTotal,
+    },
+    {
+      key: "cost-of-goods",
+      label: "Kostprijs omzet",
+      withoutMachines: roundMoney(withCostOfGoods - incrementalCosts),
+      withMachines: withCostOfGoods,
+      difference: incrementalCosts,
+    },
+    {
+      key: "gross-margin",
+      label: "Brutomarge",
+      withoutMachines: roundMoney(withGrossMargin - contribution),
+      withMachines: withGrossMargin,
+      difference: contribution,
+    },
+    {
+      key: "result",
+      label: "Resultaat",
+      withoutMachines: roundMoney(withResult - contribution),
+      withMachines: withResult,
+      difference: contribution,
+    },
+    {
+      key: "afs-investment",
+      label: "Investeringen nieuwe AFS'en (cash-out)",
+      withoutMachines: 0,
+      withMachines: roundMoney(Math.abs(afsInvestmentCashflow)),
+      difference: roundMoney(Math.abs(afsInvestmentCashflow)),
+    },
+    {
+      key: "net-cashflow",
+      label: "Netto cashflow",
+      withoutMachines: roundMoney(withNetCashflow - incrementalCashImpact),
+      withMachines: withNetCashflow,
+      difference: incrementalCashImpact,
+    },
+    {
+      key: "closing-cash",
+      label: "Eindbalans cash",
+      withoutMachines: roundMoney(Number(withClosingCash) - incrementalCashImpact),
+      withMachines: roundMoney(withClosingCash),
+      difference: incrementalCashImpact,
+    },
+  ];
+  const perMachine = (value: number) => (machineCount > 0 ? roundMoney(value / machineCount) : 0);
+  const unitEconomicsRows = [
+    {
+      key: "revenue",
+      label: "Jaaromzet nieuwe machines",
+      total: revenueTotal,
+      perMachine: perMachine(revenueTotal),
+    },
+    {
+      key: "cleaning",
+      label: "Schoonmaakkosten",
+      total: cleaningTotal,
+      perMachine: perMachine(cleaningTotal),
+    },
+    {
+      key: "repairs",
+      label: "Reparatie en onderhoud",
+      total: repairTotal,
+      perMachine: perMachine(repairTotal),
+    },
+    {
+      key: "filling",
+      label: "Vullingskosten (incl. bloemeninkoop en logistiek)",
+      total: fillingTotal,
+      perMachine: perMachine(fillingTotal),
+    },
+    {
+      key: "rent",
+      label: "Huurkosten",
+      total: rentTotal,
+      perMachine: perMachine(rentTotal),
+    },
+    {
+      key: "contribution",
+      label: "Margebijdrage",
+      total: contribution,
+      perMachine: perMachine(contribution),
+    },
+  ];
+
+  return { year, machineCount, scenarioRows, unitEconomicsRows };
+}
+
+function BankAfsScenarioSheet({
+  data,
+  loading,
+  generatedLabel,
+}: {
+  data: BankAfsScenarioData;
+  loading: boolean;
+  generatedLabel: string;
+}) {
+  const contribution = data.unitEconomicsRows.find((row) => row.key === "contribution");
+  const revenue = data.unitEconomicsRows.find((row) => row.key === "revenue");
+  return (
+    <Card className="bank-report-sheet overflow-hidden" data-bank-report-view="scenario">
+      <div className="bank-report-accent h-2 bg-emerald-700" />
+      <CardHeader className="border-b">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+              Daily Flowers · Bankrapportage
+            </div>
+            <CardTitle className="text-xl">AFS-cases 2027</CardTitle>
+            <CardDescription className="mt-1">
+              W&V- en cashflowvergelijking van het volledige budget met een case zonder de nieuwe
+              machines.
+            </CardDescription>
+          </div>
+          <Button
+            className="bank-report-no-print"
+            size="sm"
+            variant="outline"
+            onClick={() => printBankReport("scenario")}
+            disabled={loading}
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            Print deze view
+          </Button>
+        </div>
+        <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+          <div className="rounded border px-3 py-2">
+            <div className="text-muted-foreground">Nieuwe machines</div>
+            <div className="text-base font-semibold tabular-nums">{data.machineCount}</div>
+            <div className="text-muted-foreground">Volgens de tranches van 2027</div>
+          </div>
+          <div className="rounded border px-3 py-2">
+            <div className="text-muted-foreground">Gemiddelde jaaromzet per machine</div>
+            <div className="text-base font-semibold tabular-nums">
+              {formatEUR(revenue?.perMachine ?? 0)}
+            </div>
+            <div className="text-muted-foreground">Inclusief ingroei gedurende 2027</div>
+          </div>
+          <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <div className="text-emerald-800">Margebijdrage per machine</div>
+            <div className="text-base font-semibold tabular-nums text-emerald-950">
+              {formatEUR(contribution?.perMachine ?? 0)}
+            </div>
+            <div className="text-emerald-800">Na directe machinekosten</div>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-6 p-5 xl:grid-cols-2">
+        <div className="overflow-x-auto">
+          <h3 className="mb-2 text-sm font-semibold">W&V-vergelijking 2027</h3>
+          <table className="bank-report-table w-full min-w-[680px] text-xs">
+            <thead>
+              <tr className="bg-slate-900 text-white">
+                <th className="px-3 py-2 text-left">Regel</th>
+                <th className="px-3 py-2 text-right">Zonder nieuwe machines</th>
+                <th className="bg-emerald-800 px-3 py-2 text-right">
+                  Met {data.machineCount} machines
+                </th>
+                <th className="px-3 py-2 text-right">Verschil</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.scenarioRows.map((row) => (
+                <tr
+                  key={row.key}
+                  className={cn(
+                    "border-t",
+                    (row.key === "result" || row.key === "closing-cash") &&
+                      "bg-emerald-50 font-semibold",
+                  )}
+                >
+                  <td className="px-3 py-2">{row.label}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {formatEUR(row.withoutMachines)}
+                  </td>
+                  <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
+                    {formatEUR(row.withMachines)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.difference)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="overflow-x-auto">
+          <h3 className="mb-2 text-sm font-semibold">Unit economics nieuwe AFS&apos;en</h3>
+          <table className="bank-report-table w-full min-w-[560px] text-xs">
+            <thead>
+              <tr className="bg-slate-900 text-white">
+                <th className="px-3 py-2 text-left">Onderdeel</th>
+                <th className="px-3 py-2 text-right">Totaal {data.machineCount} machines</th>
+                <th className="bg-emerald-800 px-3 py-2 text-right">Gemiddeld per machine</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.unitEconomicsRows.map((row) => (
+                <tr
+                  key={row.key}
+                  className={cn(
+                    "border-t",
+                    row.key === "contribution" && "bg-emerald-50 font-semibold",
+                  )}
+                >
+                  <td className="px-3 py-2">{row.label}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.total)}</td>
+                  <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
+                    {formatEUR(row.perMachine)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] text-muted-foreground xl:col-span-2">
+          De case gebruikt de ingevoerde tranche-omzet en fasering. Vullingskosten bestaan uit
+          bloemeninkoop plus de logistieke/vullingsdriver. Schoonmaak, reparatie en huur volgen de
+          actieve budgetdrivers per maand. De gemiddelde bedragen zijn gedeeld door alle geplande
+          nieuwe machines, ook wanneer een tranche later in 2027 start. In de case zonder nieuwe
+          machines vervallen de trancheomzet, directe machinekosten en AFS-investeringen; overige
+          bedrijfs- en financieringsaannames blijven gelijk.
+        </p>
+      </CardContent>
+      <div className="bank-report-footer flex justify-between border-t px-6 py-3 text-[10px] text-muted-foreground">
+        <span>Daily Flowers · Vertrouwelijk</span>
+        <span>Gegenereerd op {generatedLabel}</span>
+      </div>
+    </Card>
   );
 }
 
@@ -3852,8 +4252,8 @@ function BankStatementSheet({
         ) : null}
         {view === "cashflow" ? (
           <p className="mt-2 text-[10px] text-muted-foreground">
-            De cumulatieve behoefte start op € 0 per januari {reportYear}; een bestaande
-            banksaldo-buffer is niet als beschikbare kas meegenomen.
+            De cumulatieve behoefte start met de ingevoerde openingsbalans cash van januari{" "}
+            {reportYear}. Zonder invoer wordt € 0 als beginstand gebruikt.
           </p>
         ) : null}
       </CardHeader>
@@ -4275,7 +4675,7 @@ function bankReportValues(
   };
 }
 
-function printBankReport(view: "profit-loss" | "cashflow") {
+function printBankReport(view: "profit-loss" | "cashflow" | "scenario") {
   document.body.dataset.bankPrintView = view;
   const cleanup = () => {
     delete document.body.dataset.bankPrintView;

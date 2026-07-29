@@ -72,6 +72,25 @@ export type BankExportData = {
   months: string[];
   profitLossRows: BankExportRow[];
   cashflowRows: BankExportRow[];
+  afsScenario2027?: BankAfsScenarioData;
+};
+
+export type BankAfsScenarioData = {
+  year: string;
+  machineCount: number;
+  scenarioRows: Array<{
+    key: string;
+    label: string;
+    withoutMachines: number;
+    withMachines: number;
+    difference: number;
+  }>;
+  unitEconomicsRows: Array<{
+    key: string;
+    label: string;
+    total: number;
+    perMachine: number;
+  }>;
 };
 
 const METRIC_LABELS: Record<FinancialMetricColumn, string> = {
@@ -183,6 +202,13 @@ export async function exportBankWorkbook(data: BankExportData) {
     buildBankSummarySheet(XLSX, data, data.cashflowRows, "Cashflow samenvatting"),
     "Cashflow samenvatting",
   );
+  if (data.afsScenario2027) {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      buildBankAfsScenarioSheet(XLSX, data.afsScenario2027),
+      `AFS cases ${data.afsScenario2027.year}`,
+    );
+  }
 
   const stamp = new Date().toISOString().slice(0, 10);
   const fileName = `Daily Flowers bankrapportage ${data.reportYear}-${data.nextYear} ${stamp}.xlsx`;
@@ -221,7 +247,54 @@ async function styleBankWorkbook(rawWorkbook: ArrayBuffer, data: BankExportData)
       ),
     );
   }
+  if (data.afsScenario2027) {
+    const path = "xl/worksheets/sheet5.xml";
+    const file = zip.file(path);
+    if (file) {
+      const xml = await file.async("string");
+      zip.file(path, applyBankScenarioXmlStyles(xml, data.afsScenario2027));
+    }
+  }
   return zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+}
+
+function applyBankScenarioXmlStyles(xml: string, data: BankAfsScenarioData) {
+  const unitHeaderRow = 7 + data.scenarioRows.length;
+  const contributionRow = unitHeaderRow + data.unitEconomicsRows.length;
+  const highlightedScenarioRows = new Set(
+    data.scenarioRows.flatMap((row, index) =>
+      row.key === "result" || row.key === "closing-cash" ? [6 + index] : [],
+    ),
+  );
+  const styled = xml.replace(
+    /<c r="([A-Z]+)(\d+)"(?: s="\d+")?/g,
+    (match, columnLetters: string, rawRow: string) => {
+      const rowNumber = Number(rawRow);
+      const column = excelColumnNumber(columnLetters);
+      let style = 0;
+      if (rowNumber === 1) style = 2;
+      else if (rowNumber === 2 || rowNumber === 3) style = 3;
+      else if (rowNumber === 5 || rowNumber === unitHeaderRow) {
+        style = column === 3 ? 7 : 4;
+      } else if (rowNumber >= 6) {
+        const isResult = highlightedScenarioRows.has(rowNumber) || rowNumber === contributionRow;
+        style = isResult ? (column >= 2 ? 9 : 6) : column >= 2 ? 1 : 0;
+      }
+      return `${match.replace(/ s="\d+"/, "")} s="${style}"`;
+    },
+  );
+  return styled
+    .replace(/<sheetView([^>]*)>/, (_match, attributes: string) => {
+      const selfClosing = /\/\s*$/.test(attributes);
+      const cleanAttributes = attributes.replace(/\s+showGridLines="\d"/, "").replace(/\/\s*$/, "");
+      return `<sheetView${cleanAttributes} showGridLines="0"${selfClosing ? "/" : ""}>`;
+    })
+    .replace(/<pageMargins\b[^>]*\/>/g, "")
+    .replace(/<pageSetup\b[^>]*\/>/g, "")
+    .replace(
+      "</worksheet>",
+      '<pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="1"/></worksheet>',
+    );
 }
 
 function applyBankWorkbookXmlStyles(
@@ -528,6 +601,44 @@ function buildBankMonthlySheet(
     if (!cell) continue;
     cell.s = period <= cutoff ? headerStyle() : bankForecastHeaderStyle();
   }
+  return sheet;
+}
+
+function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsScenarioData) {
+  const matrix: Array<Array<string | number | null>> = [
+    [`Daily Flowers — AFS-scenariovergelijking ${data.year}`],
+    [
+      `W&V en cashflow met en zonder ${data.machineCount} nieuwe machines, plus gemiddelde unit economics per geplande machine.`,
+    ],
+    ["Bedragen exclusief btw · rekening houdend met de ingevoerde tranchefasering"],
+    [],
+    [
+      "Scenario-regel",
+      "Zonder nieuwe machines",
+      `Met ${data.machineCount} nieuwe machines`,
+      "Verschil",
+    ],
+    ...data.scenarioRows.map((row) => [
+      row.label,
+      row.withoutMachines,
+      row.withMachines,
+      row.difference,
+    ]),
+    [],
+    ["Unit economics nieuwe AFS", `Totaal ${data.machineCount} machines`, "Gemiddeld per machine"],
+    ...data.unitEconomicsRows.map((row) => [row.label, row.total, row.perMachine]),
+  ];
+  const columnCount = 4;
+  const sheet = XLSX.utils.aoa_to_sheet(matrix);
+  sheet["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: columnCount - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: columnCount - 1 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: columnCount - 1 } },
+  ];
+  sheet["!cols"] = [{ wch: 42 }, { wch: 24 }, { wch: 24 }, { wch: 20 }];
+  sheet["!rows"] = [{ hpt: 30 }, { hpt: 20 }, { hpt: 18 }, { hpt: 8 }, { hpt: 30 }];
+  setSheetFreeze(sheet, 5, 1);
+  setBankPrintLayout(sheet);
   return sheet;
 }
 

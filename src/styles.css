@@ -158,9 +158,13 @@
   }
 
   body[data-bank-print-view="profit-loss"] .bank-report-sheet[data-bank-report-view="profit-loss"],
-  body[data-bank-print-view="profit-loss"] .bank-report-sheet[data-bank-report-view="profit-loss"] *,
+  body[data-bank-print-view="profit-loss"]
+    .bank-report-sheet[data-bank-report-view="profit-loss"]
+    *,
   body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"],
-  body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"] * {
+  body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"] *,
+  body[data-bank-print-view="scenario"] .bank-report-sheet[data-bank-report-view="scenario"],
+  body[data-bank-print-view="scenario"] .bank-report-sheet[data-bank-report-view="scenario"] * {
     visibility: visible;
   }
 
