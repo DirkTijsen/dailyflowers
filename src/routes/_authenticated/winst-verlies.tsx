@@ -69,9 +69,11 @@ import {
   exportFinancialWorkbook,
   type BankAfsScenarioData,
   type BankExportData,
+  type BankSourceSheet,
   type FinancialExportData,
   type FinancialInputRow,
 } from "@/lib/financial-export";
+import { exportBankReportPdf } from "@/lib/bank-pdf-export";
 
 export const Route = createFileRoute("/_authenticated/winst-verlies")({
   head: () => ({ meta: [{ title: "W&V / Cashflow - Daily Flowers" }] }),
@@ -1152,6 +1154,39 @@ function ProfitLossPage() {
         afsBlocks: cashflowAfsBlocksQ.data ?? [],
       }),
     [bankMonths, bankOperatingResult, cashflowAfsBlocksQ.data, cashflowInputsQ.data],
+  );
+  const bankSourceSheets = useMemo(
+    () =>
+      buildBankSourceSheets({
+        months: bankMonths,
+        glRows: glQ.data ?? [],
+        salesRows: salesQ.data ?? [],
+        budgetLines: budgetsQ.data ?? [],
+        revenueBudgets: revenueBudgetsQ.data ?? [],
+        driverRules: costDriverRulesQ.data ?? [],
+        budgetTranches: afsBudgetTranchesQ.data ?? [],
+        budgetTrancheRevenues: afsBudgetTrancheRevenuesQ.data ?? [],
+        cashflowInputs: cashflowInputsQ.data ?? [],
+        afsBlocks: cashflowAfsBlocksQ.data ?? [],
+        rentalAgreements: afsRentalAgreementsQ.data ?? [],
+        rentalInvoices: afsRentalInvoicesQ.data ?? [],
+        machineActuals: afsMachineActualsQ.data ?? [],
+      }),
+    [
+      afsBudgetTrancheRevenuesQ.data,
+      afsBudgetTranchesQ.data,
+      afsMachineActualsQ.data,
+      afsRentalAgreementsQ.data,
+      afsRentalInvoicesQ.data,
+      bankMonths,
+      budgetsQ.data,
+      cashflowAfsBlocksQ.data,
+      cashflowInputsQ.data,
+      costDriverRulesQ.data,
+      glQ.data,
+      revenueBudgetsQ.data,
+      salesQ.data,
+    ],
   );
   const revenueActualsByChannel = useMemo(
     () => buildRevenueActualsByChannel(salesQ.data ?? [], months),
@@ -2435,6 +2470,7 @@ function ProfitLossPage() {
             afsBudgetTranches={afsBudgetTranchesQ.data ?? []}
             afsBudgetTrancheRevenues={afsBudgetTrancheRevenuesQ.data ?? []}
             driverRules={costDriverRulesQ.data ?? []}
+            sourceSheets={bankSourceSheets}
             loading={exportDataLoading}
             onReportYearChange={setBankReportYear}
             onActualThroughMonthChange={setBankActualThroughMonth}
@@ -3605,6 +3641,331 @@ type BankCashNeedSummary = {
   peakAdditionalPeriod: string | null;
 };
 
+function buildBankSourceSheets({
+  months,
+  glRows,
+  salesRows,
+  budgetLines,
+  revenueBudgets,
+  driverRules,
+  budgetTranches,
+  budgetTrancheRevenues,
+  cashflowInputs,
+  afsBlocks,
+  rentalAgreements,
+  rentalInvoices,
+  machineActuals,
+}: {
+  months: string[];
+  glRows: GlPeriodRow[];
+  salesRows: SalesPeriodRow[];
+  budgetLines: PlBudgetLine[];
+  revenueBudgets: RevenueBudgetRow[];
+  driverRules: PlBudgetDriverRule[];
+  budgetTranches: AfsBudgetTrancheRow[];
+  budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
+  cashflowInputs: CashflowInputRecord[];
+  afsBlocks: CashflowAfsBlock[];
+  rentalAgreements: AfsRentalAgreementRow[];
+  rentalInvoices: AfsRentalInvoiceRow[];
+  machineActuals: AfsMachineActualRow[];
+}): BankSourceSheet[] {
+  const inScope = (period: string) => months.includes(period);
+  return [
+    {
+      name: "Bron GL actuals",
+      title: "Grootboekactuals",
+      description: "Maandtotalen per grootboekrekening die de actuele W&V voeden.",
+      headers: [
+        "Periode",
+        "Kwartaal",
+        "Rekening-ID",
+        "Rekeningcode",
+        "Rekeningnaam",
+        "W&V-rubriek",
+        "Omzetkanaal",
+        "Sorteervolgorde",
+        "Aantal boekingen",
+        "Bedrag",
+      ],
+      rows: glRows
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.period,
+          row.quarter_key,
+          row.account_id,
+          row.account_code,
+          row.account_name,
+          row.pl_section,
+          row.revenue_channel,
+          row.sort_order,
+          row.entry_count,
+          Number(row.amount ?? 0),
+        ]),
+      numericColumns: [7, 8, 9],
+    },
+    {
+      name: "Bron omzet actuals",
+      title: "Omzetactuals per kanaal",
+      description: "Maandomzet per verkoopkanaal, inclusief aantallen en btw-aansluiting.",
+      headers: ["Periode", "Kanaal", "Transacties", "Netto omzet", "Bruto omzet", "Btw"],
+      rows: salesRows
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.period,
+          row.channel,
+          row.tx_count,
+          Number(row.net_total ?? 0),
+          Number(row.gross_total ?? 0),
+          Number(row.vat_total ?? 0),
+        ]),
+      numericColumns: [2, 3, 4, 5],
+    },
+    {
+      name: "Budgetregels W&V",
+      title: "Handmatige W&V-budgetregels",
+      description: "Alle opgeslagen W&V-budgetregels binnen de modelhorizon.",
+      headers: [
+        "ID",
+        "Periode",
+        "Budgetjaar",
+        "Rubriek",
+        "Sleutel",
+        "Regel",
+        "Soort",
+        "Bedrag",
+        "Bronbestand",
+        "Brontab",
+        "Bronlabel",
+        "Sorteervolgorde",
+      ],
+      rows: budgetLines
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.id,
+          row.period,
+          row.budget_year,
+          row.section,
+          row.line_key,
+          row.line_label,
+          row.kind,
+          Number(row.amount ?? 0),
+          row.source_workbook,
+          row.source_sheet,
+          row.source_label,
+          row.sort_order,
+        ]),
+      numericColumns: [2, 7, 11],
+    },
+    {
+      name: "Omzetbudget inputs",
+      title: "Omzetbudgetten",
+      description: "Omzetbudget per kanaal en, waar van toepassing, per bestaande AFS-machine.",
+      headers: ["ID", "Periode", "Kanaal", "Machine-ID", "Bedrag", "Machinenaam", "AFS-nummer"],
+      rows: revenueBudgets
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.id,
+          row.period,
+          row.channel,
+          row.machine_id,
+          Number(row.amount ?? 0),
+          row.machines?.display_name ?? "",
+          row.machines?.afs_number ?? "",
+        ]),
+      numericColumns: [4],
+    },
+    {
+      name: "Driverregels",
+      title: "W&V- en kostprijsdrivers",
+      description:
+        "Ingevoerde percentages, bedragen per AFS, basisbedragen en geldigheidsperioden.",
+      headers: [
+        "ID",
+        "Driver",
+        "Label",
+        "Berekening",
+        "Invoer",
+        "Basisbedrag",
+        "Machineaantal",
+        "Rubriek",
+        "Regelsleutel",
+        "Regellabel",
+        "Bron",
+        "Vanaf",
+        "Tot en met",
+      ],
+      rows: driverRules.map((row) => [
+        row.id,
+        row.driver_key,
+        row.driver_label,
+        row.calculation_type,
+        Number(row.amount ?? 0),
+        row.basis_amount == null ? null : Number(row.basis_amount),
+        row.machine_count == null ? null : Number(row.machine_count),
+        row.section,
+        row.line_key,
+        row.line_label,
+        row.source_label,
+        row.from_period,
+        row.to_period,
+      ]),
+      numericColumns: [4, 5, 6],
+    },
+    {
+      name: "AFS tranches",
+      title: "Nieuwe AFS-budgettranches",
+      description: "Investeringsmoment, startmaand en aantallen van de nieuwe machines.",
+      headers: ["ID", "Budgetjaar", "Tranche", "Aantal machines", "Naam", "Startperiode"],
+      rows: budgetTranches.map((row) => [
+        row.id,
+        row.budget_year,
+        row.tranche_number,
+        row.machine_count,
+        row.display_name,
+        row.start_period,
+      ]),
+      numericColumns: [1, 2, 3],
+    },
+    {
+      name: "AFS trancheomzet",
+      title: "Omzet per nieuwe AFS-tranche",
+      description: "Per-machine invoer en totale trancheomzet per maand.",
+      headers: ["ID", "Tranche-ID", "Periode", "Totale omzet", "Omzet per machine"],
+      rows: budgetTrancheRevenues
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.id,
+          row.cashflow_input_id,
+          row.period,
+          Number(row.amount ?? 0),
+          Number(row.amount_per_machine ?? 0),
+        ]),
+      numericColumns: [3, 4],
+    },
+    {
+      name: "Cashflow inputs",
+      title: "Cashflow-invoer",
+      description: "Openingsbalans, investeringen, financiering en aantallen/blokkeuzes per maand.",
+      headers: [
+        "ID",
+        "Periode",
+        "Regelsleutel",
+        "Actual bedrag",
+        "Budget bedrag",
+        "Actual machines",
+        "Budget machines",
+        "Actual AFS-blok",
+        "Budget AFS-blok",
+      ],
+      rows: cashflowInputs
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.id,
+          row.period,
+          row.line_key,
+          Number(row.actual_amount ?? 0),
+          Number(row.budget_amount ?? 0),
+          Number(row.actual_machine_count ?? 0),
+          Number(row.budget_machine_count ?? 0),
+          row.actual_afs_block_id,
+          row.budget_afs_block_id,
+        ]),
+      numericColumns: [3, 4, 5, 6],
+    },
+    {
+      name: "AFS investeringsblokken",
+      title: "AFS-investeringsblokken",
+      description: "Pakketkosten en referentieaantallen voor de investeringscashflow.",
+      headers: [
+        "ID",
+        "Blok",
+        "Referentie machines",
+        "AFS",
+        "140 daken",
+        "Shipping",
+        "Quality check",
+        "Plaatsing",
+        "KPN/Mollie",
+        "Achtergrond/verbouwing",
+      ],
+      rows: afsBlocks.map((row) => [
+        row.id,
+        Number(row.block_number ?? 0),
+        Number(row.reference_machine_count ?? 0),
+        Number(row.afs_amount ?? 0),
+        Number(row.roofs_140_amount ?? 0),
+        Number(row.shipping_amount ?? 0),
+        Number(row.quality_check_amount ?? 0),
+        Number(row.installation_amount ?? 0),
+        Number(row.kpn_mollie_amount ?? 0),
+        Number(row.location_renovation_amount ?? 0),
+      ]),
+      numericColumns: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    },
+    {
+      name: "AFS huurafspraken",
+      title: "AFS-huurafspraken",
+      description: "Contractuele huurparameters die de werkelijke en budgethuur ondersteunen.",
+      headers: [
+        "ID",
+        "Machine-ID",
+        "Vanaf",
+        "Tot en met",
+        "Vaste huur",
+        "Energie",
+        "Omzetpercentage",
+        "Omzetdrempel",
+        "Status",
+      ],
+      rows: rentalAgreements.map((row) => [
+        row.id,
+        row.machine_id,
+        row.start_period,
+        row.end_period,
+        Number(row.fixed_fee_net ?? 0),
+        Number(row.energy_cost_net ?? 0),
+        Number(row.turnover_rate_percent ?? 0),
+        Number(row.turnover_threshold_net ?? 0),
+        row.status,
+      ]),
+      numericColumns: [4, 5, 6, 7],
+    },
+    {
+      name: "AFS huurfacturen",
+      title: "AFS-huurfacturen",
+      description: "Niet-geannuleerde huuractuals per machine en maand.",
+      headers: ["ID", "Periode", "Machine-ID", "Netto subtotaal", "Status"],
+      rows: rentalInvoices
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.id,
+          row.period,
+          row.machine_id,
+          Number(row.subtotal_net ?? 0),
+          row.status,
+        ]),
+      numericColumns: [3],
+    },
+    {
+      name: "AFS machine actuals",
+      title: "AFS-omzetactuals per machine",
+      description: "Machineomzet uit de maandelijkse aansluiting; bruikbaar voor huurberekeningen.",
+      headers: ["Periode", "Machine-ID", "AFS-nummer", "Netto omzet", "Bruto omzet"],
+      rows: machineActuals
+        .filter((row) => inScope(row.period))
+        .map((row) => [
+          row.period,
+          row.machine_id,
+          row.afs_number,
+          Number(row.net_total ?? 0),
+          Number(row.gross_total ?? 0),
+        ]),
+      numericColumns: [3, 4],
+    },
+  ];
+}
+
 function BankReportingPanel({
   reportYear,
   actualThroughMonth,
@@ -3615,6 +3976,7 @@ function BankReportingPanel({
   afsBudgetTranches,
   afsBudgetTrancheRevenues,
   driverRules,
+  sourceSheets,
   loading,
   onReportYearChange,
   onActualThroughMonthChange,
@@ -3628,11 +3990,13 @@ function BankReportingPanel({
   afsBudgetTranches: AfsBudgetTrancheRow[];
   afsBudgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   driverRules: PlBudgetDriverRule[];
+  sourceSheets: BankSourceSheet[];
   loading: boolean;
   onReportYearChange: (year: string) => void;
   onActualThroughMonthChange: (month: string) => void;
 }) {
   const [exportingBankExcel, setExportingBankExcel] = useState(false);
+  const [exportingBankPdf, setExportingBankPdf] = useState(false);
   const actualThroughPeriod = `${reportYear}-${actualThroughMonth}`;
   const nextYear = String(Number(reportYear) + 1);
   const reportMonths = [...yearPeriods(reportYear), ...yearPeriods(nextYear)];
@@ -3688,7 +4052,9 @@ function BankReportingPanel({
         actualThroughMonth,
         months: reportMonths,
         profitLossRows: compactProfitLossRows,
+        detailedProfitLossRows: bankProfitLossRows,
         cashflowRows: bankCashflowRowsWithNeed,
+        sourceSheets,
         afsScenario2027,
       };
       await exportBankWorkbook(exportData);
@@ -3699,6 +4065,24 @@ function BankReportingPanel({
       });
     } finally {
       setExportingBankExcel(false);
+    }
+  }
+
+  async function exportBankPdf() {
+    setExportingBankPdf(true);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      await exportBankReportPdf({
+        views: ["scenario", "profit-loss", "cashflow"],
+        fileName: `Daily Flowers bankrapportage ${reportYear}-${nextYear} ${stamp}.pdf`,
+      });
+      toast.success("Bankrapportage als PDF geëxporteerd");
+    } catch (error) {
+      toast.error("PDF-export mislukt", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setExportingBankPdf(false);
     }
   }
 
@@ -3713,7 +4097,7 @@ function BankReportingPanel({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <Field label="Rapportagejaar">
               <Select value={reportYear} onValueChange={onReportYearChange}>
                 <SelectTrigger>
@@ -3756,6 +4140,14 @@ function BankReportingPanel({
             >
               <FileSpreadsheet className="mr-2 h-4 w-4" />
               {exportingBankExcel ? "Excel maken..." : "Excel voor bank"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={exportBankPdf}
+              disabled={loading || exportingBankPdf}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              {exportingBankPdf ? "PDF maken..." : "PDF voor bank"}
             </Button>
           </div>
         </CardContent>

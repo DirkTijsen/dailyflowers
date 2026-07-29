@@ -208,3 +208,19 @@
     print-color-adjust: exact;
   }
 }
+
+.bank-report-pdf-host {
+  position: fixed;
+  z-index: -1;
+  top: 0;
+  left: -100000px;
+  overflow: visible;
+  background: white;
+  color: #0f172a;
+}
+
+.bank-report-pdf-capture {
+  border: 0 !important;
+  background: white !important;
+  box-shadow: none !important;
+}
