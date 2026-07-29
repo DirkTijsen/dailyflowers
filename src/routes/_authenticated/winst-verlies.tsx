@@ -186,6 +186,7 @@ type AfsRentalInvoiceRow = {
 type AfsMachineActualRow = {
   period: string;
   machine_id: string | null;
+  afs_number: string | null;
   net_total: number | string | null;
   gross_total: number | string | null;
 };
@@ -227,7 +228,8 @@ const AFS_UNCONTRACTED_RENT_DRIVER: CostDriverDefinition = {
   section: "housing",
   line_key: AFS_RENT_BUDGET_LINE_KEY,
   line_label: AFS_RENT_LINE_LABEL,
-  source_label: "Vast huurpercentage van de budgetomzet van bestaande AFS'en zonder huurafspraak",
+  source_label:
+    "Vast huurpercentage van de budgetomzet van bestaande AFS'en zonder huurafspraak; LEGACY-machines uitgesloten",
   source_sheet: "AFS huurafspraken",
   source_workbook: AFS_RENT_SOURCE_WORKBOOK,
   input_label: "% van omzet bestaande AFS'en zonder actieve huurafspraak",
@@ -916,7 +918,7 @@ function ProfitLossPage() {
     queryFn: async () => {
       const { data, error } = await db
         .from<AfsMachineActualRow>("vw_monthly_machine")
-        .select("period,machine_id,net_total,gross_total")
+        .select("period,machine_id,afs_number,net_total,gross_total")
         .in("period", queryMonths)
         .eq("channel", "bold_afs");
       if (error) throw error;
@@ -1212,6 +1214,10 @@ function ProfitLossPage() {
       agreements: afsRentalAgreementsQ.data ?? [],
       driverRules: costDriverRulesQ.data ?? [],
       turnoverByMachinePeriod: afsUncontractedTurnover,
+      excludedMachineIds: legacyAfsMachineIds({
+        revenueBudgets: revenueBudgetsQ.data ?? [],
+        machineActuals: afsMachineActualsQ.data ?? [],
+      }),
       months,
     });
     budgetInputRows.push({
@@ -2556,8 +2562,10 @@ function BudgetInputsPanel({
               </CardTitle>
               <CardDescription>
                 Voor bestaande machines zonder actieve huurafspraak wordt dit vaste percentage over
-                hun omzetbudget berekend.
+                hun omzetbudget berekend. Machines met een code die begint met LEGACY tellen niet
+                mee.
               </CardDescription>
+              <Badge variant="outline">LEGACY-machines uitgesloten</Badge>
             </div>
             <label className="w-full space-y-1.5 sm:w-64 sm:shrink-0">
               <span className="block text-sm font-medium">Huurpercentage</span>
@@ -4945,6 +4953,7 @@ function buildAfsRentalBudgetLines({
     agreements,
     driverRules,
     turnoverByMachinePeriod,
+    excludedMachineIds: legacyAfsMachineIds({ revenueBudgets, machineActuals }),
     months,
   });
 
@@ -4971,7 +4980,7 @@ function buildAfsRentalBudgetLines({
         amount: roundMoney(retainedAmount),
         source_workbook: AFS_RENT_SOURCE_WORKBOOK,
         source_sheet: "AFS huurafspraken",
-        source_label: `Contracthuur plus ${formatPercentage(uncontractedRentValues[period].percentage)} over ${formatEUR(uncontractedRentValues[period].revenue)} omzet zonder huurafspraak; basis maximaal ${formatEUR(AFS_RENT_MONTHLY_RETAINED_AMOUNT)}`,
+        source_label: `Contracthuur plus ${formatPercentage(uncontractedRentValues[period].percentage)} over ${formatEUR(uncontractedRentValues[period].revenue)} omzet zonder huurafspraak (LEGACY uitgesloten); basis maximaal ${formatEUR(AFS_RENT_MONTHLY_RETAINED_AMOUNT)}`,
         sort_order: 430,
       },
       {
@@ -5098,11 +5107,13 @@ function afsUncontractedRentValues({
   agreements,
   driverRules,
   turnoverByMachinePeriod,
+  excludedMachineIds,
   months,
 }: {
   agreements: AfsRentalAgreementRow[];
   driverRules: PlBudgetDriverRule[];
   turnoverByMachinePeriod: Map<string, number>;
+  excludedMachineIds: Set<string>;
   months: string[];
 }) {
   const rules = driverRules
@@ -5121,7 +5132,9 @@ function afsUncontractedRentValues({
         const separatorIndex = key.lastIndexOf("|");
         if (separatorIndex < 0 || key.slice(separatorIndex + 1) !== period) continue;
         const machineId = key.slice(0, separatorIndex);
-        if (!contractedMachineIds.has(machineId)) revenue += turnover;
+        if (!contractedMachineIds.has(machineId) && !excludedMachineIds.has(machineId)) {
+          revenue += turnover;
+        }
       }
 
       const rule = activeRuleForPeriod(rules, period);
@@ -5136,6 +5149,32 @@ function afsUncontractedRentValues({
       ];
     }),
   ) as Record<string, { percentage: number; revenue: number; amount: number }>;
+}
+
+function legacyAfsMachineIds({
+  revenueBudgets,
+  machineActuals,
+}: {
+  revenueBudgets: RevenueBudgetRow[];
+  machineActuals: AfsMachineActualRow[];
+}) {
+  const ids = new Set<string>();
+
+  for (const budget of revenueBudgets) {
+    if (
+      budget.machine_id &&
+      budget.machines?.afs_number?.trim().toUpperCase().startsWith("LEGACY")
+    ) {
+      ids.add(budget.machine_id);
+    }
+  }
+  for (const actual of machineActuals) {
+    if (actual.machine_id && actual.afs_number?.trim().toUpperCase().startsWith("LEGACY")) {
+      ids.add(actual.machine_id);
+    }
+  }
+
+  return ids;
 }
 
 function afsTurnoverByMachinePeriod({
