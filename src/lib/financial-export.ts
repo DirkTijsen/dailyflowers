@@ -11,6 +11,7 @@ export type FinancialStatementRow = {
   budgetValues?: Record<string, number>;
   ytd?: number;
   budgetYtd?: number;
+  aggregation?: "sum" | "opening" | "ending" | "max";
 };
 
 export type FinancialInputRow = {
@@ -61,7 +62,7 @@ export type BankExportRow = {
   actual: Record<string, number>;
   budget: Record<string, number>;
   projection?: Record<string, number>;
-  aggregation?: "sum" | "ending" | "max";
+  aggregation?: "sum" | "opening" | "ending" | "max";
 };
 
 export type BankExportData = {
@@ -573,6 +574,7 @@ function aggregateBankValues(
   aggregation: BankExportRow["aggregation"] = "sum",
 ) {
   if (periods.length === 0) return 0;
+  if (aggregation === "opening") return Number(values[periods[0]] ?? 0);
   if (aggregation === "ending") return Number(values[periods.at(-1)!] ?? 0);
   if (aggregation === "max") {
     return Math.max(0, ...periods.map((period) => Number(values[period] ?? 0)));
@@ -1071,6 +1073,7 @@ function selectPlPresentationRows(rows: FinancialStatementRow[]) {
 
 function selectCashflowPresentationRows(rows: FinancialStatementRow[]) {
   const preferredKeys = [
+    "opening-cash-balance",
     "operating-result",
     "investment-afs-total",
     "investment_office_property",
@@ -1080,6 +1083,7 @@ function selectCashflowPresentationRows(rows: FinancialStatementRow[]) {
     "debt_loans_repaid",
     "financing-total",
     "net-cashflow",
+    "closing-cash-balance",
   ];
   return preferredKeys
     .map((key) => rows.find((row) => row.key === key))
@@ -1109,6 +1113,15 @@ function statementMetricTotal(
   if (budgetYtd !== undefined && column === "budget") return budgetYtd;
   if (actualYtd !== undefined && budgetYtd !== undefined && column === "variance")
     return actualYtd - budgetYtd;
+  if (months.length > 0 && row.aggregation === "opening") {
+    return statementMetricValue(row, months[0], column);
+  }
+  if (months.length > 0 && row.aggregation === "ending") {
+    return statementMetricValue(row, months.at(-1)!, column);
+  }
+  if (row.aggregation === "max") {
+    return Math.max(0, ...months.map((period) => statementMetricValue(row, period, column)));
+  }
   return months.reduce((sum, period) => sum + statementMetricValue(row, period, column), 0);
 }
 
