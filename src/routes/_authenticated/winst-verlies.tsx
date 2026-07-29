@@ -4775,6 +4775,9 @@ function BankAfsScenarioSheet({
     data.unitEconomicsRows.find((row) => row.key === "result-impact")?.total ?? 0;
   const temporaryMarketingPercentage =
     scenarioRevenue > 0 ? (temporaryMarketing / scenarioRevenue) * 100 : 0;
+  const visibleUnitEconomicsRows = data.unitEconomicsRows.filter(
+    (row) => row.key !== "marketing" && row.key !== "result-impact",
+  );
 
   return (
     <Card
@@ -4874,7 +4877,7 @@ function BankAfsScenarioSheet({
               </tr>
             </thead>
             <tbody>
-              {data.unitEconomicsRows.map((row) => (
+              {visibleUnitEconomicsRows.map((row) => (
                 <tr
                   key={row.key}
                   className={cn(

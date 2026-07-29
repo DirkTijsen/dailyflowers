@@ -445,8 +445,11 @@ function applyBankSupportSheetXmlStyles(
 }
 
 function applyBankScenarioXmlStyles(xml: string, data: BankAfsScenarioData) {
-  const unitHeaderRow = 7 + data.scenarioRows.length;
-  const contributionRow = unitHeaderRow + data.unitEconomicsRows.length;
+  const visibleUnitEconomicsRows = data.unitEconomicsRows.filter(
+    (row) => row.key !== "marketing" && row.key !== "result-impact",
+  );
+  const unitHeaderRow = 10 + data.scenarioRows.length;
+  const contributionRow = unitHeaderRow + visibleUnitEconomicsRows.length;
   const outlookHeaderRow = contributionRow + 2;
   const outlookContributionRow = outlookHeaderRow + data.outlook2028.unitEconomicsRows.length;
   const highlightedScenarioRows = new Set(
@@ -948,6 +951,9 @@ function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsSce
     data.unitEconomicsRows.find((row) => row.key === "result-impact")?.total ?? 0;
   const temporaryMarketingPercentage =
     scenarioRevenue > 0 ? (temporaryMarketing / scenarioRevenue) * 100 : 0;
+  const visibleUnitEconomicsRows = data.unitEconomicsRows.filter(
+    (row) => row.key !== "marketing" && row.key !== "result-impact",
+  );
   const matrix: Array<Array<string | number | null>> = [
     [`Daily Flowers — AFS-scenariovergelijking ${data.year}`],
     [
@@ -979,7 +985,7 @@ function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsSce
       "Per 1 machine",
       "Marge %",
     ],
-    ...data.unitEconomicsRows.map((row) => [
+    ...visibleUnitEconomicsRows.map((row) => [
       row.label,
       row.total,
       row.perMachine,
