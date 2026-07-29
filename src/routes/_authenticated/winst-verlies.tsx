@@ -1162,40 +1162,24 @@ function ProfitLossPage() {
     () => [...yearPeriods("2026"), ...yearPeriods("2027")],
     [],
   );
-  const { rows: scenario2027ProfitLossRows, operatingResult: scenario2027OperatingResult } =
-    useMemo(
-      () =>
-        buildProfitLoss({
-          months: scenarioCashflowMonths,
-          glRows: glQ.data ?? [],
-          salesRows: salesQ.data ?? [],
-          afsRentalInvoices: afsRentalInvoicesQ.data ?? [],
-          budgetLines: effectiveBudgetLines,
-          revenueBudgets: effectiveRevenueBudgets,
-          accounts: accountsQ.data ?? [],
-        }),
-      [
-        accountsQ.data,
-        afsRentalInvoicesQ.data,
-        effectiveBudgetLines,
-        effectiveRevenueBudgets,
-        glQ.data,
-        salesQ.data,
-        scenarioCashflowMonths,
-      ],
-    );
-  const scenario2027CashflowRows = useMemo(
+  const { rows: scenario2027ProfitLossRows } = useMemo(
     () =>
-      buildCashflowReport({
+      buildProfitLoss({
         months: scenarioCashflowMonths,
-        inputs: cashflowInputsQ.data ?? [],
-        operatingResult: scenario2027OperatingResult,
-        afsBlocks: cashflowAfsBlocksQ.data ?? [],
+        glRows: glQ.data ?? [],
+        salesRows: salesQ.data ?? [],
+        afsRentalInvoices: afsRentalInvoicesQ.data ?? [],
+        budgetLines: effectiveBudgetLines,
+        revenueBudgets: effectiveRevenueBudgets,
+        accounts: accountsQ.data ?? [],
       }),
     [
-      cashflowAfsBlocksQ.data,
-      cashflowInputsQ.data,
-      scenario2027OperatingResult,
+      accountsQ.data,
+      afsRentalInvoicesQ.data,
+      effectiveBudgetLines,
+      effectiveRevenueBudgets,
+      glQ.data,
+      salesQ.data,
       scenarioCashflowMonths,
     ],
   );
@@ -2567,7 +2551,6 @@ function ProfitLossPage() {
             profitLossRows={bankProfitLossRows}
             cashflowRows={bankCashflowRows}
             scenario2027ProfitLossRows={scenario2027ProfitLossRows}
-            scenario2027CashflowRows={scenario2027CashflowRows}
             afsBudgetTranches={afsBudgetTranchesQ.data ?? []}
             afsBudgetTrancheRevenues={afsBudgetTrancheRevenuesQ.data ?? []}
             cashflowInputs={cashflowInputsQ.data ?? []}
@@ -4154,7 +4137,6 @@ function BankReportingPanel({
   profitLossRows,
   cashflowRows,
   scenario2027ProfitLossRows,
-  scenario2027CashflowRows,
   afsBudgetTranches,
   afsBudgetTrancheRevenues,
   cashflowInputs,
@@ -4172,7 +4154,6 @@ function BankReportingPanel({
   profitLossRows: PlRow[];
   cashflowRows: CashflowReportRow[];
   scenario2027ProfitLossRows: PlRow[];
-  scenario2027CashflowRows: CashflowReportRow[];
   afsBudgetTranches: AfsBudgetTrancheRow[];
   afsBudgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   cashflowInputs: CashflowInputRecord[];
@@ -4227,10 +4208,10 @@ function BankReportingPanel({
   const compactProfitLossRows = compactBankProfitLossRows(bankProfitLossRows);
   const afsScenario2027 = buildAfsScenario2027({
     profitLossRows: scenario2027ProfitLossRows,
-    cashflowRows: scenario2027CashflowRows,
     budgetTranches: afsBudgetTranches,
     budgetTrancheRevenues: afsBudgetTrancheRevenues,
     driverRules,
+    marketingBudgetMode,
   });
   const bankInvestmentAgenda = buildBankInvestmentAgenda({
     inputs: cashflowInputs,
@@ -4366,7 +4347,7 @@ function BankReportingPanel({
       <BankStatementSheet
         view="profit-loss"
         title="Resultaten & prognose"
-        description={`Actuals t/m ${actualThroughLabel}; daarna ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}. Inclusief budget ${nextYear}.`}
+        description={`Actuals t/m ${actualThroughLabel}; daarna ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}. De prognose is inclusief de volledige trancheplanning van ${afsScenario2027.machineCount} nieuwe AFS'en en budget ${nextYear}.`}
         reportYear={reportYear}
         nextYear={nextYear}
         actualThroughMonth={actualThroughMonth}
@@ -4377,7 +4358,7 @@ function BankReportingPanel({
       <BankStatementSheet
         view="cashflow-current"
         title={`Cashflow & financieringsbehoefte ${reportYear}`}
-        description={`Maandoverzicht ${reportYear}: actuals t/m ${actualThroughLabel} en daarna ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}.`}
+        description={`Maandoverzicht ${reportYear}: actuals t/m ${actualThroughLabel} en daarna ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}. Inclusief de trancheplanning van ${afsScenario2027.machineCount} nieuwe AFS'en en de bijbehorende vooruitbetalingen.`}
         reportYear={reportYear}
         nextYear={nextYear}
         cashflowYear={reportYear}
@@ -4389,7 +4370,7 @@ function BankReportingPanel({
       <BankStatementSheet
         view="cashflow-next"
         title={`Cashflow & financieringsbehoefte ${nextYear}`}
-        description={`Maandoverzicht ${nextYear}: volledig ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}, inclusief investeringen en financieringsbehoefte.`}
+        description={`Maandoverzicht ${nextYear}: volledig ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}. Inclusief ${afsScenario2027.machineCount} nieuwe AFS'en, investeringen en financieringsbehoefte.`}
         reportYear={reportYear}
         nextYear={nextYear}
         cashflowYear={nextYear}
@@ -4409,16 +4390,16 @@ function BankReportingPanel({
 
 function buildAfsScenario2027({
   profitLossRows,
-  cashflowRows,
   budgetTranches,
   budgetTrancheRevenues,
   driverRules,
+  marketingBudgetMode,
 }: {
   profitLossRows: PlRow[];
-  cashflowRows: CashflowReportRow[];
   budgetTranches: AfsBudgetTrancheRow[];
   budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   driverRules: PlBudgetDriverRule[];
+  marketingBudgetMode: MarketingBudgetMode;
 }): BankAfsScenarioData {
   const year = "2027";
   const periods = yearPeriods(year);
@@ -4444,7 +4425,7 @@ function buildAfsScenario2027({
   );
   const driverAmount = (driverKey: string, period: string, carryForward = false) => {
     const definition =
-      AFS_COST_DRIVER_DEFINITIONS.find((driver) => driver.driver_key === driverKey) ??
+      BUDGET_DRIVER_DEFINITIONS.find((driver) => driver.driver_key === driverKey) ??
       (driverKey === AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key
         ? AFS_BUDGET_MACHINE_RENT_DRIVER
         : undefined);
@@ -4464,6 +4445,11 @@ function buildAfsScenario2027({
   let repairTotal = 0;
   let logisticsTotal = 0;
   let rentTotal = 0;
+  let marketingTotal = 0;
+  const marketingDriverKey =
+    marketingBudgetMode === "bank"
+      ? "marketing_verkoopkosten_bank"
+      : "marketing_verkoopkosten_intern";
   for (const period of periods) {
     const revenue = Number(revenueByPeriod[period] ?? 0);
     const activeMachineCount = tranches
@@ -4475,6 +4461,7 @@ function buildAfsScenario2027({
     repairTotal += activeMachineCount * driverAmount("afs_onderhoud", period);
     logisticsTotal += activeMachineCount * driverAmount("afs_logistiek", period);
     rentTotal += revenue * (driverAmount(AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key, period) / 100);
+    marketingTotal += revenue * (driverAmount(marketingDriverKey, period) / 100);
   }
 
   revenueTotal = roundMoney(revenueTotal);
@@ -4483,10 +4470,12 @@ function buildAfsScenario2027({
   repairTotal = roundMoney(repairTotal);
   logisticsTotal = roundMoney(logisticsTotal);
   rentTotal = roundMoney(rentTotal);
+  marketingTotal = roundMoney(marketingTotal);
   const incrementalCosts = roundMoney(
     purchaseTotal + cleaningTotal + repairTotal + logisticsTotal + rentTotal,
   );
   const contribution = roundMoney(revenueTotal - incrementalCosts);
+  const resultImpact = roundMoney(contribution - marketingTotal);
   const budgetTotal = (key: string) => {
     const row = profitLossRows.find((candidate) => candidate.key === key);
     return roundMoney(sumValues(row?.budgetValues ?? {}, periods));
@@ -4494,16 +4483,6 @@ function buildAfsScenario2027({
   const withRevenue = budgetTotal("revenue-total");
   const withCostOfGoods = budgetTotal("subtotal-cost_of_goods");
   const withGrossMargin = budgetTotal("gross-margin");
-  const withResult = budgetTotal("result");
-  const cashflowBudgetTotal = (key: string) => {
-    const row = cashflowRows.find((candidate) => candidate.key === key);
-    return roundMoney(sumValues(row?.values.budget ?? {}, periods));
-  };
-  const afsInvestmentCashflow = cashflowBudgetTotal("investment-afs-total");
-  const withNetCashflow = cashflowBudgetTotal("net-cashflow");
-  const withClosingCash =
-    cashflowRows.find((row) => row.key === "closing-cash-balance")?.values.budget["2027-12"] ?? 0;
-  const incrementalCashImpact = roundMoney(contribution + afsInvestmentCashflow);
 
   const scenarioRows = [
     {
@@ -4526,34 +4505,6 @@ function buildAfsScenario2027({
       withoutMachines: roundMoney(withGrossMargin - contribution),
       withMachines: withGrossMargin,
       difference: contribution,
-    },
-    {
-      key: "result",
-      label: "Resultaat",
-      withoutMachines: roundMoney(withResult - contribution),
-      withMachines: withResult,
-      difference: contribution,
-    },
-    {
-      key: "afs-investment",
-      label: "Investeringen nieuwe AFS'en (cash-out)",
-      withoutMachines: 0,
-      withMachines: roundMoney(Math.abs(afsInvestmentCashflow)),
-      difference: roundMoney(Math.abs(afsInvestmentCashflow)),
-    },
-    {
-      key: "net-cashflow",
-      label: "Netto cashflow",
-      withoutMachines: roundMoney(withNetCashflow - incrementalCashImpact),
-      withMachines: withNetCashflow,
-      difference: incrementalCashImpact,
-    },
-    {
-      key: "closing-cash",
-      label: "Eindbalans cash",
-      withoutMachines: roundMoney(Number(withClosingCash) - incrementalCashImpact),
-      withMachines: roundMoney(withClosingCash),
-      difference: incrementalCashImpact,
     },
   ];
   const perMachine = (value: number) => (machineCount > 0 ? roundMoney(value / machineCount) : 0);
@@ -4596,9 +4547,21 @@ function buildAfsScenario2027({
     },
     {
       key: "contribution",
-      label: "Margebijdrage",
+      label: "Margebijdrage vóór marketing",
       total: contribution,
       perMachine: perMachine(contribution),
+    },
+    {
+      key: "marketing",
+      label: `Marketing (${marketingBudgetMode === "bank" ? "bank" : "intern"} scenario)`,
+      total: marketingTotal,
+      perMachine: perMachine(marketingTotal),
+    },
+    {
+      key: "result-impact",
+      label: "Resultaatbijdrage na marketing",
+      total: resultImpact,
+      perMachine: perMachine(resultImpact),
     },
   ];
 
@@ -4803,6 +4766,16 @@ function BankAfsScenarioSheet({
   loading: boolean;
   generatedLabel: string;
 }) {
+  const scenarioRevenue = data.scenarioRows.find((row) => row.key === "revenue")?.difference ?? 0;
+  const scenarioGrossMargin =
+    data.scenarioRows.find((row) => row.key === "gross-margin")?.difference ?? 0;
+  const temporaryMarketing =
+    data.unitEconomicsRows.find((row) => row.key === "marketing")?.total ?? 0;
+  const operationalCashContribution =
+    data.unitEconomicsRows.find((row) => row.key === "result-impact")?.total ?? 0;
+  const temporaryMarketingPercentage =
+    scenarioRevenue > 0 ? (temporaryMarketing / scenarioRevenue) * 100 : 0;
+
   return (
     <Card
       className="bank-report-scenario-sheet bank-report-sheet overflow-hidden"
@@ -4817,8 +4790,8 @@ function BankAfsScenarioSheet({
               AFS-cases 2027 & verwachting 2028
             </CardTitle>
             <CardDescription className="mt-1">
-              W&V- en cashflowvergelijking van het volledige budget met een case zonder de nieuwe
-              machines.
+              W&V-vergelijking van het volledige budget inclusief {data.machineCount} nieuwe
+              AFS&apos;en met een case zonder deze nieuwe machines.
             </CardDescription>
           </div>
           <Button
@@ -4840,9 +4813,11 @@ function BankAfsScenarioSheet({
             <thead>
               <tr className="bg-slate-900 text-white">
                 <th className="px-3 py-2 text-left">Regel</th>
-                <th className="px-3 py-2 text-right">Zonder nieuwe machines</th>
+                <th className="px-3 py-2 text-right">
+                  Zonder {data.machineCount} nieuwe AFS&apos;en
+                </th>
                 <th className="bg-emerald-800 px-3 py-2 text-right">
-                  Met {data.machineCount} machines
+                  Met {data.machineCount} nieuwe AFS&apos;en
                 </th>
                 <th className="px-3 py-2 text-right">Verschil</th>
               </tr>
@@ -4853,8 +4828,7 @@ function BankAfsScenarioSheet({
                   key={row.key}
                   className={cn(
                     "border-t",
-                    (row.key === "result" || row.key === "closing-cash") &&
-                      "bg-emerald-50 font-semibold",
+                    row.key === "gross-margin" && "bg-emerald-50 font-semibold",
                   )}
                 >
                   <td className="px-3 py-2">{row.label}</td>
@@ -4869,6 +4843,18 @@ function BankAfsScenarioSheet({
               ))}
             </tbody>
           </table>
+          <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50/70 p-3 text-xs">
+            <h4 className="font-semibold text-emerald-950">Toelichting kasconversie</h4>
+            <p className="mt-1 text-emerald-950/80">
+              De {formatEUR(scenarioGrossMargin)} extra brutomarge leidt niet tot hogere vaste
+              overhead. In 2027 is tijdelijk {formatPercentage(temporaryMarketingPercentage)} van de
+              extra omzet als marketingbudget opgenomen ({formatEUR(temporaryMarketing)}). Daardoor
+              resteert {formatEUR(operationalCashContribution)} operationele kasbijdrage vóór
+              machine-investeringen en financiering. Zodra dit tijdelijke marketingniveau wordt
+              afgebouwd, converteert de extra brutomarge zonder aanvullende vaste overhead
+              rechtstreeks naar operationele kasstroom.
+            </p>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <div className="mb-3">
@@ -4952,16 +4938,6 @@ function BankAfsScenarioSheet({
             </tbody>
           </table>
         </div>
-        <p className="text-[10px] text-muted-foreground xl:col-span-2">
-          De case gebruikt de ingevoerde tranche-omzet en fasering. Bloemeninkoop is afzonderlijk
-          berekend als percentage van de omzet; logistiek/vulling, schoonmaak en onderhoud zijn
-          afzonderlijke vaste maandbedragen per actieve machine. Huur volgt de actieve budgetdriver
-          per maand. De gemiddelde bedragen zijn gedeeld door alle geplande nieuwe machines, ook
-          wanneer een tranche later in 2027 start. In de case zonder nieuwe machines vervallen de
-          trancheomzet, directe machinekosten en AFS-investeringen; overige bedrijfs- en
-          financieringsaannames blijven gelijk. Voor 2028 worden de laatst beschikbare kostendrivers
-          doorgetrokken over twaalf maanden.
-        </p>
       </CardContent>
       <div className="bank-report-footer flex justify-between border-t px-6 py-3 text-[10px] text-muted-foreground">
         <span>Daily Flowers · Vertrouwelijk</span>
@@ -5060,7 +5036,7 @@ function BankStatementSheet({
             className={cn(
               "bank-report-table w-full text-xs",
               isCashflow
-                ? "bank-report-cashflow-table min-w-[1560px]"
+                ? "bank-report-cashflow-table min-w-[1740px]"
                 : displayMode === "monthly"
                   ? "min-w-[3000px]"
                   : "min-w-[1120px]",
@@ -5083,16 +5059,19 @@ function BankStatementSheet({
             ) : cashflowYear ? (
               <thead>
                 <tr className="bg-slate-900 text-white">
-                  <th rowSpan={2} className="w-40 px-3 py-2 text-left">
+                  <th rowSpan={2} className="w-[145px] min-w-[145px] px-3 py-2 text-left">
                     Rubriek
                   </th>
-                  <th rowSpan={2} className="min-w-56 px-3 py-2 text-left">
+                  <th rowSpan={2} className="w-[225px] min-w-[225px] px-3 py-2 text-left">
                     Regel
                   </th>
                   <th colSpan={12} className="border-l border-slate-600 px-3 py-2 text-center">
                     {cashflowYear}
                   </th>
-                  <th rowSpan={2} className="bg-emerald-800 px-3 py-2 text-right">
+                  <th
+                    rowSpan={2}
+                    className="w-[150px] min-w-[150px] whitespace-nowrap border-l-2 border-white/50 bg-emerald-800 px-3 py-2 text-right"
+                  >
                     Totaal {cashflowYear}
                   </th>
                 </tr>
@@ -5101,7 +5080,7 @@ function BankStatementSheet({
                     <th
                       key={period}
                       className={cn(
-                        "whitespace-nowrap border-l border-slate-600 px-2 py-2 text-right",
+                        "min-w-[98px] whitespace-nowrap border-l border-slate-600 px-2 py-2 text-right",
                         period > cutoff && "bg-emerald-900",
                       )}
                     >
@@ -5200,7 +5179,7 @@ function BankStatementSheet({
                         <BankValue
                           value={aggregateBankRow(row, projection, reportPeriods)}
                           strong
-                          className="bg-emerald-50/70"
+                          className="bank-report-year-total min-w-[150px] border-l-2 bg-emerald-50/70"
                         />
                       </>
                     ) : displayMode === "monthly" ? (
@@ -5354,15 +5333,6 @@ function BankInvestmentAgendaSheet({
               </tr>
             </tbody>
           </table>
-        </div>
-        <div className="bank-report-reconciliation mt-5 px-4 py-3 text-sm">
-          <div className="font-semibold">Aansluiting op de cashflowprognose</div>
-          <p className="mt-1 text-muted-foreground">
-            Elke budgetlevering wordt drie maanden eerder als cash-out verwerkt in de cashflowregel
-            “Investering AFS&apos;en”. Agenda {formatEUR(data.totalInvestment)} · cashflowprognose{" "}
-            {formatEUR(data.cashflowForecastInvestment)} · verschil totaal{" "}
-            {formatEUR(data.difference)} · verschil timing {formatEUR(data.timingDifference)}.
-          </p>
         </div>
       </CardContent>
       <div className="bank-report-footer flex justify-between border-t px-6 py-3 text-[10px] text-muted-foreground">

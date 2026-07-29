@@ -212,6 +212,10 @@
     padding: 3px 5px;
   }
 
+  body[data-bank-print-view] .bank-report-cashflow-table {
+    min-width: 1740px;
+  }
+
   body[data-bank-print-view] .bank-report-footer {
     break-inside: avoid;
   }
@@ -294,6 +298,10 @@
 
 .bank-report-sheet .bank-report-table tbody tr {
   border-color: var(--bank-brand-line);
+}
+
+.bank-report-sheet .bank-report-year-total {
+  border-color: var(--bank-brand-pink);
 }
 
 .bank-report-sheet .bank-report-table .text-emerald-700 {

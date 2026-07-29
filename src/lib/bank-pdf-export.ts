@@ -47,9 +47,7 @@ export async function exportBankReportPdf({
         (element) => element.scrollWidth,
       ),
     ];
-    const captureWidth = view.startsWith("cashflow-")
-      ? 1600
-      : Math.max(CAPTURE_PAGE_WIDTH_PX, Math.min(4200, Math.max(...sourceWidths)));
+    const captureWidth = Math.max(CAPTURE_PAGE_WIDTH_PX, Math.min(4200, Math.max(...sourceWidths)));
     preparePdfClone(clone, captureWidth);
 
     const host = document.createElement("div");

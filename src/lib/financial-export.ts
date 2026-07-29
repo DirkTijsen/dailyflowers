@@ -939,17 +939,26 @@ function buildBankMonthlySheet(
 }
 
 function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsScenarioData) {
+  const scenarioRevenue = data.scenarioRows.find((row) => row.key === "revenue")?.difference ?? 0;
+  const scenarioGrossMargin =
+    data.scenarioRows.find((row) => row.key === "gross-margin")?.difference ?? 0;
+  const temporaryMarketing =
+    data.unitEconomicsRows.find((row) => row.key === "marketing")?.total ?? 0;
+  const operationalCashContribution =
+    data.unitEconomicsRows.find((row) => row.key === "result-impact")?.total ?? 0;
+  const temporaryMarketingPercentage =
+    scenarioRevenue > 0 ? (temporaryMarketing / scenarioRevenue) * 100 : 0;
   const matrix: Array<Array<string | number | null>> = [
     [`Daily Flowers — AFS-scenariovergelijking ${data.year}`],
     [
-      `W&V en cashflow met en zonder ${data.machineCount} nieuwe machines, plus gemiddelde unit economics per geplande machine.`,
+      `W&V met en zonder ${data.machineCount} nieuwe AFS'en, plus gemiddelde unit economics per geplande machine.`,
     ],
     ["Bedragen exclusief btw · rekening houdend met de ingevoerde tranchefasering"],
     [],
     [
       "Scenario-regel",
-      "Zonder nieuwe machines",
-      `Met ${data.machineCount} nieuwe machines`,
+      `Zonder ${data.machineCount} nieuwe AFS'en`,
+      `Met ${data.machineCount} nieuwe AFS'en`,
       "Verschil",
     ],
     ...data.scenarioRows.map((row) => [
@@ -958,6 +967,11 @@ function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsSce
       row.withMachines,
       row.difference,
     ]),
+    [],
+    ["Toelichting kasconversie"],
+    [
+      `${formatCompactEuro(scenarioGrossMargin)} extra brutomarge zonder hogere vaste overhead. In 2027 is tijdelijk ${formatExportPercentage(temporaryMarketingPercentage)} van de extra omzet als marketingbudget opgenomen (${formatCompactEuro(temporaryMarketing)}), waardoor ${formatCompactEuro(operationalCashContribution)} operationele kasbijdrage resteert vóór machine-investeringen en financiering.`,
+    ],
     [],
     [
       `Verwachting nieuwe AFS'en ${data.year} — gefaseerde uitrol`,
