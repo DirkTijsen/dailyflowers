@@ -948,7 +948,7 @@ function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsSce
     ]),
     [],
     [
-      "Unit economics nieuwe AFS",
+      `Verwachting nieuwe AFS'en ${data.year} — gefaseerde uitrol`,
       `Totaal ${data.machineCount} machines`,
       "Per 1 machine",
       "Marge %",

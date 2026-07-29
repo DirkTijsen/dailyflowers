@@ -4660,11 +4660,17 @@ function BankAfsScenarioSheet({
           </table>
         </div>
         <div className="overflow-x-auto">
-          <h3 className="mb-2 text-sm font-semibold">Unit economics nieuwe AFS&apos;en</h3>
+          <div className="mb-3">
+            <h3 className="text-base font-semibold">Verwachting nieuwe AFS&apos;en 2027</h3>
+            <p className="text-xs text-muted-foreground">
+              Gefaseerde uitrol van {data.machineCount} machines volgens de ingevoerde
+              trancheplanning en omzet per machine per maand.
+            </p>
+          </div>
           <table className="bank-report-table w-full min-w-[560px] text-xs">
             <thead>
               <tr className="bg-slate-900 text-white">
-                <th className="px-3 py-2 text-left">Onderdeel</th>
+                <th className="px-3 py-2 text-left">Onderdeel 2027</th>
                 <th className="px-3 py-2 text-right">Totaal {data.machineCount} machines</th>
                 <th className="bg-emerald-800 px-3 py-2 text-right">Per 1 machine</th>
                 <th className="px-3 py-2 text-right">Marge %</th>
