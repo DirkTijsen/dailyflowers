@@ -220,6 +220,21 @@ const AFS_RENT_LINE_LABEL = "AFS - Huurkosten";
 const AFS_RENT_COST_OF_GOODS_LINE_KEY = "budget-afs-huurkosten-kostprijs";
 const AFS_RENT_MONTHLY_RETAINED_AMOUNT = 17_250;
 const AFS_DELIVERY_PERSONNEL_MONTHLY_TRANSFER = 7_125;
+const AFS_UNCONTRACTED_RENT_DRIVER: CostDriverDefinition = {
+  driver_key: "afs_huurpercentage_zonder_afspraak",
+  driver_label: "AFS - Huur zonder huurafspraak",
+  calculation_type: "percentage_of_revenue",
+  section: "housing",
+  line_key: AFS_RENT_BUDGET_LINE_KEY,
+  line_label: AFS_RENT_LINE_LABEL,
+  source_label: "Vast huurpercentage van de budgetomzet van bestaande AFS'en zonder huurafspraak",
+  source_sheet: "AFS huurafspraken",
+  source_workbook: AFS_RENT_SOURCE_WORKBOOK,
+  input_label: "% van omzet bestaande AFS'en zonder actieve huurafspraak",
+  sort_order: 294,
+  defaultAmount: 15,
+  defaultBasisAmount: null,
+};
 const AFS_BUDGET_MACHINE_RENT_LINE_KEY = "budget-afs-huurkosten-budgetmachines";
 const AFS_BUDGET_MACHINE_RENT_LINE_LABEL = "AFS - Huurkosten nieuwe budgetmachines";
 const AFS_BUDGET_MACHINE_RENT_DRIVER: CostDriverDefinition = {
@@ -496,6 +511,7 @@ const PL_PARAMETER_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
 const BUDGET_DRIVER_DEFINITIONS = [...COST_DRIVER_DEFINITIONS, ...PL_PARAMETER_DRIVER_DEFINITIONS];
 const BUDGET_DRIVER_KEYS = [
   ...BUDGET_DRIVER_DEFINITIONS.map((driver) => driver.driver_key),
+  AFS_UNCONTRACTED_RENT_DRIVER.driver_key,
   AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key,
 ];
 
@@ -1186,6 +1202,38 @@ function ProfitLossPage() {
         numberFormat: "currency",
       });
     }
+
+    const afsUncontractedTurnover = afsTurnoverByMachinePeriod({
+      revenueBudgets: revenueBudgetsQ.data ?? [],
+      machineActuals: afsMachineActualsQ.data ?? [],
+      months,
+    });
+    const afsUncontractedValues = afsUncontractedRentValues({
+      agreements: afsRentalAgreementsQ.data ?? [],
+      driverRules: costDriverRulesQ.data ?? [],
+      turnoverByMachinePeriod: afsUncontractedTurnover,
+      months,
+    });
+    budgetInputRows.push({
+      group: "Kostprijs omzet",
+      category: "Huurkosten",
+      label: "Huurpercentage bestaande AFS'en zonder huurafspraak",
+      note: AFS_UNCONTRACTED_RENT_DRIVER.source_label,
+      values: Object.fromEntries(
+        months.map((period) => [period, afsUncontractedValues[period].percentage / 100]),
+      ),
+      numberFormat: "percentage",
+    });
+    budgetInputRows.push({
+      group: "Kostprijs omzet",
+      category: "Huurkosten",
+      label: "Berekende huur bestaande AFS'en zonder huurafspraak",
+      note: "Omzetbudget zonder actieve huurafspraak × vast huurpercentage",
+      values: Object.fromEntries(
+        months.map((period) => [period, afsUncontractedValues[period].amount]),
+      ),
+      numberFormat: "currency",
+    });
 
     const afsBudgetRentValues = afsBudgetMachineRentValues({
       driverRules: costDriverRulesQ.data ?? [],
@@ -2396,6 +2444,19 @@ function BudgetInputsPanel({
     AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key,
     afsBudgetRentPeriod,
   );
+  const afsUncontractedRentRule = activeRuleForPeriod(
+    driverRules
+      .filter((rule) => rule.driver_key === AFS_UNCONTRACTED_RENT_DRIVER.driver_key)
+      .sort((a, b) => comparePeriods(a.from_period, b.from_period)),
+    afsBudgetRentPeriod,
+  );
+  const afsUncontractedRentPercentage = Number(
+    afsUncontractedRentRule?.amount ?? AFS_UNCONTRACTED_RENT_DRIVER.defaultAmount,
+  );
+  const afsUncontractedRentCellKey = costDriverCellKey(
+    AFS_UNCONTRACTED_RENT_DRIVER.driver_key,
+    afsBudgetRentPeriod,
+  );
   const plRows = useMemo(() => buildPlBudgetInputRows(budgetLines, months), [budgetLines, months]);
   const tableMinWidth = Math.max(960, 360 + months.length * 132 + 140);
 
@@ -2484,6 +2545,56 @@ function BudgetInputsPanel({
             </table>
           </div>
         </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1.5">
+              <CardTitle className="text-base">
+                Huur bestaande AFS&apos;en zonder huurafspraak
+              </CardTitle>
+              <CardDescription>
+                Voor bestaande machines zonder actieve huurafspraak wordt dit vaste percentage over
+                hun omzetbudget berekend.
+              </CardDescription>
+            </div>
+            <label className="w-full space-y-1.5 sm:w-64 sm:shrink-0">
+              <span className="block text-sm font-medium">Huurpercentage</span>
+              <div className="relative">
+                <Input
+                  value={
+                    drafts[afsUncontractedRentCellKey] ??
+                    formatDriverInput(AFS_UNCONTRACTED_RENT_DRIVER, afsUncontractedRentPercentage)
+                  }
+                  inputMode="decimal"
+                  disabled={savingCell === afsUncontractedRentCellKey}
+                  className="h-9 pr-8 text-right tabular-nums"
+                  onChange={(event) =>
+                    onDraftChange(afsUncontractedRentCellKey, event.target.value)
+                  }
+                  onBlur={(event) =>
+                    onSaveCostDriver(
+                      AFS_UNCONTRACTED_RENT_DRIVER,
+                      afsBudgetRentPeriod,
+                      event.currentTarget.value,
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                  }}
+                />
+                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground">
+                  %
+                </span>
+              </div>
+              <span className="block text-xs text-muted-foreground">
+                Geldig vanaf{" "}
+                {afsBudgetRentPeriod ? monthHeaderLabel(afsBudgetRentPeriod, true) : "selectie"}.
+              </span>
+            </label>
+          </div>
+        </CardHeader>
       </Card>
 
       {afsBudgetTrancheRows.length > 0 && (
@@ -4782,6 +4893,7 @@ function buildEffectiveBudgetLines({
   );
   const afsRentBudgetLines = buildAfsRentalBudgetLines({
     agreements: afsRentalAgreements,
+    driverRules,
     revenueBudgets,
     machineActuals: afsMachineActuals,
     months,
@@ -4811,30 +4923,39 @@ function normalizeManualBudgetLine(line: PlBudgetLine): PlBudgetLine {
 
 function buildAfsRentalBudgetLines({
   agreements,
+  driverRules,
   revenueBudgets,
   machineActuals,
   months,
 }: {
   agreements: AfsRentalAgreementRow[];
+  driverRules: PlBudgetDriverRule[];
   revenueBudgets: RevenueBudgetRow[];
   machineActuals: AfsMachineActualRow[];
   months: string[];
 }): PlBudgetLine[] {
-  if (agreements.length === 0 || months.length === 0) return [];
+  if (months.length === 0) return [];
 
   const turnoverByMachinePeriod = afsTurnoverByMachinePeriod({
     revenueBudgets,
     machineActuals,
     months,
   });
+  const uncontractedRentValues = afsUncontractedRentValues({
+    agreements,
+    driverRules,
+    turnoverByMachinePeriod,
+    months,
+  });
 
   return months.flatMap((period) => {
     const activeAgreements = activeAfsRentalAgreementsForPeriod(agreements, period);
-    const amount = activeAgreements.reduce((sum, agreement) => {
-      const turnover =
-        turnoverByMachinePeriod.get(afsMachinePeriodKey(agreement.machine_id, period)) ?? 0;
-      return sum + calculateAfsRentalCost(agreement, turnover);
-    }, 0);
+    const amount =
+      activeAgreements.reduce((sum, agreement) => {
+        const turnover =
+          turnoverByMachinePeriod.get(afsMachinePeriodKey(agreement.machine_id, period)) ?? 0;
+        return sum + calculateAfsRentalCost(agreement, turnover);
+      }, 0) + uncontractedRentValues[period].amount;
 
     const retainedAmount = Math.min(AFS_RENT_MONTHLY_RETAINED_AMOUNT, amount);
     const costOfGoodsAmount = Math.max(0, amount - retainedAmount);
@@ -4850,7 +4971,7 @@ function buildAfsRentalBudgetLines({
         amount: roundMoney(retainedAmount),
         source_workbook: AFS_RENT_SOURCE_WORKBOOK,
         source_sheet: "AFS huurafspraken",
-        source_label: `Maandelijks basisbedrag van maximaal ${formatEUR(AFS_RENT_MONTHLY_RETAINED_AMOUNT)}`,
+        source_label: `Contracthuur plus ${formatPercentage(uncontractedRentValues[period].percentage)} over ${formatEUR(uncontractedRentValues[period].revenue)} omzet zonder huurafspraak; basis maximaal ${formatEUR(AFS_RENT_MONTHLY_RETAINED_AMOUNT)}`,
         sort_order: 430,
       },
       {
@@ -4971,6 +5092,50 @@ function activeAfsRentalAgreementsForPeriod(agreements: AfsRentalAgreementRow[],
   }
 
   return [...byMachine.values()];
+}
+
+function afsUncontractedRentValues({
+  agreements,
+  driverRules,
+  turnoverByMachinePeriod,
+  months,
+}: {
+  agreements: AfsRentalAgreementRow[];
+  driverRules: PlBudgetDriverRule[];
+  turnoverByMachinePeriod: Map<string, number>;
+  months: string[];
+}) {
+  const rules = driverRules
+    .filter((rule) => rule.driver_key === AFS_UNCONTRACTED_RENT_DRIVER.driver_key)
+    .sort((a, b) => comparePeriods(a.from_period, b.from_period));
+
+  return Object.fromEntries(
+    months.map((period) => {
+      const contractedMachineIds = new Set(
+        activeAfsRentalAgreementsForPeriod(agreements, period).map(
+          (agreement) => agreement.machine_id,
+        ),
+      );
+      let revenue = 0;
+      for (const [key, turnover] of turnoverByMachinePeriod) {
+        const separatorIndex = key.lastIndexOf("|");
+        if (separatorIndex < 0 || key.slice(separatorIndex + 1) !== period) continue;
+        const machineId = key.slice(0, separatorIndex);
+        if (!contractedMachineIds.has(machineId)) revenue += turnover;
+      }
+
+      const rule = activeRuleForPeriod(rules, period);
+      const percentage = Number(rule?.amount ?? AFS_UNCONTRACTED_RENT_DRIVER.defaultAmount);
+      return [
+        period,
+        {
+          percentage,
+          revenue: roundMoney(revenue),
+          amount: roundMoney(revenue * (percentage / 100)),
+        },
+      ];
+    }),
+  ) as Record<string, { percentage: number; revenue: number; amount: number }>;
 }
 
 function afsTurnoverByMachinePeriod({
