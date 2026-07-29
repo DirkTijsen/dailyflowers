@@ -78,6 +78,7 @@ export type BankExportData = {
 export type BankAfsScenarioData = {
   year: string;
   machineCount: number;
+  marginPercentage: number;
   scenarioRows: Array<{
     key: string;
     label: string;
@@ -94,6 +95,7 @@ export type BankAfsScenarioData = {
   outlook2028: {
     machineCount: number;
     monthlyRevenuePerMachine: number;
+    marginPercentage: number;
     unitEconomicsRows: Array<{
       key: string;
       label: string;
@@ -640,15 +642,31 @@ function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsSce
       row.difference,
     ]),
     [],
-    ["Unit economics nieuwe AFS", `Totaal ${data.machineCount} machines`, "Gemiddeld per machine"],
-    ...data.unitEconomicsRows.map((row) => [row.label, row.total, row.perMachine]),
+    [
+      "Unit economics nieuwe AFS",
+      `Totaal ${data.machineCount} machines`,
+      "Per 1 machine",
+      "Marge %",
+    ],
+    ...data.unitEconomicsRows.map((row) => [
+      row.label,
+      row.total,
+      row.perMachine,
+      row.key === "contribution" ? formatExportPercentage(data.marginPercentage) : "",
+    ]),
     [],
     [
       "Verwachting 2028 — volledig jaar",
       `Totaal ${data.outlook2028.machineCount} machines`,
-      "Gemiddeld per machine",
+      "Per 1 machine",
+      "Marge %",
     ],
-    ...data.outlook2028.unitEconomicsRows.map((row) => [row.label, row.total, row.perMachine]),
+    ...data.outlook2028.unitEconomicsRows.map((row) => [
+      row.label,
+      row.total,
+      row.perMachine,
+      row.key === "contribution" ? formatExportPercentage(data.outlook2028.marginPercentage) : "",
+    ]),
   ];
   const columnCount = 4;
   const sheet = XLSX.utils.aoa_to_sheet(matrix);
@@ -1310,6 +1328,11 @@ function formatCompactEuro(value: number) {
     return `${sign}€ ${(absolute / 1_000).toLocaleString("nl-NL", { maximumFractionDigits: 0 })}k`;
   }
   return `${sign}€ ${absolute.toLocaleString("nl-NL", { maximumFractionDigits: 0 })}`;
+}
+
+function formatExportPercentage(value: number) {
+  if (!Number.isFinite(value)) return "-";
+  return `${value.toLocaleString("nl-NL", { maximumFractionDigits: 2 })}%`;
 }
 
 function applySheetStyles(

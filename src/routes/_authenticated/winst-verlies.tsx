@@ -4052,11 +4052,14 @@ function buildAfsScenario2027({
   return {
     year,
     machineCount,
+    marginPercentage: revenueTotal > 0 ? (contribution / revenueTotal) * 100 : 0,
     scenarioRows,
     unitEconomicsRows,
     outlook2028: {
       machineCount: outlook2028MachineCount,
       monthlyRevenuePerMachine: outlook2028MonthlyRevenuePerMachine,
+      marginPercentage:
+        outlook2028Revenue > 0 ? (outlook2028Contribution / outlook2028Revenue) * 100 : 0,
       unitEconomicsRows: outlook2028Rows,
     },
   };
@@ -4123,12 +4126,14 @@ function BankAfsScenarioSheet({
             <div className="text-base font-semibold tabular-nums text-emerald-950">
               {formatEUR(contribution?.perMachine ?? 0)}
             </div>
-            <div className="text-emerald-800">Na directe machinekosten</div>
+            <div className="text-emerald-800">
+              {formatPercentage(data.marginPercentage)} van de omzet
+            </div>
           </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-6 p-5 xl:grid-cols-2">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto xl:col-span-2">
           <h3 className="mb-2 text-sm font-semibold">W&V-vergelijking 2027</h3>
           <table className="bank-report-table w-full min-w-[680px] text-xs">
             <thead>
@@ -4171,7 +4176,8 @@ function BankAfsScenarioSheet({
               <tr className="bg-slate-900 text-white">
                 <th className="px-3 py-2 text-left">Onderdeel</th>
                 <th className="px-3 py-2 text-right">Totaal {data.machineCount} machines</th>
-                <th className="bg-emerald-800 px-3 py-2 text-right">Gemiddeld per machine</th>
+                <th className="bg-emerald-800 px-3 py-2 text-right">Per 1 machine</th>
+                <th className="px-3 py-2 text-right">Marge %</th>
               </tr>
             </thead>
             <tbody>
@@ -4188,12 +4194,15 @@ function BankAfsScenarioSheet({
                   <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
                     {formatEUR(row.perMachine)}
                   </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {row.key === "contribution" ? formatPercentage(data.marginPercentage) : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="rounded-lg border bg-slate-50/60 p-4 xl:col-span-2">
+        <div className="rounded-lg border bg-slate-50/60 p-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 className="text-base font-semibold">Verwachting nieuwe AFS&apos;en 2028</h3>
@@ -4212,17 +4221,27 @@ function BankAfsScenarioSheet({
                   data.outlook2028.machineCount * data.outlook2028.monthlyRevenuePerMachine,
                 )}
               </div>
+              <div className="text-muted-foreground">
+                {formatEUR(data.outlook2028.monthlyRevenuePerMachine)} per 1 machine
+              </div>
             </div>
             <div className="rounded border bg-white px-3 py-2">
               <div className="text-muted-foreground">Jaaromzet 2028</div>
               <div className="text-base font-semibold tabular-nums">
                 {formatEUR(outlook2028Revenue?.total ?? 0)}
               </div>
+              <div className="text-muted-foreground">
+                {formatEUR(outlook2028Revenue?.perMachine ?? 0)} per 1 machine
+              </div>
             </div>
             <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
               <div className="text-emerald-800">Margebijdrage 2028</div>
               <div className="text-base font-semibold tabular-nums text-emerald-950">
                 {formatEUR(outlook2028Contribution?.total ?? 0)}
+              </div>
+              <div className="text-emerald-800">
+                {formatEUR(outlook2028Contribution?.perMachine ?? 0)} per 1 machine ·{" "}
+                {formatPercentage(data.outlook2028.marginPercentage)}
               </div>
             </div>
           </div>
@@ -4234,7 +4253,8 @@ function BankAfsScenarioSheet({
                   <th className="px-3 py-2 text-right">
                     Totaal {data.outlook2028.machineCount} machines
                   </th>
-                  <th className="bg-emerald-800 px-3 py-2 text-right">Gemiddeld per machine</th>
+                  <th className="bg-emerald-800 px-3 py-2 text-right">Per 1 machine</th>
+                  <th className="px-3 py-2 text-right">Marge %</th>
                 </tr>
               </thead>
               <tbody>
@@ -4250,6 +4270,11 @@ function BankAfsScenarioSheet({
                     <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.total)}</td>
                     <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
                       {formatEUR(row.perMachine)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {row.key === "contribution"
+                        ? formatPercentage(data.outlook2028.marginPercentage)
+                        : "—"}
                     </td>
                   </tr>
                 ))}
