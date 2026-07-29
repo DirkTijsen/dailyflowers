@@ -77,6 +77,7 @@ import {
   type FinancialInputRow,
 } from "@/lib/financial-export";
 import { exportBankReportPdf } from "@/lib/bank-pdf-export";
+import dailyFlowersLogoUrl from "@/assets/daily-flowers-logo.png";
 
 export const Route = createFileRoute("/_authenticated/winst-verlies")({
   head: () => ({ meta: [{ title: "W&V / Cashflow - Daily Flowers" }] }),
@@ -4584,6 +4585,16 @@ function buildBankInvestmentAgenda({
   };
 }
 
+function BankReportLogo() {
+  return (
+    <img
+      src={dailyFlowersLogoUrl}
+      alt="Daily Flowers"
+      className="bank-report-logo mb-3 h-9 w-auto object-contain"
+    />
+  );
+}
+
 function BankAfsScenarioSheet({
   data,
   loading,
@@ -4594,14 +4605,15 @@ function BankAfsScenarioSheet({
   generatedLabel: string;
 }) {
   return (
-    <Card className="bank-report-sheet overflow-hidden" data-bank-report-view="scenario">
+    <Card
+      className="bank-report-scenario-sheet bank-report-sheet overflow-hidden"
+      data-bank-report-view="scenario"
+    >
       <div className="bank-report-accent h-1" />
       <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="bank-report-wordmark mb-3 text-xs font-semibold uppercase tracking-[0.22em]">
-              Daily Flowers
-            </div>
+            <BankReportLogo />
             <CardTitle className="bank-report-title text-2xl">
               AFS-cases 2027 & verwachting 2028
             </CardTitle>
@@ -4698,53 +4710,48 @@ function BankAfsScenarioSheet({
             </tbody>
           </table>
         </div>
-        <div className="bank-report-feature-panel rounded-lg border p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h3 className="text-base font-semibold">Verwachting nieuwe AFS&apos;en 2028</h3>
-              <p className="text-xs text-muted-foreground">
-                Volledig jaar met {data.outlook2028.machineCount} machines op{" "}
-                {formatEUR(data.outlook2028.monthlyRevenuePerMachine)} omzet per machine per maand.
-              </p>
-            </div>
-            <Badge variant="outline">Run-rate 2028</Badge>
+        <div className="overflow-x-auto">
+          <div className="mb-3">
+            <h3 className="text-base font-semibold">Verwachting nieuwe AFS&apos;en 2028</h3>
+            <p className="text-xs text-muted-foreground">
+              Volledig jaar met {data.outlook2028.machineCount} machines op{" "}
+              {formatEUR(data.outlook2028.monthlyRevenuePerMachine)} omzet per machine per maand.
+            </p>
           </div>
-          <div className="mt-5 overflow-x-auto">
-            <table className="bank-report-table w-full min-w-[680px] text-xs">
-              <thead>
-                <tr className="bg-slate-900 text-white">
-                  <th className="px-3 py-2 text-left">Onderdeel 2028</th>
-                  <th className="px-3 py-2 text-right">
-                    Totaal {data.outlook2028.machineCount} machines
-                  </th>
-                  <th className="bg-emerald-800 px-3 py-2 text-right">Per 1 machine</th>
-                  <th className="px-3 py-2 text-right">Marge %</th>
+          <table className="bank-report-table w-full min-w-[560px] text-xs">
+            <thead>
+              <tr className="bg-slate-900 text-white">
+                <th className="px-3 py-2 text-left">Onderdeel 2028</th>
+                <th className="px-3 py-2 text-right">
+                  Totaal {data.outlook2028.machineCount} machines
+                </th>
+                <th className="bg-emerald-800 px-3 py-2 text-right">Per 1 machine</th>
+                <th className="px-3 py-2 text-right">Marge %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.outlook2028.unitEconomicsRows.map((row) => (
+                <tr
+                  key={row.key}
+                  className={cn(
+                    "border-t",
+                    row.key === "contribution" && "bg-emerald-50 font-semibold",
+                  )}
+                >
+                  <td className="px-3 py-2">{row.label}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.total)}</td>
+                  <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
+                    {formatEUR(row.perMachine)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {row.key === "contribution"
+                      ? formatPercentage(data.outlook2028.marginPercentage)
+                      : "—"}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {data.outlook2028.unitEconomicsRows.map((row) => (
-                  <tr
-                    key={row.key}
-                    className={cn(
-                      "border-t bg-white",
-                      row.key === "contribution" && "bg-emerald-50 font-semibold",
-                    )}
-                  >
-                    <td className="px-3 py-2">{row.label}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(row.total)}</td>
-                    <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
-                      {formatEUR(row.perMachine)}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {row.key === "contribution"
-                        ? formatPercentage(data.outlook2028.marginPercentage)
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
         <p className="text-[10px] text-muted-foreground xl:col-span-2">
           De case gebruikt de ingevoerde tranche-omzet en fasering. Bloemeninkoop is afzonderlijk
@@ -4805,9 +4812,7 @@ function BankStatementSheet({
       <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="bank-report-wordmark mb-3 text-xs font-semibold uppercase tracking-[0.22em]">
-              Daily Flowers
-            </div>
+            <BankReportLogo />
             <CardTitle className="bank-report-title text-2xl">{title}</CardTitle>
             <CardDescription className="mt-1">{description}</CardDescription>
           </div>
@@ -5011,9 +5016,7 @@ function BankInvestmentAgendaSheet({
       <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="bank-report-wordmark mb-3 text-xs font-semibold uppercase tracking-[0.22em]">
-              Daily Flowers
-            </div>
+            <BankReportLogo />
             <CardTitle className="bank-report-title text-2xl">
               Investeringsagenda — {data.totalMachines} AFS
             </CardTitle>

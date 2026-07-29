@@ -209,7 +209,7 @@
   }
 
   body[data-bank-print-view] .bank-report-accent {
-    background: #ef3126 !important;
+    background: #dea5a4 !important;
     print-color-adjust: exact;
   }
 }
@@ -218,9 +218,9 @@
 .bank-report-sheet {
   --bank-brand-charcoal: #1f1f1f;
   --bank-brand-cream: #f9f1e8;
-  --bank-brand-pink: #c98d8b;
+  --bank-brand-pink: #dea5a4;
   --bank-brand-line: #eadcd6;
-  --bank-brand-red: #ef3126;
+  --bank-brand-red: #dea5a4;
 }
 
 .bank-report-print-root > .bank-report-no-print {
@@ -237,20 +237,6 @@
 
 .bank-report-sheet .bank-report-accent {
   background: var(--bank-brand-red) !important;
-}
-
-.bank-report-sheet .bank-report-wordmark {
-  color: var(--bank-brand-charcoal);
-}
-
-.bank-report-sheet .bank-report-wordmark::after {
-  display: inline-block;
-  width: 24px;
-  height: 2px;
-  margin-left: 10px;
-  background: var(--bank-brand-red);
-  content: "";
-  vertical-align: middle;
 }
 
 .bank-report-sheet .bank-report-title,
@@ -310,6 +296,26 @@
   border-color: var(--bank-brand-pink);
   background: white;
   color: var(--bank-brand-charcoal);
+}
+
+.bank-report-scenario-sheet [data-slot="card-header"] {
+  padding: 1rem 1.25rem;
+}
+
+.bank-report-scenario-sheet [data-slot="card-content"] {
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.bank-report-scenario-sheet .bank-report-table th,
+.bank-report-scenario-sheet .bank-report-table td {
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+
+.bank-report-scenario-sheet .bank-report-footer {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
 }
 
 .bank-report-pdf-host {

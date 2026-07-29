@@ -1,3 +1,5 @@
+import dailyFlowersLogoUrl from "@/assets/daily-flowers-logo.png";
+
 export type FinancialMetricColumn = "actual" | "budget" | "variance";
 
 export type FinancialStatementRow = {
@@ -143,9 +145,9 @@ const METRIC_LABELS: Record<FinancialMetricColumn, string> = {
 const COLORS = {
   charcoal: "1F1F1F",
   cream: "F9F1E8",
-  pink: "C98D8B",
+  pink: "DEA5A4",
   pinkLight: "EADCD6",
-  red: "EF3126",
+  red: "DEA5A4",
   white: "FFFFFF",
   gray: "6B6B6B",
   line: "EADCD6",
@@ -171,12 +173,12 @@ const BANK_WORKBOOK_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="y
     <fill><patternFill patternType="solid"><fgColor rgb="FF1F1F1F"/><bgColor indexed="64"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFF9F1E8"/><bgColor indexed="64"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFEADCD6"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FFEF3126"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFDEA5A4"/><bgColor indexed="64"/></patternFill></fill>
   </fills>
   <borders count="3">
     <border><left/><right/><top/><bottom/><diagonal/></border>
-    <border><left/><right/><top style="thin"><color rgb="FFC98D8B"/></top><bottom/><diagonal/></border>
-    <border><left/><right/><top style="medium"><color rgb="FFC98D8B"/></top><bottom/><diagonal/></border>
+    <border><left/><right/><top style="thin"><color rgb="FFDEA5A4"/></top><bottom/><diagonal/></border>
+    <border><left/><right/><top style="medium"><color rgb="FFDEA5A4"/></top><bottom/><diagonal/></border>
   </borders>
   <cellStyleXfs count="1">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
@@ -548,8 +550,21 @@ function excelColumnNumber(columnLetters: string) {
   return [...columnLetters].reduce((value, letter) => value * 26 + letter.charCodeAt(0) - 64, 0);
 }
 
+async function imageUrlToDataUri(url: string) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Daily Flowers-logo kon niet worden geladen");
+  const blob = await response.blob();
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Logo kon niet worden ingelezen"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export async function exportFinancialPresentation(data: FinancialExportData) {
   const { default: PptxGenJS } = await import("pptxgenjs");
+  const logoData = await imageUrlToDataUri(dailyFlowersLogoUrl);
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "Daily Flowers";
@@ -564,18 +579,13 @@ export async function exportFinancialPresentation(data: FinancialExportData) {
   };
 
   const cover = pptx.addSlide();
-  cover.background = { color: COLORS.charcoal };
-  cover.addText("DAILY FLOWERS", {
-    x: 0.7,
-    y: 0.45,
-    w: 4.1,
-    h: 0.42,
-    fontFace: "Calibri",
-    fontSize: 23,
-    bold: true,
-    color: COLORS.white,
-    charSpacing: 5,
-    margin: 0,
+  cover.background = { color: COLORS.white };
+  cover.addImage({
+    data: logoData,
+    x: 0.62,
+    y: 0.32,
+    w: 2.75,
+    h: 0.92,
   });
   cover.addText("FINANCIEEL OVERZICHT", {
     x: 0.7,
@@ -585,7 +595,7 @@ export async function exportFinancialPresentation(data: FinancialExportData) {
     fontFace: "Cambria",
     fontSize: 31,
     bold: true,
-    color: COLORS.white,
+    color: COLORS.charcoal,
     margin: 0,
   });
   cover.addText("W&V en cashflow", {
@@ -595,7 +605,7 @@ export async function exportFinancialPresentation(data: FinancialExportData) {
     h: 0.55,
     fontFace: "Cambria",
     fontSize: 25,
-    color: COLORS.white,
+    color: COLORS.charcoal,
     margin: 0,
   });
   cover.addShape(pptx.ShapeType.line, {
@@ -639,6 +649,7 @@ export async function exportFinancialPresentation(data: FinancialExportData) {
 
   addStatementSlide({
     pptx,
+    logoData,
     title: "W&V — resultaat en belangrijkste kostendrijvers",
     rows: selectPlPresentationRows(data.plRows),
     trendRow: data.plRows.find((row) => row.key === "result") ?? data.plRows.at(-1),
@@ -649,6 +660,7 @@ export async function exportFinancialPresentation(data: FinancialExportData) {
 
   addStatementSlide({
     pptx,
+    logoData,
     title: "Cashflow — operationeel, investeringen en financiering",
     rows: selectCashflowPresentationRows(data.cashflowRows),
     trendRow:
@@ -1637,6 +1649,7 @@ function buildCashflowInputsSheet(XLSX: typeof import("xlsx"), data: FinancialEx
 
 function addStatementSlide({
   pptx,
+  logoData,
   title,
   rows,
   trendRow,
@@ -1645,6 +1658,7 @@ function addStatementSlide({
   slideNumber,
 }: {
   pptx: InstanceType<(typeof import("pptxgenjs"))["default"]>;
+  logoData: string;
   title: string;
   rows: FinancialStatementRow[];
   trendRow: FinancialStatementRow | undefined;
@@ -1657,7 +1671,7 @@ function addStatementSlide({
   slide.addText(title, {
     x: 0.55,
     y: 0.35,
-    w: 10.2,
+    w: 9.45,
     h: 0.52,
     fontFace: "Cambria",
     fontSize: 25,
@@ -1665,25 +1679,23 @@ function addStatementSlide({
     color: COLORS.charcoal,
     margin: 0,
   });
-  slide.addShape(pptx.ShapeType.roundRect, {
-    x: 10.62,
-    y: 0.32,
-    w: 2.16,
-    h: 0.38,
-    rectRadius: 0.08,
-    fill: { color: COLORS.red },
-    line: { color: COLORS.red },
+  slide.addImage({
+    data: logoData,
+    x: 10.38,
+    y: 0.12,
+    w: 2.42,
+    h: 0.81,
   });
   slide.addText(data.selectionLabel.toUpperCase(), {
-    x: 10.73,
-    y: 0.405,
-    w: 1.94,
-    h: 0.18,
+    x: 10.25,
+    y: 0.91,
+    w: 2.5,
+    h: 0.16,
     fontFace: "Calibri",
     fontSize: 8,
     bold: true,
-    color: COLORS.white,
-    align: "center",
+    color: COLORS.gray,
+    align: "right",
     margin: 0,
     fit: "shrink",
   });
@@ -1810,7 +1822,7 @@ function addStatementSlide({
       valAxisLabelFontSize: 7,
       valAxisNumFmt: '€ #,##0,," mln"',
       showCatName: false,
-      chartColors: [COLORS.charcoal, COLORS.pink, COLORS.red],
+      chartColors: [COLORS.charcoal, COLORS.gray, COLORS.pink],
       showMarker: true,
       lineSize: 2,
       showBorder: false,
