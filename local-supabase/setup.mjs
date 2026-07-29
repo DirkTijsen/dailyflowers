@@ -188,6 +188,7 @@ async function main() {
     await applyMigration(app, "20260729113000_add_afs_uncontracted_rent_percentage.sql");
     await applyMigration(app, "20260729143000_add_cash_opening_balance.sql");
     await applyMigration(app, "20260729150000_align_afs_cost_drivers.sql");
+    await applyMigration(app, "20260729170000_add_budget_scenarios.sql");
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
 
     await app.query(localAuthSql);

@@ -150,6 +150,7 @@ type RevenueBudgetRow = {
   channel: string;
   machine_id: string | null;
   amount: number | string;
+  scenario: RevenueBudgetScenario;
   machines?: { display_name: string | null; afs_number: string | null } | null;
 };
 
@@ -200,6 +201,8 @@ type AfsMachineActualRow = {
 
 type ViewMode = "month" | "range" | "year" | "multiYear";
 type PlMetricColumn = "actual" | "budget" | "variance";
+type RevenueBudgetScenario = "mid" | "low";
+type MarketingBudgetMode = "internal" | "bank";
 
 const PL_METRIC_COLUMNS: Array<{ value: PlMetricColumn; label: string }> = [
   { value: "actual", label: "Actueel" },
@@ -500,19 +503,36 @@ const SHOP_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
 const COST_DRIVER_DEFINITIONS = [...AFS_COST_DRIVER_DEFINITIONS, ...SHOP_COST_DRIVER_DEFINITIONS];
 const PL_PARAMETER_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
   {
-    driver_key: "marketing_verkoopkosten",
-    driver_label: "Marketing - Marketingkosten/verkoopkosten",
+    driver_key: "marketing_verkoopkosten_intern",
+    driver_label: "Marketing - Intern",
     calculation_type: "percentage_of_revenue",
     section: "sales_marketing",
     line_key: "budget-webshop-advertentiekosten",
-    line_label: "Marketing - Marketingkosten/verkoopkosten",
-    source_label: "Marketingkosten/verkoopkosten (% van totale budgetomzet)",
+    line_label: "Marketing - Marketingkosten intern",
+    source_label: "Marketingkosten intern (% van totale budgetomzet)",
     source_sheet: "Marketing",
     source_workbook: PL_PARAMETER_SOURCE_WORKBOOK,
     input_label: "% van totale budgetomzet",
     revenue_channels: [...CHANNELS],
     fallback_line_key: "budget-webshop-advertentiekosten",
     sort_order: 510,
+    defaultAmount: 0,
+    defaultBasisAmount: null,
+  },
+  {
+    driver_key: "marketing_verkoopkosten_bank",
+    driver_label: "Marketing - Bank",
+    calculation_type: "percentage_of_revenue",
+    section: "sales_marketing",
+    line_key: "budget-webshop-advertentiekosten",
+    line_label: "Marketing - Marketingkosten bank",
+    source_label: "Marketingkosten bank (% van totale budgetomzet)",
+    source_sheet: "Marketing",
+    source_workbook: PL_PARAMETER_SOURCE_WORKBOOK,
+    input_label: "% van totale budgetomzet",
+    revenue_channels: [...CHANNELS],
+    fallback_line_key: "budget-webshop-advertentiekosten",
+    sort_order: 511,
     defaultAmount: 0,
     defaultBasisAmount: null,
   },
@@ -561,6 +581,7 @@ type BudgetInputCell = {
 
 type RevenueBudgetInputRow = {
   key: string;
+  scenario: RevenueBudgetScenario;
   channel: string;
   machineId: string | null;
   label: string;
@@ -759,6 +780,8 @@ function ProfitLossPage() {
   const [savingBudgetCell, setSavingBudgetCell] = useState<string | null>(null);
   const [cashflowDrafts, setCashflowDrafts] = useState<Record<string, string>>({});
   const [savingCashflowCell, setSavingCashflowCell] = useState<string | null>(null);
+  const [revenueBudgetScenario, setRevenueBudgetScenario] = useState<RevenueBudgetScenario>("mid");
+  const [marketingBudgetMode, setMarketingBudgetMode] = useState<MarketingBudgetMode>("internal");
   const [bankReportYear, setBankReportYear] = useState(thisYear);
   const [bankActualThroughMonth, setBankActualThroughMonth] = useState(
     String(Math.max(1, Number(thisMonthNumber) - 1)).padStart(2, "0"),
@@ -850,7 +873,7 @@ function ProfitLossPage() {
     queryFn: async () => {
       const { data, error } = await db
         .from<RevenueBudgetRow>("budgets")
-        .select("id,period,channel,machine_id,amount,machines(display_name,afs_number)")
+        .select("id,period,channel,machine_id,amount,scenario,machines(display_name,afs_number)")
         .in("period", queryMonths);
       if (error) throw error;
       return (data ?? []) as RevenueBudgetRow[];
@@ -1019,15 +1042,40 @@ function ProfitLossPage() {
     activeAfsCountQ,
   ].some((query) => query.isPending);
 
+  const selectedRevenueBudgets = useMemo(
+    () =>
+      (revenueBudgetsQ.data ?? []).filter(
+        (budget) => (budget.scenario ?? "mid") === revenueBudgetScenario,
+      ),
+    [revenueBudgetScenario, revenueBudgetsQ.data],
+  );
+  const activeBudgetDriverDefinitions = useMemo(
+    () => [
+      ...COST_DRIVER_DEFINITIONS,
+      PL_PARAMETER_DRIVER_DEFINITIONS.find((definition) =>
+        marketingBudgetMode === "bank"
+          ? definition.driver_key === "marketing_verkoopkosten_bank"
+          : definition.driver_key === "marketing_verkoopkosten_intern",
+      )!,
+    ],
+    [marketingBudgetMode],
+  );
   const effectiveRevenueBudgets = useMemo(
     () =>
       addAfsBudgetTrancheRevenue({
-        revenueBudgets: revenueBudgetsQ.data ?? [],
+        revenueBudgets: selectedRevenueBudgets,
         budgetTranches: afsBudgetTranchesQ.data ?? [],
         budgetTrancheRevenues: afsBudgetTrancheRevenuesQ.data ?? [],
         months: queryMonths,
+        scenario: revenueBudgetScenario,
       }),
-    [afsBudgetTrancheRevenuesQ.data, afsBudgetTranchesQ.data, queryMonths, revenueBudgetsQ.data],
+    [
+      afsBudgetTrancheRevenuesQ.data,
+      afsBudgetTranchesQ.data,
+      queryMonths,
+      revenueBudgetScenario,
+      selectedRevenueBudgets,
+    ],
   );
 
   const effectiveBudgetLines = useMemo(
@@ -1035,6 +1083,7 @@ function ProfitLossPage() {
       buildEffectiveBudgetLines({
         budgetLines: budgetsQ.data ?? [],
         driverRules: costDriverRulesQ.data ?? [],
+        driverDefinitions: activeBudgetDriverDefinitions,
         revenueBudgets: effectiveRevenueBudgets,
         afsRentalAgreements: afsRentalAgreementsQ.data ?? [],
         afsMachineActuals: afsMachineActualsQ.data ?? [],
@@ -1049,6 +1098,7 @@ function ProfitLossPage() {
       afsRentalAgreementsQ.data,
       afsBudgetTrancheRevenuesQ.data,
       afsBudgetTranchesQ.data,
+      activeBudgetDriverDefinitions,
       costDriverRulesQ.data,
       budgetsQ.data,
       effectiveRevenueBudgets,
@@ -1175,6 +1225,8 @@ function ProfitLossPage() {
         rentalAgreements: afsRentalAgreementsQ.data ?? [],
         rentalInvoices: afsRentalInvoicesQ.data ?? [],
         machineActuals: afsMachineActualsQ.data ?? [],
+        revenueBudgetScenario,
+        marketingBudgetMode,
       }),
     [
       afsBudgetTrancheRevenuesQ.data,
@@ -1189,7 +1241,9 @@ function ProfitLossPage() {
       costDriverRulesQ.data,
       glQ.data,
       revenueBudgetsQ.data,
+      revenueBudgetScenario,
       salesQ.data,
+      marketingBudgetMode,
     ],
   );
   const revenueActualsByChannel = useMemo(
@@ -1222,7 +1276,9 @@ function ProfitLossPage() {
   }
 
   function buildCurrentFinancialExportData(): FinancialExportData {
-    const revenueInputRows = buildRevenueBudgetInputRows(revenueBudgetsQ.data ?? [], months);
+    const revenueInputRows = (["mid", "low"] as const).flatMap((scenario) =>
+      buildRevenueBudgetInputRows(revenueBudgetsQ.data ?? [], months, scenario),
+    );
     const afsBudgetTrancheInputRows = buildAfsBudgetTrancheInputRows(
       afsBudgetTranchesQ.data ?? [],
       afsBudgetTrancheRevenuesQ.data ?? [],
@@ -1241,7 +1297,7 @@ function ProfitLossPage() {
 
     for (const row of revenueInputRows) {
       budgetInputRows.push({
-        group: "Omzetbudgetten",
+        group: `Omzetbudgetten - ${row.scenario === "low" ? "low case" : "mid case"}`,
         category: channelLabel(row.channel),
         label: row.label,
         note: row.level === 0 ? "Kanaalbudget" : "Budget bestaande AFS",
@@ -1252,7 +1308,7 @@ function ProfitLossPage() {
       });
       if (row.level === 0) {
         budgetInputRows.push({
-          group: "Omzetbudgetten",
+          group: `Omzetbudgetten - ${row.scenario === "low" ? "low case" : "mid case"}`,
           category: channelLabel(row.channel),
           label: "Realisatie ter referentie",
           note: "Zoals getoond onder het kanaalbudget",
@@ -1297,7 +1353,7 @@ function ProfitLossPage() {
     }
 
     const afsUncontractedTurnover = afsTurnoverByMachinePeriod({
-      revenueBudgets: revenueBudgetsQ.data ?? [],
+      revenueBudgets: selectedRevenueBudgets,
       machineActuals: afsMachineActualsQ.data ?? [],
       months,
     });
@@ -1306,7 +1362,7 @@ function ProfitLossPage() {
       driverRules: costDriverRulesQ.data ?? [],
       turnoverByMachinePeriod: afsUncontractedTurnover,
       excludedMachineIds: legacyAfsMachineIds({
-        revenueBudgets: revenueBudgetsQ.data ?? [],
+        revenueBudgets: selectedRevenueBudgets,
         machineActuals: afsMachineActualsQ.data ?? [],
       }),
       months,
@@ -1509,7 +1565,7 @@ function ProfitLossPage() {
 
     return {
       title: "Daily Flowers — W&V / Cashflow",
-      selectionLabel: selectionTitle(viewMode, months, year),
+      selectionLabel: `${selectionTitle(viewMode, months, year)} - ${revenueBudgetScenario === "low" ? "low case" : "mid case"} - marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}`,
       months,
       columns: visibleColumns,
       totalLabel,
@@ -1801,7 +1857,12 @@ function ProfitLossPage() {
         const { error } = await db.from("budgets").update({ amount }).eq("id", cell.id);
         if (error) throw error;
       } else {
-        let del = db.from("budgets").delete().eq("channel", row.channel).eq("period", period);
+        let del = db
+          .from("budgets")
+          .delete()
+          .eq("scenario", row.scenario)
+          .eq("channel", row.channel)
+          .eq("period", period);
         del = row.machineId ? del.eq("machine_id", row.machineId) : del.is("machine_id", null);
         const deleteResult = await del;
         if (deleteResult.error) throw deleteResult.error;
@@ -1811,6 +1872,7 @@ function ProfitLossPage() {
           machine_id: row.machineId,
           period,
           amount,
+          scenario: row.scenario,
         });
         if (error) throw error;
       }
@@ -2194,7 +2256,7 @@ function ProfitLossPage() {
 
         <Card>
           <CardContent className="pt-6">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6 items-end">
+            <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-8">
               <Field label="View">
                 <Select value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
                   <SelectTrigger>
@@ -2276,6 +2338,38 @@ function ProfitLossPage() {
                 </>
               )}
 
+              <Field label="Omzetcase">
+                <Select
+                  value={revenueBudgetScenario}
+                  onValueChange={(value) =>
+                    setRevenueBudgetScenario(value as RevenueBudgetScenario)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mid">Mid case</SelectItem>
+                    <SelectItem value="low">Low case</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              <Field label="Marketingbudget">
+                <Select
+                  value={marketingBudgetMode}
+                  onValueChange={(value) => setMarketingBudgetMode(value as MarketingBudgetMode)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="internal">Intern</SelectItem>
+                    <SelectItem value="bank">Bank</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+
               <PlColumnToggles columns={visibleColumns} onToggle={toggleColumn} />
 
               {viewMode === "multiYear" && (
@@ -2298,7 +2392,9 @@ function ProfitLossPage() {
               <CardTitle className="text-base">{selectionTitle(viewMode, months, year)}</CardTitle>
               <CardDescription>
                 Actuals naast omzetbudgetten en W&V-kostenbudgetten. Klik op een actual om de
-                onderliggende grootboekregels of verkooptransacties te zien.
+                onderliggende grootboekregels of verkooptransacties te zien. Actief:{" "}
+                {revenueBudgetScenario === "low" ? "low case" : "mid case"} en marketing{" "}
+                {marketingBudgetMode === "bank" ? "bank" : "intern"}.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -2420,6 +2516,7 @@ function ProfitLossPage() {
           <BudgetInputsPanel
             months={months}
             revenueBudgets={revenueBudgetsQ.data ?? []}
+            calculationRevenueBudgets={selectedRevenueBudgets}
             afsBudgetTranches={afsBudgetTranchesQ.data ?? []}
             afsBudgetTrancheRevenues={afsBudgetTrancheRevenuesQ.data ?? []}
             revenueActualsByChannel={revenueActualsByChannel}
@@ -2477,6 +2574,8 @@ function ProfitLossPage() {
             afsBlocks={cashflowAfsBlocksQ.data ?? []}
             driverRules={costDriverRulesQ.data ?? []}
             sourceSheets={bankSourceSheets}
+            revenueBudgetScenario={revenueBudgetScenario}
+            marketingBudgetMode={marketingBudgetMode}
             loading={exportDataLoading}
             onReportYearChange={setBankReportYear}
             onActualThroughMonthChange={setBankActualThroughMonth}
@@ -2492,6 +2591,7 @@ function ProfitLossPage() {
 function BudgetInputsPanel({
   months,
   revenueBudgets,
+  calculationRevenueBudgets,
   afsBudgetTranches,
   afsBudgetTrancheRevenues,
   revenueActualsByChannel,
@@ -2508,6 +2608,7 @@ function BudgetInputsPanel({
 }: {
   months: string[];
   revenueBudgets: RevenueBudgetRow[];
+  calculationRevenueBudgets: RevenueBudgetRow[];
   afsBudgetTranches: AfsBudgetTrancheRow[];
   afsBudgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   revenueActualsByChannel: Map<string, Record<string, number>>;
@@ -2531,8 +2632,11 @@ function BudgetInputsPanel({
     field?: "amount" | "basisAmount",
   ) => void;
 }) {
-  const revenueRows = useMemo(
-    () => buildRevenueBudgetInputRows(revenueBudgets, months),
+  const revenueRowsByScenario = useMemo(
+    () => ({
+      mid: buildRevenueBudgetInputRows(revenueBudgets, months, "mid"),
+      low: buildRevenueBudgetInputRows(revenueBudgets, months, "low"),
+    }),
     [months, revenueBudgets],
   );
   const afsBudgetTrancheRows = useMemo(
@@ -2571,90 +2675,20 @@ function BudgetInputsPanel({
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Omzetbudgetten</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
-              <thead className="bg-muted/50 text-left">
-                <tr>
-                  <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>Kanaal</th>
-                  <th
-                    className={cn(
-                      BUDGET_STICKY_HEADER_SECOND,
-                      STICKY_SEPARATOR_SHADOW,
-                      "font-medium",
-                    )}
-                  >
-                    Budgetregel
-                  </th>
-                  {months.map((period) => (
-                    <BudgetInputHeader key={period} period={period} />
-                  ))}
-                  <th className="w-32 border-l px-3 py-2 text-right font-medium">Totaal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {revenueRows.map((row) => (
-                  <tr key={row.key} className="group border-t hover:bg-muted/30">
-                    <td className={BUDGET_STICKY_BODY_FIRST}>
-                      {row.level === 0 ? (
-                        <Badge variant="outline">{channelLabel(row.channel)}</Badge>
-                      ) : null}
-                    </td>
-                    <td
-                      className={cn(
-                        BUDGET_STICKY_BODY_SECOND,
-                        STICKY_SEPARATOR_SHADOW,
-                        row.level === 0 ? "font-medium" : "pl-8",
-                      )}
-                    >
-                      {row.label}
-                    </td>
-                    {months.map((period) => {
-                      const cellKey = revenueBudgetCellKey(row.key, period);
-                      const actualAmount =
-                        row.level === 0
-                          ? (revenueActualsByChannel.get(row.channel)?.[period] ?? 0)
-                          : null;
-                      return (
-                        <td key={period} className="border-l px-2 py-1">
-                          <BudgetInputField
-                            cellKey={cellKey}
-                            cell={row.values[period]}
-                            draft={drafts[cellKey]}
-                            saving={savingCell === cellKey}
-                            onDraftChange={onDraftChange}
-                            onSave={(rawValue) => onSaveRevenue(row, period, rawValue)}
-                          />
-                          {actualAmount !== null && (
-                            <div className="mt-1 whitespace-nowrap text-right text-[11px] text-muted-foreground tabular-nums">
-                              Real. {formatEUR(actualAmount)}
-                            </div>
-                          )}
-                        </td>
-                      );
-                    })}
-                    <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
-                      <div>{formatEUR(sumInputCells(row.values, months))}</div>
-                      {row.level === 0 && (
-                        <div className="mt-1 whitespace-nowrap text-[11px] font-normal text-muted-foreground">
-                          Real.{" "}
-                          {formatEUR(
-                            sumValues(revenueActualsByChannel.get(row.channel) ?? {}, months),
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      {(["mid", "low"] as const).map((scenario) => (
+        <RevenueBudgetInputsCard
+          key={scenario}
+          scenario={scenario}
+          rows={revenueRowsByScenario[scenario]}
+          months={months}
+          revenueActualsByChannel={revenueActualsByChannel}
+          drafts={drafts}
+          savingCell={savingCell}
+          tableMinWidth={tableMinWidth}
+          onDraftChange={onDraftChange}
+          onSave={onSaveRevenue}
+        />
+      ))}
 
       <Card>
         <CardHeader>
@@ -2868,7 +2902,7 @@ function BudgetInputsPanel({
         driverDefinitions={COST_DRIVER_DEFINITIONS}
         showAfsMachineCountRow
         months={months}
-        revenueBudgets={revenueBudgets}
+        revenueBudgets={calculationRevenueBudgets}
         budgetLines={budgetLines}
         driverRules={driverRules}
         activeAfsCount={activeAfsCount}
@@ -2882,7 +2916,7 @@ function BudgetInputsPanel({
         title="W&V parameters"
         driverDefinitions={PL_PARAMETER_DRIVER_DEFINITIONS}
         months={months}
-        revenueBudgets={revenueBudgets}
+        revenueBudgets={calculationRevenueBudgets}
         budgetLines={budgetLines}
         driverRules={driverRules}
         activeAfsCount={activeAfsCount}
@@ -3057,6 +3091,121 @@ function AfsInvestmentBlocksCard({
             </div>
           );
         })}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RevenueBudgetInputsCard({
+  scenario,
+  rows,
+  months,
+  revenueActualsByChannel,
+  drafts,
+  savingCell,
+  tableMinWidth,
+  onDraftChange,
+  onSave,
+}: {
+  scenario: RevenueBudgetScenario;
+  rows: RevenueBudgetInputRow[];
+  months: string[];
+  revenueActualsByChannel: Map<string, Record<string, number>>;
+  drafts: Record<string, string>;
+  savingCell: string | null;
+  tableMinWidth: number;
+  onDraftChange: (cellKey: string, value: string) => void;
+  onSave: (row: RevenueBudgetInputRow, period: string, rawValue: string) => void;
+}) {
+  const title = scenario === "low" ? "Omzetbudgetten - low case" : "Omzetbudgetten - mid case";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{title}</CardTitle>
+        <CardDescription>
+          {scenario === "low"
+            ? "Voorzichtige omzetvariant. Deze is initieel gekopieerd van de mid case en kan onafhankelijk worden aangepast."
+            : "Basisscenario voor de omzetprognose."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
+            <thead className="bg-muted/50 text-left">
+              <tr>
+                <th className={cn(BUDGET_STICKY_HEADER_FIRST, "font-medium")}>Kanaal</th>
+                <th
+                  className={cn(
+                    BUDGET_STICKY_HEADER_SECOND,
+                    STICKY_SEPARATOR_SHADOW,
+                    "font-medium",
+                  )}
+                >
+                  Budgetregel
+                </th>
+                {months.map((period) => (
+                  <BudgetInputHeader key={period} period={period} />
+                ))}
+                <th className="w-32 border-l px-3 py-2 text-right font-medium">Totaal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key} className="group border-t hover:bg-muted/30">
+                  <td className={BUDGET_STICKY_BODY_FIRST}>
+                    {row.level === 0 ? (
+                      <Badge variant="outline">{channelLabel(row.channel)}</Badge>
+                    ) : null}
+                  </td>
+                  <td
+                    className={cn(
+                      BUDGET_STICKY_BODY_SECOND,
+                      STICKY_SEPARATOR_SHADOW,
+                      row.level === 0 ? "font-medium" : "pl-8",
+                    )}
+                  >
+                    {row.label}
+                  </td>
+                  {months.map((period) => {
+                    const cellKey = revenueBudgetCellKey(row.key, period);
+                    const actualAmount =
+                      row.level === 0
+                        ? (revenueActualsByChannel.get(row.channel)?.[period] ?? 0)
+                        : null;
+                    return (
+                      <td key={period} className="border-l px-2 py-1">
+                        <BudgetInputField
+                          cellKey={cellKey}
+                          cell={row.values[period]}
+                          draft={drafts[cellKey]}
+                          saving={savingCell === cellKey}
+                          onDraftChange={onDraftChange}
+                          onSave={(rawValue) => onSave(row, period, rawValue)}
+                        />
+                        {actualAmount !== null ? (
+                          <div className="mt-1 whitespace-nowrap text-right text-[11px] text-muted-foreground tabular-nums">
+                            Real. {formatEUR(actualAmount)}
+                          </div>
+                        ) : null}
+                      </td>
+                    );
+                  })}
+                  <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
+                    <div>{formatEUR(sumInputCells(row.values, months))}</div>
+                    {row.level === 0 ? (
+                      <div className="mt-1 whitespace-nowrap text-[11px] font-normal text-muted-foreground">
+                        Real.{" "}
+                        {formatEUR(
+                          sumValues(revenueActualsByChannel.get(row.channel) ?? {}, months),
+                        )}
+                      </div>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </CardContent>
     </Card>
   );
@@ -3661,6 +3810,8 @@ function buildBankSourceSheets({
   rentalAgreements,
   rentalInvoices,
   machineActuals,
+  revenueBudgetScenario,
+  marketingBudgetMode,
 }: {
   months: string[];
   glRows: GlPeriodRow[];
@@ -3675,9 +3826,21 @@ function buildBankSourceSheets({
   rentalAgreements: AfsRentalAgreementRow[];
   rentalInvoices: AfsRentalInvoiceRow[];
   machineActuals: AfsMachineActualRow[];
+  revenueBudgetScenario: RevenueBudgetScenario;
+  marketingBudgetMode: MarketingBudgetMode;
 }): BankSourceSheet[] {
   const inScope = (period: string) => months.includes(period);
   return [
+    {
+      name: "Modelkeuze",
+      title: "Actieve budgetscenario's",
+      description: "Keuzes waarmee de W&V- en cashflowprognose in dit bankbestand is berekend.",
+      headers: ["Onderdeel", "Actieve keuze"],
+      rows: [
+        ["Omzetbudget", revenueBudgetScenario === "low" ? "Low case" : "Mid case"],
+        ["Marketingbudget", marketingBudgetMode === "bank" ? "Bank" : "Intern"],
+      ],
+    },
     {
       name: "Bron GL actuals",
       title: "Grootboekactuals",
@@ -3766,12 +3929,23 @@ function buildBankSourceSheets({
     {
       name: "Omzetbudget inputs",
       title: "Omzetbudgetten",
-      description: "Omzetbudget per kanaal en, waar van toepassing, per bestaande AFS-machine.",
-      headers: ["ID", "Periode", "Kanaal", "Machine-ID", "Bedrag", "Machinenaam", "AFS-nummer"],
+      description:
+        "Omzetbudget per scenario, kanaal en, waar van toepassing, per bestaande AFS-machine.",
+      headers: [
+        "ID",
+        "Scenario",
+        "Periode",
+        "Kanaal",
+        "Machine-ID",
+        "Bedrag",
+        "Machinenaam",
+        "AFS-nummer",
+      ],
       rows: revenueBudgets
         .filter((row) => inScope(row.period))
         .map((row) => [
           row.id,
+          row.scenario ?? "mid",
           row.period,
           row.channel,
           row.machine_id,
@@ -3779,7 +3953,7 @@ function buildBankSourceSheets({
           row.machines?.display_name ?? "",
           row.machines?.afs_number ?? "",
         ]),
-      numericColumns: [4],
+      numericColumns: [5],
     },
     {
       name: "Driverregels",
@@ -3987,6 +4161,8 @@ function BankReportingPanel({
   afsBlocks,
   driverRules,
   sourceSheets,
+  revenueBudgetScenario,
+  marketingBudgetMode,
   loading,
   onReportYearChange,
   onActualThroughMonthChange,
@@ -4003,6 +4179,8 @@ function BankReportingPanel({
   afsBlocks: CashflowAfsBlock[];
   driverRules: PlBudgetDriverRule[];
   sourceSheets: BankSourceSheet[];
+  revenueBudgetScenario: RevenueBudgetScenario;
+  marketingBudgetMode: MarketingBudgetMode;
   loading: boolean;
   onReportYearChange: (year: string) => void;
   onActualThroughMonthChange: (month: string) => void;
@@ -4118,7 +4296,9 @@ function BankReportingPanel({
           <CardTitle className="text-base">Bankrapportage instellen</CardTitle>
           <CardDescription>
             De jaarprognose gebruikt actuals t/m de gekozen maand en schakelt daarna automatisch
-            over op budget. Het opvolgende jaar wordt volledig als budget getoond.
+            over op budget. Het opvolgende jaar wordt volledig als budget getoond. Actief:{" "}
+            {revenueBudgetScenario === "low" ? "low case" : "mid case"} en marketing{" "}
+            {marketingBudgetMode === "bank" ? "bank" : "intern"}.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -4186,7 +4366,7 @@ function BankReportingPanel({
       <BankStatementSheet
         view="profit-loss"
         title="Resultaten & prognose"
-        description={`Actuals t/m ${actualThroughLabel}; daarna budget. Inclusief budget ${nextYear}.`}
+        description={`Actuals t/m ${actualThroughLabel}; daarna ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}. Inclusief budget ${nextYear}.`}
         reportYear={reportYear}
         nextYear={nextYear}
         actualThroughMonth={actualThroughMonth}
@@ -4197,7 +4377,7 @@ function BankReportingPanel({
       <BankStatementSheet
         view="cashflow-current"
         title={`Cashflow & financieringsbehoefte ${reportYear}`}
-        description={`Maandoverzicht ${reportYear}: actuals t/m ${actualThroughLabel} en budget daarna.`}
+        description={`Maandoverzicht ${reportYear}: actuals t/m ${actualThroughLabel} en daarna ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}.`}
         reportYear={reportYear}
         nextYear={nextYear}
         cashflowYear={reportYear}
@@ -4209,7 +4389,7 @@ function BankReportingPanel({
       <BankStatementSheet
         view="cashflow-next"
         title={`Cashflow & financieringsbehoefte ${nextYear}`}
-        description={`Maandoverzicht ${nextYear}: volledig budget, inclusief investeringen en financieringsbehoefte.`}
+        description={`Maandoverzicht ${nextYear}: volledig ${revenueBudgetScenario === "low" ? "low case" : "mid case"} met marketing ${marketingBudgetMode === "bank" ? "bank" : "intern"}, inclusief investeringen en financieringsbehoefte.`}
         reportYear={reportYear}
         nextYear={nextYear}
         cashflowYear={nextYear}
@@ -5786,14 +5966,19 @@ function CostDriverInputField({
   );
 }
 
-function buildRevenueBudgetInputRows(revenueBudgets: RevenueBudgetRow[], months: string[]) {
+function buildRevenueBudgetInputRows(
+  revenueBudgets: RevenueBudgetRow[],
+  months: string[],
+  scenario: RevenueBudgetScenario,
+) {
   const result = new Map<string, RevenueBudgetInputRow>();
 
   const ensure = (channel: string, machineId: string | null, label: string, level: 0 | 1) => {
-    const key = revenueBudgetRowKey(channel, machineId);
+    const key = revenueBudgetRowKey(scenario, channel, machineId);
     if (!result.has(key)) {
       result.set(key, {
         key,
+        scenario,
         channel,
         machineId,
         label,
@@ -5809,6 +5994,7 @@ function buildRevenueBudgetInputRows(revenueBudgets: RevenueBudgetRow[], months:
   }
 
   for (const budget of revenueBudgets) {
+    if ((budget.scenario ?? "mid") !== scenario) continue;
     if (!CHANNELS.includes(budget.channel as (typeof CHANNELS)[number])) continue;
     if (!months.includes(budget.period)) continue;
     const machineLabel = budget.machine_id ? machineBudgetLabel(budget.machines) : "Totaal kanaal";
@@ -5858,11 +6044,13 @@ function addAfsBudgetTrancheRevenue({
   budgetTranches,
   budgetTrancheRevenues,
   months,
+  scenario,
 }: {
   revenueBudgets: RevenueBudgetRow[];
   budgetTranches: AfsBudgetTrancheRow[];
   budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   months: string[];
+  scenario: RevenueBudgetScenario;
 }) {
   const result = revenueBudgets.map((budget) => ({ ...budget }));
   const forecastByPeriod = new Map<string, number>();
@@ -5893,6 +6081,7 @@ function addAfsBudgetTrancheRevenue({
         channel: "bold_afs",
         machine_id: null,
         amount: forecastAmount,
+        scenario,
       });
     }
   }
@@ -6079,6 +6268,7 @@ function fallbackDriverPercentageAmount({
 function buildEffectiveBudgetLines({
   budgetLines,
   driverRules,
+  driverDefinitions,
   revenueBudgets,
   afsRentalAgreements,
   afsMachineActuals,
@@ -6089,6 +6279,7 @@ function buildEffectiveBudgetLines({
 }: {
   budgetLines: PlBudgetLine[];
   driverRules: PlBudgetDriverRule[];
+  driverDefinitions: CostDriverDefinition[];
   revenueBudgets: RevenueBudgetRow[];
   afsRentalAgreements: AfsRentalAgreementRow[];
   afsMachineActuals: AfsMachineActualRow[];
@@ -6101,7 +6292,7 @@ function buildEffectiveBudgetLines({
     .filter((line) => line.kind === "revenue" || !EXCLUDED_PL_BUDGET_LINE_KEYS.has(line.line_key))
     .map(normalizeManualBudgetLine);
   const driverRows = buildCostDriverInputRows({
-    driverDefinitions: BUDGET_DRIVER_DEFINITIONS,
+    driverDefinitions,
     driverRules,
     revenueBudgets,
     budgetLines,
@@ -6479,8 +6670,12 @@ function blankCostDriverCells(months: string[]) {
   ) as Record<string, CostDriverInputCell>;
 }
 
-function revenueBudgetRowKey(channel: string, machineId: string | null) {
-  return `${channel}|${machineId ?? "channel"}`;
+function revenueBudgetRowKey(
+  scenario: RevenueBudgetScenario,
+  channel: string,
+  machineId: string | null,
+) {
+  return `${scenario}|${channel}|${machineId ?? "channel"}`;
 }
 
 function revenueBudgetCellKey(rowKey: string, period: string) {

@@ -52,6 +52,7 @@ export type Database = {
           id: string;
           machine_id: string | null;
           period: string;
+          scenario: string;
           updated_at: string;
         };
         Insert: {
@@ -61,6 +62,7 @@ export type Database = {
           id?: string;
           machine_id?: string | null;
           period: string;
+          scenario?: string;
           updated_at?: string;
         };
         Update: {
@@ -70,6 +72,7 @@ export type Database = {
           id?: string;
           machine_id?: string | null;
           period?: string;
+          scenario?: string;
           updated_at?: string;
         };
         Relationships: [

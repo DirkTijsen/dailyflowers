@@ -45,7 +45,16 @@ let cachedDailyFlowersLogoPdfImage;
 const resources = {
   budgets: {
     table: "public.budgets",
-    columns: ["id", "channel", "machine_id", "period", "amount", "created_at", "updated_at"],
+    columns: [
+      "id",
+      "channel",
+      "machine_id",
+      "period",
+      "amount",
+      "scenario",
+      "created_at",
+      "updated_at",
+    ],
     writable: true,
   },
   bold_articles: {

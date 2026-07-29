@@ -46,6 +46,7 @@ type BudgetRow = {
   machine_id: string | null;
   period: string;
   amount: number;
+  scenario: RevenueBudgetScenario;
   machines?: { display_name: string | null; afs_number: string | null } | null;
 };
 
@@ -91,6 +92,7 @@ type AnalysisRow = {
 type ViewMode = "month" | "range" | "year" | "multiYear";
 type DetailLevel = "channel" | "both" | "machine";
 type MetricColumn = "actual" | "budget" | "variance" | "ly" | "vsLy";
+type RevenueBudgetScenario = "mid" | "low";
 
 const METRIC_COLUMNS: Array<{ value: MetricColumn; label: string }> = [
   { value: "actual", label: "Actuals" },
@@ -113,6 +115,7 @@ function BudgetsPage() {
   const [selectedYears, setSelectedYears] = useState<string[]>([thisYear]);
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [detailLevel, setDetailLevel] = useState<DetailLevel>("both");
+  const [budgetScenario, setBudgetScenario] = useState<RevenueBudgetScenario>("mid");
   const [visibleColumns, setVisibleColumns] = useState<MetricColumn[]>([
     "actual",
     "budget",
@@ -141,12 +144,15 @@ function BudgetsPage() {
   });
 
   const budgetsQ = useQuery({
-    queryKey: ["budgets-analysis", selectedPeriods],
+    queryKey: ["budgets-analysis", selectedPeriods, budgetScenario],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("budgets")
-        .select("id, channel, machine_id, period, amount, machines(display_name, afs_number)")
-        .in("period", selectedPeriods);
+        .select(
+          "id, channel, machine_id, period, amount, scenario, machines(display_name, afs_number)",
+        )
+        .in("period", selectedPeriods)
+        .eq("scenario", budgetScenario);
       if (error) throw error;
       return (data ?? []) as BudgetRow[];
     },
@@ -272,13 +278,17 @@ function BudgetsPage() {
         let del = supabase
           .from("budgets")
           .delete()
+          .eq("scenario", budgetScenario)
           .eq("channel", row.channel)
           .eq("period", row.period);
         del = row.machine_id ? del.eq("machine_id", row.machine_id) : del.is("machine_id", null);
         const deleteResult = await del;
         if (deleteResult.error) throw deleteResult.error;
 
-        const { error } = await supabase.from("budgets").insert(row);
+        const { error } = await supabase.from("budgets").insert({
+          ...row,
+          scenario: budgetScenario,
+        });
         if (error) throw error;
       }
 
@@ -377,7 +387,7 @@ function BudgetsPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6 items-end">
+          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-7">
             <div>
               <label className="text-xs text-muted-foreground">View</label>
               <Select value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
@@ -465,6 +475,22 @@ function BudgetsPage() {
             )}
 
             <div>
+              <label className="text-xs text-muted-foreground">Omzetcase</label>
+              <Select
+                value={budgetScenario}
+                onValueChange={(value) => setBudgetScenario(value as RevenueBudgetScenario)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mid">Mid case</SelectItem>
+                  <SelectItem value="low">Low case</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
               <label className="text-xs text-muted-foreground">Detailniveau</label>
               <Select
                 value={detailLevel}
@@ -503,8 +529,8 @@ function BudgetsPage() {
             {selectionTitle(viewMode, selectedPeriods, year)}
           </CardTitle>
           <CardDescription>
-            Omzetbudgetten zijn ex btw. Regels met <code>afs_number</code> rollen onder Bold/AFS in
-            als AFS-regel.
+            {budgetScenario === "low" ? "Low case" : "Mid case"} - omzetbudgetten zijn ex btw.
+            Regels met <code>afs_number</code> rollen onder Bold/AFS in als AFS-regel.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
