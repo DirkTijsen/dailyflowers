@@ -4092,7 +4092,13 @@ function BankReportingPanel({
     try {
       const stamp = new Date().toISOString().slice(0, 10);
       await exportBankReportPdf({
-        views: ["scenario", "profit-loss", "cashflow", "investment-agenda"],
+        views: [
+          "scenario",
+          "profit-loss",
+          "cashflow-current",
+          "cashflow-next",
+          "investment-agenda",
+        ],
         fileName: `Daily Flowers bankrapportage ${reportYear}-${nextYear} ${stamp}.pdf`,
       });
       toast.success("Bankrapportage als PDF geëxporteerd");
@@ -4189,11 +4195,24 @@ function BankReportingPanel({
         loading={loading}
       />
       <BankStatementSheet
-        view="cashflow"
-        title="Cashflow & financieringsbehoefte"
-        description={`Operationele, investerings- en financieringscashflow op basis van actuals t/m ${actualThroughLabel} en budget daarna.`}
+        view="cashflow-current"
+        title={`Cashflow & financieringsbehoefte ${reportYear}`}
+        description={`Maandoverzicht ${reportYear}: actuals t/m ${actualThroughLabel} en budget daarna.`}
         reportYear={reportYear}
         nextYear={nextYear}
+        cashflowYear={reportYear}
+        actualThroughMonth={actualThroughMonth}
+        generatedLabel={generatedLabel}
+        rows={bankCashflowRowsWithNeed}
+        loading={loading}
+      />
+      <BankStatementSheet
+        view="cashflow-next"
+        title={`Cashflow & financieringsbehoefte ${nextYear}`}
+        description={`Maandoverzicht ${nextYear}: volledig budget, inclusief investeringen en financieringsbehoefte.`}
+        reportYear={reportYear}
+        nextYear={nextYear}
+        cashflowYear={nextYear}
         actualThroughMonth={actualThroughMonth}
         generatedLabel={generatedLabel}
         rows={bankCashflowRowsWithNeed}
@@ -4778,31 +4797,34 @@ function BankStatementSheet({
   description,
   reportYear,
   nextYear,
+  cashflowYear,
   actualThroughMonth,
   generatedLabel,
   rows,
   loading,
 }: {
-  view: "profit-loss" | "cashflow";
+  view: "profit-loss" | "cashflow-current" | "cashflow-next";
   title: string;
   description: string;
   reportYear: string;
   nextYear: string;
+  cashflowYear?: string;
   actualThroughMonth: string;
   generatedLabel: string;
   rows: BankStatementRow[];
   loading: boolean;
 }) {
-  const [displayMode, setDisplayMode] = useState<"summary" | "monthly">(
-    view === "cashflow" ? "monthly" : "summary",
-  );
+  const isCashflow = view !== "profit-loss";
+  const [displayMode, setDisplayMode] = useState<"summary" | "monthly">("summary");
   const [showDetails, setShowDetails] = useState(false);
   const throughMonthLabel = shortMonthName(actualThroughMonth);
   const remainingStartMonth = String(Math.min(12, Number(actualThroughMonth) + 1)).padStart(2, "0");
   const remainingLabel =
     actualThroughMonth === "12" ? "Geen restant" : `${shortMonthName(remainingStartMonth)}–dec`;
   const cutoff = `${reportYear}-${actualThroughMonth}`;
-  const reportPeriods = [...yearPeriods(reportYear), ...yearPeriods(nextYear)];
+  const reportPeriods = cashflowYear
+    ? yearPeriods(cashflowYear)
+    : [...yearPeriods(reportYear), ...yearPeriods(nextYear)];
   const visibleRows =
     view === "profit-loss" && !showDetails ? compactBankProfitLossRows(rows) : rows;
 
@@ -4817,22 +4839,24 @@ function BankStatementSheet({
             <CardDescription className="mt-1">{description}</CardDescription>
           </div>
           <div className="bank-report-no-print flex flex-wrap justify-end gap-2">
-            <div className="flex rounded-md border p-0.5">
-              <Button
-                size="sm"
-                variant={displayMode === "summary" ? "default" : "ghost"}
-                onClick={() => setDisplayMode("summary")}
-              >
-                Samenvatting
-              </Button>
-              <Button
-                size="sm"
-                variant={displayMode === "monthly" ? "default" : "ghost"}
-                onClick={() => setDisplayMode("monthly")}
-              >
-                Per maand
-              </Button>
-            </div>
+            {!isCashflow ? (
+              <div className="flex rounded-md border p-0.5">
+                <Button
+                  size="sm"
+                  variant={displayMode === "summary" ? "default" : "ghost"}
+                  onClick={() => setDisplayMode("summary")}
+                >
+                  Samenvatting
+                </Button>
+                <Button
+                  size="sm"
+                  variant={displayMode === "monthly" ? "default" : "ghost"}
+                  onClick={() => setDisplayMode("monthly")}
+                >
+                  Per maand
+                </Button>
+              </div>
+            ) : null}
             {view === "profit-loss" ? (
               <Button size="sm" variant="outline" onClick={() => setShowDetails((value) => !value)}>
                 {showDetails ? "Compacte W&V" : "Alle regels"}
@@ -4855,10 +4879,14 @@ function BankStatementSheet({
           <table
             className={cn(
               "bank-report-table w-full text-xs",
-              displayMode === "monthly" ? "min-w-[3000px]" : "min-w-[1120px]",
+              isCashflow
+                ? "bank-report-cashflow-table min-w-[1560px]"
+                : displayMode === "monthly"
+                  ? "min-w-[3000px]"
+                  : "min-w-[1120px]",
             )}
           >
-            {displayMode === "summary" ? (
+            {!isCashflow && displayMode === "summary" ? (
               <thead>
                 <tr className="bg-slate-900 text-white">
                   <th className="w-48 px-3 py-2 text-left">Rubriek</th>
@@ -4870,6 +4898,39 @@ function BankStatementSheet({
                   <th className="px-3 py-2 text-right">Budget {reportYear}</th>
                   <th className="px-3 py-2 text-right">Verschil</th>
                   <th className="bg-emerald-800 px-3 py-2 text-right">Budget {nextYear}</th>
+                </tr>
+              </thead>
+            ) : cashflowYear ? (
+              <thead>
+                <tr className="bg-slate-900 text-white">
+                  <th rowSpan={2} className="w-40 px-3 py-2 text-left">
+                    Rubriek
+                  </th>
+                  <th rowSpan={2} className="min-w-56 px-3 py-2 text-left">
+                    Regel
+                  </th>
+                  <th colSpan={12} className="border-l border-slate-600 px-3 py-2 text-center">
+                    {cashflowYear}
+                  </th>
+                  <th rowSpan={2} className="bg-emerald-800 px-3 py-2 text-right">
+                    Totaal {cashflowYear}
+                  </th>
+                </tr>
+                <tr className="bg-slate-800 text-white">
+                  {reportPeriods.map((period) => (
+                    <th
+                      key={period}
+                      className={cn(
+                        "whitespace-nowrap border-l border-slate-600 px-2 py-2 text-right",
+                        period > cutoff && "bg-emerald-900",
+                      )}
+                    >
+                      {shortMonthName(period.split("-")[1])}
+                      <span className="ml-1 text-[9px] opacity-75">
+                        {period <= cutoff ? "A" : "B"}
+                      </span>
+                    </th>
+                  ))}
                 </tr>
               </thead>
             ) : (
@@ -4941,7 +5002,27 @@ function BankStatementSheet({
                       {row.label}
                     </td>
                     {row.kind === "heading" ? (
-                      <td colSpan={displayMode === "monthly" ? 26 : 7} />
+                      <td
+                        colSpan={
+                          isCashflow ? reportPeriods.length + 1 : displayMode === "monthly" ? 26 : 7
+                        }
+                      />
+                    ) : cashflowYear ? (
+                      <>
+                        {reportPeriods.map((period) => (
+                          <BankValue
+                            key={period}
+                            value={projection[period] ?? 0}
+                            strong={strong}
+                            className={period > cutoff ? "bg-emerald-50/50" : undefined}
+                          />
+                        ))}
+                        <BankValue
+                          value={aggregateBankRow(row, projection, reportPeriods)}
+                          strong
+                          className="bg-emerald-50/70"
+                        />
+                      </>
                     ) : displayMode === "monthly" ? (
                       <>
                         {reportPeriods.slice(0, 12).map((period) => (
@@ -5379,7 +5460,9 @@ function bankReportValues(
   };
 }
 
-function printBankReport(view: "profit-loss" | "cashflow" | "scenario" | "investment-agenda") {
+function printBankReport(
+  view: "profit-loss" | "cashflow-current" | "cashflow-next" | "scenario" | "investment-agenda",
+) {
   document.body.dataset.bankPrintView = view;
   const cleanup = () => {
     delete document.body.dataset.bankPrintView;

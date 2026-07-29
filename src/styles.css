@@ -161,8 +161,16 @@
   body[data-bank-print-view="profit-loss"]
     .bank-report-sheet[data-bank-report-view="profit-loss"]
     *,
-  body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"],
-  body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"] *,
+  body[data-bank-print-view="cashflow-current"]
+    .bank-report-sheet[data-bank-report-view="cashflow-current"],
+  body[data-bank-print-view="cashflow-current"]
+    .bank-report-sheet[data-bank-report-view="cashflow-current"]
+    *,
+  body[data-bank-print-view="cashflow-next"]
+    .bank-report-sheet[data-bank-report-view="cashflow-next"],
+  body[data-bank-print-view="cashflow-next"]
+    .bank-report-sheet[data-bank-report-view="cashflow-next"]
+    *,
   body[data-bank-print-view="scenario"] .bank-report-sheet[data-bank-report-view="scenario"],
   body[data-bank-print-view="scenario"] .bank-report-sheet[data-bank-report-view="scenario"] *,
   body[data-bank-print-view="investment-agenda"]

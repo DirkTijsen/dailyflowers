@@ -1,4 +1,9 @@
-export type BankReportView = "profit-loss" | "cashflow" | "scenario" | "investment-agenda";
+export type BankReportView =
+  | "profit-loss"
+  | "cashflow-current"
+  | "cashflow-next"
+  | "scenario"
+  | "investment-agenda";
 
 const PAGE_WIDTH_MM = 297;
 const PAGE_HEIGHT_MM = 210;
@@ -42,11 +47,9 @@ export async function exportBankReportPdf({
         (element) => element.scrollWidth,
       ),
     ];
-    const captureWidth = Math.max(
-      CAPTURE_PAGE_WIDTH_PX,
-      view === "cashflow" ? 3200 : 0,
-      Math.min(4200, ...sourceWidths),
-    );
+    const captureWidth = view.startsWith("cashflow-")
+      ? 1600
+      : Math.max(CAPTURE_PAGE_WIDTH_PX, Math.min(4200, Math.max(...sourceWidths)));
     preparePdfClone(clone, captureWidth);
 
     const host = document.createElement("div");
@@ -145,7 +148,8 @@ function preparePdfClone(clone: HTMLElement, width: number) {
 
 function viewLabel(view: BankReportView) {
   if (view === "profit-loss") return "Resultaten en prognose";
-  if (view === "cashflow") return "Cashflow en financieringsbehoefte";
+  if (view === "cashflow-current") return "Cashflow rapportagejaar";
+  if (view === "cashflow-next") return "Cashflow opvolgend jaar";
   if (view === "investment-agenda") return "Investeringsagenda AFS";
   return "AFS-scenario's";
 }
