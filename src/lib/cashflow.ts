@@ -36,7 +36,7 @@ export type AfsInvestmentComponent = {
 export type CashflowInputDefinition = {
   key: string;
   label: string;
-  group: "investments" | "debt" | "equity";
+  group: "liquidity" | "investments" | "debt" | "equity";
   direction: 1 | -1;
   level: 1 | 2;
 };
@@ -53,9 +53,11 @@ export type CashflowReportRow = {
   level: 0 | 1 | 2;
   kind: "normal" | "heading" | "subtotal" | "result";
   values: CashflowValues;
+  aggregation?: "sum" | "opening" | "ending" | "max";
 };
 
 export const AFS_MACHINE_INPUT_KEY = "investment_afs_machines";
+export const CASH_OPENING_BALANCE_KEY = "cash_opening_balance";
 
 export const AFS_INVESTMENT_COMPONENTS: AfsInvestmentComponent[] = [
   { key: "afs", label: "AFS", field: "afs_amount" },
@@ -72,6 +74,13 @@ export const AFS_INVESTMENT_COMPONENTS: AfsInvestmentComponent[] = [
 ];
 
 export const CASHFLOW_INPUT_DEFINITIONS: CashflowInputDefinition[] = [
+  {
+    key: CASH_OPENING_BALANCE_KEY,
+    label: "Openingsbalans cash",
+    group: "liquidity",
+    direction: 1,
+    level: 1,
+  },
   {
     key: "investment_office_property",
     label: "Kantoor- en pandinrichting",
@@ -183,8 +192,39 @@ export function buildCashflowReport({
   );
   const financingTotal = sumCashflowValues([debtTotal, equityTotal], months);
   const netCashflow = sumCashflowValues([operatingResult, investmentTotal, financingTotal], months);
+  const openingCash = blankCashflowValues(months);
+  const closingCash = blankCashflowValues(months);
+  const openingInputByPeriod = new Map(
+    inputs
+      .filter((input) => input.line_key === CASH_OPENING_BALANCE_KEY)
+      .map((input) => [input.period, input]),
+  );
+  let runningActualCash = 0;
+  let runningBudgetCash = 0;
+  for (const period of months) {
+    const openingInput = openingInputByPeriod.get(period);
+    if (openingInput) {
+      runningActualCash = Number(openingInput.actual_amount ?? 0);
+      runningBudgetCash = Number(openingInput.budget_amount ?? 0);
+    }
+    openingCash.actual[period] = runningActualCash;
+    openingCash.budget[period] = runningBudgetCash;
+    runningActualCash += netCashflow.actual[period] ?? 0;
+    runningBudgetCash += netCashflow.budget[period] ?? 0;
+    closingCash.actual[period] = runningActualCash;
+    closingCash.budget[period] = runningBudgetCash;
+  }
 
   return [
+    {
+      key: "opening-cash-balance",
+      label: "Openingsbalans cash",
+      section: "Liquiditeitspositie",
+      level: 0,
+      kind: "result",
+      values: openingCash,
+      aggregation: "opening",
+    },
     {
       key: "operating-result",
       label: "Bedrijfsresultaat",
@@ -246,6 +286,15 @@ export function buildCashflowReport({
       level: 0,
       kind: "result",
       values: netCashflow,
+    },
+    {
+      key: "closing-cash-balance",
+      label: "Eindbalans cash",
+      section: "Liquiditeitspositie",
+      level: 0,
+      kind: "result",
+      values: closingCash,
+      aggregation: "ending",
     },
   ];
 }

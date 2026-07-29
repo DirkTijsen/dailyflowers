@@ -1384,11 +1384,13 @@ function ProfitLossPage() {
         const values = cashflowInputValues(cashflowInputsQ.data ?? [], definition.key, months);
         return {
           group:
-            definition.group === "investments"
-              ? "Investeringen"
-              : definition.group === "debt"
-                ? "Vreemd vermogen"
-                : "Eigen vermogen",
+            definition.group === "liquidity"
+              ? "Liquiditeitspositie"
+              : definition.group === "investments"
+                ? "Investeringen"
+                : definition.group === "debt"
+                  ? "Vreemd vermogen"
+                  : "Eigen vermogen",
           label: definition.label,
           actual: values.actual,
           budget: values.budget,
@@ -1432,6 +1434,7 @@ function ProfitLossPage() {
         kind: row.kind,
         values: row.values.actual,
         budgetValues: row.values.budget,
+        aggregation: row.aggregation,
       })),
     };
   }
@@ -1488,8 +1491,9 @@ function ProfitLossPage() {
     const existingAmount = Number(
       metric === "actual" ? (existing?.actual_amount ?? 0) : (existing?.budget_amount ?? 0),
     );
-    if (!Number.isFinite(amount) || amount < 0) {
-      toast.error("Vul een positief bedrag in");
+    const allowNegative = definition.group === "liquidity";
+    if (!Number.isFinite(amount) || (!allowNegative && amount < 0)) {
+      toast.error(allowNegative ? "Vul een geldig bedrag in" : "Vul een positief bedrag in");
       setCashflowDrafts((current) => ({
         ...current,
         [cellKey]: formatAmountInput(existingAmount),
@@ -3004,6 +3008,11 @@ function CashflowInputsPanel({
     definitions: CashflowInputDefinition[];
   }> = [
     {
+      key: "liquidity",
+      label: "Liquiditeitspositie",
+      definitions: CASHFLOW_INPUT_DEFINITIONS.filter((item) => item.group === "liquidity"),
+    },
+    {
       key: "investments",
       label: "Investeringen",
       definitions: CASHFLOW_INPUT_DEFINITIONS.filter((item) => item.group === "investments"),
@@ -3035,7 +3044,9 @@ function CashflowInputsPanel({
           <CardTitle className="text-base">Cashflow inputs per maand</CardTitle>
           <CardDescription>
             Vul voor AFS alleen het aantal machines in. De cash-out wordt berekend met het
-            investeringsbedrag per machine uit het blok hierboven.
+            investeringsbedrag per machine uit het blok hierboven. Vul de openingsbalans alleen in
+            bij de maand waarin een nieuwe beginstand moet gelden; daarna rolt de cashpositie
+            automatisch door.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -3477,8 +3488,8 @@ function CashflowReportPanel({
                     ) : (
                       <BudgetAmountCells
                         columns={columns}
-                        value={sumValues(row.values.actual, months)}
-                        budget={sumValues(row.values.budget, months)}
+                        value={cashflowReportTotal(row, row.values.actual, months)}
+                        budget={cashflowReportTotal(row, row.values.budget, months)}
                         strong={strong}
                       />
                     )}
@@ -3503,6 +3514,20 @@ function CashflowReportPanel({
   );
 }
 
+function cashflowReportTotal(
+  row: CashflowReportRow,
+  values: Record<string, number>,
+  periods: string[],
+) {
+  if (periods.length === 0) return 0;
+  if (row.aggregation === "opening") return Number(values[periods[0]] ?? 0);
+  if (row.aggregation === "ending") return Number(values[periods.at(-1)!] ?? 0);
+  if (row.aggregation === "max") {
+    return Math.max(0, ...periods.map((period) => Number(values[period] ?? 0)));
+  }
+  return sumValues(values, periods);
+}
+
 type BankStatementRow = {
   key: string;
   label: string;
@@ -3512,7 +3537,7 @@ type BankStatementRow = {
   actual: Record<string, number>;
   budget: Record<string, number>;
   projection?: Record<string, number>;
-  aggregation?: "sum" | "ending" | "max";
+  aggregation?: "sum" | "opening" | "ending" | "max";
 };
 
 type BankCashNeedSummary = {
@@ -3570,6 +3595,7 @@ function BankReportingPanel({
     kind: row.kind,
     actual: row.values.actual,
     budget: row.values.budget,
+    aggregation: row.aggregation,
   }));
   const { rows: bankCashNeedRows, summary: bankCashNeedSummary } = buildBankCashNeedRows(
     bankCashflowStatementRows,
@@ -4041,8 +4067,19 @@ function buildBankCashNeedRows(
     const fundingNeed = blankValues(periods);
     const cumulativeAfterFunding = blankValues(periods);
     const additionalNeed = blankValues(periods);
-    let runningBeforeFunding = 0;
-    let runningAfterFunding = 0;
+    const openingBalanceRow = rowByKey.get("opening-cash-balance");
+    const openingBalance =
+      periods.length === 0 || !openingBalanceRow
+        ? 0
+        : metric === "projection"
+          ? Number(
+              (periods[0] <= cutoff
+                ? openingBalanceRow.actual[periods[0]]
+                : openingBalanceRow.budget[periods[0]]) ?? 0,
+            )
+          : Number(openingBalanceRow[metric][periods[0]] ?? 0);
+    let runningBeforeFunding = openingBalance;
+    let runningAfterFunding = openingBalance;
 
     for (const period of periods) {
       const valueFor = (key: string) => {
@@ -4186,6 +4223,7 @@ function aggregateBankRow(
   periods: string[],
 ) {
   if (periods.length === 0) return 0;
+  if (row.aggregation === "opening") return Number(values[periods[0]] ?? 0);
   if (row.aggregation === "ending") return Number(values[periods.at(-1)!] ?? 0);
   if (row.aggregation === "max") {
     return Math.max(0, ...periods.map((period) => Number(values[period] ?? 0)));
