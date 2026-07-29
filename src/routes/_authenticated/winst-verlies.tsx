@@ -160,6 +160,7 @@ type AfsBudgetTrancheRevenueRow = {
   cashflow_input_id: string;
   period: string;
   amount: number | string;
+  amount_per_machine: number | string;
 };
 
 type AfsRentalAgreementRow = {
@@ -512,6 +513,7 @@ type PlRow = {
 type BudgetInputCell = {
   id?: string;
   amount: number;
+  amountPerMachine?: number;
 };
 
 type RevenueBudgetInputRow = {
@@ -839,7 +841,7 @@ function ProfitLossPage() {
     queryFn: async () => {
       const { data, error } = await db
         .from<AfsBudgetTrancheRevenueRow>("afs_budget_tranche_revenues")
-        .select("id,cashflow_input_id,period,amount")
+        .select("id,cashflow_input_id,period,amount,amount_per_machine")
         .in("period", queryMonths);
       if (error) throw error;
       return (data ?? []) as AfsBudgetTrancheRevenueRow[];
@@ -1137,8 +1139,26 @@ function ProfitLossPage() {
       budgetInputRows.push({
         group: "Omzet nieuwe AFS-tranches",
         category: monthHeaderLabel(row.start_period, true),
-        label: `${row.display_name} (${row.machine_count} machines)`,
-        note: `Totale trancheomzet, actief vanaf ${row.start_period}`,
+        label: `${row.display_name} — omzet per machine`,
+        note: `${row.machine_count} machines, actief vanaf ${row.start_period}`,
+        values: Object.fromEntries(
+          months.map((period) => [
+            period,
+            period < row.start_period || row.machine_count <= 0
+              ? 0
+              : Number(
+                  row.values[period]?.amountPerMachine ??
+                    Number(row.values[period]?.amount ?? 0) / row.machine_count,
+                ),
+          ]),
+        ),
+        numberFormat: "currency",
+      });
+      budgetInputRows.push({
+        group: "Omzet nieuwe AFS-tranches",
+        category: monthHeaderLabel(row.start_period, true),
+        label: `${row.display_name} — totale trancheomzet`,
+        note: `${row.machine_count} machines × omzet per machine`,
         values: Object.fromEntries(
           months.map((period) => [
             period,
@@ -1620,22 +1640,31 @@ function ProfitLossPage() {
     rawValue: string,
   ) {
     const cell = row.values[period];
-    const amount = parseBudgetInput(rawValue);
+    const amountPerMachine = parseBudgetInput(rawValue);
+    const machineCount = Number(row.machine_count ?? 0);
+    const totalAmount = amountPerMachine * machineCount;
     const cellKey = afsBudgetTrancheRevenueCellKey(row.id, period);
-    if (!Number.isFinite(amount) || amount < 0) {
-      toast.error("Vul een positief omzetbedrag in");
+    if (!Number.isFinite(amountPerMachine) || amountPerMachine < 0) {
+      toast.error("Vul een positief omzetbedrag per machine in");
       setBudgetDrafts((current) => ({
         ...current,
-        [cellKey]: formatAmountInput(cell?.amount ?? 0),
+        [cellKey]: formatAmountInput(
+          Number(cell?.amountPerMachine ?? 0) ||
+            (machineCount > 0 ? Number(cell?.amount ?? 0) / machineCount : 0),
+        ),
       }));
+      return;
+    }
+    if (!Number.isFinite(machineCount) || machineCount <= 0) {
+      toast.error("Deze tranche heeft geen geldig aantal machines");
       return;
     }
     if (period < row.start_period) {
       toast.error("Deze tranche is in deze maand nog niet actief");
       return;
     }
-    if (cell?.id && Math.abs(amount - cell.amount) < 0.005) return;
-    if (!cell?.id && Math.abs(amount) < 0.005) return;
+    if (cell?.id && Math.abs(totalAmount - cell.amount) < 0.005) return;
+    if (!cell?.id && Math.abs(totalAmount) < 0.005) return;
 
     setSavingBudgetCell(cellKey);
     try {
@@ -1643,14 +1672,20 @@ function ProfitLossPage() {
         {
           cashflow_input_id: row.id,
           period,
-          amount,
+          amount: totalAmount,
+          amount_per_machine: amountPerMachine,
         },
         { onConflict: "cashflow_input_id,period" },
       );
       if (error) throw error;
-      setBudgetDrafts((current) => ({ ...current, [cellKey]: formatAmountInput(amount) }));
+      setBudgetDrafts((current) => ({
+        ...current,
+        [cellKey]: formatAmountInput(amountPerMachine),
+      }));
       qc.invalidateQueries({ queryKey: ["wv-afs-budget-tranche-revenues"] });
-      toast.success("Totale trancheomzet opgeslagen");
+      toast.success(
+        `${machineCount} machines × ${formatEUR(amountPerMachine)} = ${formatEUR(totalAmount)}`,
+      );
     } catch (error) {
       toast.error("Trancheomzet opslaan mislukt", {
         description: error instanceof Error ? error.message : String(error),
@@ -2397,9 +2432,9 @@ function BudgetInputsPanel({
           <CardHeader>
             <CardTitle className="text-base">Omzet nieuwe AFS-tranches</CardTitle>
             <CardDescription>
-              Iedere investeringsmaand uit de cashflow vormt één tranche. Vul per maand de totale
-              omzet van alle machines in die tranche in; het trancheaantal wordt automatisch uit de
-              cashflowplanning overgenomen.
+              Iedere investeringsmaand uit de cashflow vormt één tranche. Vul per maand de omzet per
+              machine in. De totale trancheomzet wordt automatisch berekend als aantal machines ×
+              omzet per machine.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -2420,9 +2455,9 @@ function BudgetInputsPanel({
                       Tranche
                     </th>
                     {months.map((period) => (
-                      <BudgetInputHeader key={period} period={period} />
+                      <BudgetInputHeader key={period} period={period} label="Per machine" />
                     ))}
-                    <th className="w-32 border-l px-3 py-2 text-right font-medium">Totaal</th>
+                    <th className="w-32 border-l px-3 py-2 text-right font-medium">Totale omzet</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2455,11 +2490,27 @@ function BudgetInputsPanel({
                             </td>
                           );
                         }
+                        const machineCount = Number(row.machine_count ?? 0);
+                        const storedTotal = Number(row.values[period]?.amount ?? 0);
+                        const perMachineCell = {
+                          ...row.values[period],
+                          amount: Number(
+                            row.values[period]?.amountPerMachine ??
+                              (machineCount > 0 ? storedTotal / machineCount : 0),
+                          ),
+                        };
+                        const rawPerMachine =
+                          drafts[cellKey] ?? formatAmountInput(perMachineCell.amount);
+                        const amountPerMachine = parseBudgetInput(rawPerMachine);
+                        const calculatedTotal =
+                          Number.isFinite(amountPerMachine) && machineCount > 0
+                            ? amountPerMachine * machineCount
+                            : 0;
                         return (
-                          <td key={period} className="border-l px-2 py-1">
+                          <td key={period} className="border-l px-2 py-1 align-top">
                             <BudgetInputField
                               cellKey={cellKey}
-                              cell={row.values[period]}
+                              cell={perMachineCell}
                               draft={drafts[cellKey]}
                               saving={savingCell === cellKey}
                               onDraftChange={onDraftChange}
@@ -2467,6 +2518,12 @@ function BudgetInputsPanel({
                                 onSaveAfsBudgetTrancheRevenue(row, period, rawValue)
                               }
                             />
+                            <div className="mt-1 whitespace-nowrap text-right text-[10px] text-muted-foreground">
+                              {machineCount} × {formatEUR(amountPerMachine)} ={" "}
+                              <span className="font-medium text-foreground">
+                                {formatEUR(calculatedTotal)}
+                              </span>
+                            </div>
                           </td>
                         );
                       })}
@@ -4163,13 +4220,16 @@ function AfsMachineCountInputRow({
   );
 }
 
-function BudgetInputHeader({ period }: { period: string }) {
+function BudgetInputHeader({ period, label }: { period: string; label?: string }) {
   return (
     <th className="w-32 border-l px-3 py-2 text-right font-medium">
       <span className="block">{monthHeaderLabel(period, true)}</span>
       <span className="block text-[11px] font-normal text-muted-foreground">
         {quarterHeaderLabel(period, true)}
       </span>
+      {label ? (
+        <span className="mt-0.5 block text-[10px] font-normal text-emerald-700">{label}</span>
+      ) : null}
     </th>
   );
 }
@@ -4339,6 +4399,7 @@ function buildAfsBudgetTrancheInputRows(
     row.values[revenue.period] = {
       id: revenue.id,
       amount: Number(revenue.amount ?? 0),
+      amountPerMachine: Number(revenue.amount_per_machine ?? 0),
     };
   }
   return [...rows.values()].sort(
@@ -4359,14 +4420,16 @@ function addAfsBudgetTrancheRevenue({
 }) {
   const result = revenueBudgets.map((budget) => ({ ...budget }));
   const forecastByPeriod = new Map<string, number>();
-  const activeTrancheIds = new Set(budgetTranches.map((tranche) => tranche.id));
+  const activeTranches = new Map(budgetTranches.map((tranche) => [tranche.id, tranche]));
   for (const revenue of budgetTrancheRevenues) {
-    if (!months.includes(revenue.period) || !activeTrancheIds.has(revenue.cashflow_input_id))
-      continue;
-    forecastByPeriod.set(
-      revenue.period,
-      (forecastByPeriod.get(revenue.period) ?? 0) + Number(revenue.amount ?? 0),
-    );
+    const tranche = activeTranches.get(revenue.cashflow_input_id);
+    if (!months.includes(revenue.period) || !tranche) continue;
+    const amountPerMachine = Number(revenue.amount_per_machine ?? 0);
+    const totalAmount =
+      amountPerMachine > 0
+        ? amountPerMachine * Number(tranche.machine_count ?? 0)
+        : Number(revenue.amount ?? 0);
+    forecastByPeriod.set(revenue.period, (forecastByPeriod.get(revenue.period) ?? 0) + totalAmount);
   }
 
   for (const period of months) {
@@ -4719,11 +4782,18 @@ function buildAfsBudgetTrancheRentalBudgetLines({
 }): PlBudgetLine[] {
   if (agreements.length === 0 || budgetTranches.length === 0 || months.length === 0) return [];
 
+  const trancheById = new Map(budgetTranches.map((tranche) => [tranche.id, tranche]));
   const revenueByTranchePeriod = new Map(
-    budgetTrancheRevenues.map((revenue) => [
-      afsMachinePeriodKey(revenue.cashflow_input_id, revenue.period),
-      Number(revenue.amount ?? 0),
-    ]),
+    budgetTrancheRevenues.map((revenue) => {
+      const tranche = trancheById.get(revenue.cashflow_input_id);
+      const amountPerMachine = Number(revenue.amount_per_machine ?? 0);
+      return [
+        afsMachinePeriodKey(revenue.cashflow_input_id, revenue.period),
+        amountPerMachine > 0 && tranche
+          ? amountPerMachine * Number(tranche.machine_count ?? 0)
+          : Number(revenue.amount ?? 0),
+      ];
+    }),
   );
 
   return months.map((period) => {
