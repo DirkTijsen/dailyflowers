@@ -4590,7 +4590,7 @@ function buildAfsScenario2027({
     },
     {
       key: "rent",
-      label: "Huurkosten",
+      label: "Huurkosten (20% van omzet)",
       total: rentTotal,
       perMachine: perMachine(rentTotal),
     },
@@ -4668,7 +4668,7 @@ function buildAfsScenario2027({
     },
     {
       key: "rent",
-      label: "Huurkosten",
+      label: "Huurkosten (20% van omzet)",
       total: outlook2028Rent,
       perMachine: outlook2028PerMachine(outlook2028Rent),
     },
