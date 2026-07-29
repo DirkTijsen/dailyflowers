@@ -164,7 +164,12 @@
   body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"],
   body[data-bank-print-view="cashflow"] .bank-report-sheet[data-bank-report-view="cashflow"] *,
   body[data-bank-print-view="scenario"] .bank-report-sheet[data-bank-report-view="scenario"],
-  body[data-bank-print-view="scenario"] .bank-report-sheet[data-bank-report-view="scenario"] * {
+  body[data-bank-print-view="scenario"] .bank-report-sheet[data-bank-report-view="scenario"] *,
+  body[data-bank-print-view="investment-agenda"]
+    .bank-report-sheet[data-bank-report-view="investment-agenda"],
+  body[data-bank-print-view="investment-agenda"]
+    .bank-report-sheet[data-bank-report-view="investment-agenda"]
+    * {
     visibility: visible;
   }
 
@@ -270,6 +275,11 @@
 
 .bank-report-sheet .bank-report-feature-panel {
   border-color: var(--bank-brand-line);
+  background: var(--bank-brand-cream);
+}
+
+.bank-report-sheet .bank-report-reconciliation {
+  border-left: 3px solid var(--bank-brand-red);
   background: var(--bank-brand-cream);
 }
 

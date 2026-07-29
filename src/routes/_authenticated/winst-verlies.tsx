@@ -2469,6 +2469,8 @@ function ProfitLossPage() {
             scenario2027CashflowRows={scenario2027CashflowRows}
             afsBudgetTranches={afsBudgetTranchesQ.data ?? []}
             afsBudgetTrancheRevenues={afsBudgetTrancheRevenuesQ.data ?? []}
+            cashflowInputs={cashflowInputsQ.data ?? []}
+            afsBlocks={cashflowAfsBlocksQ.data ?? []}
             driverRules={costDriverRulesQ.data ?? []}
             sourceSheets={bankSourceSheets}
             loading={exportDataLoading}
@@ -3641,6 +3643,21 @@ type BankCashNeedSummary = {
   peakAdditionalPeriod: string | null;
 };
 
+type BankInvestmentAgendaData = {
+  rows: Array<{
+    period: string;
+    basis: "Actual" | "Budget";
+    blockLabel: string;
+    machineCount: number;
+    amountPerMachine: number;
+    totalInvestment: number;
+  }>;
+  totalMachines: number;
+  totalInvestment: number;
+  cashflowForecastInvestment: number;
+  difference: number;
+};
+
 function buildBankSourceSheets({
   months,
   glRows,
@@ -3975,6 +3992,8 @@ function BankReportingPanel({
   scenario2027CashflowRows,
   afsBudgetTranches,
   afsBudgetTrancheRevenues,
+  cashflowInputs,
+  afsBlocks,
   driverRules,
   sourceSheets,
   loading,
@@ -3989,6 +4008,8 @@ function BankReportingPanel({
   scenario2027CashflowRows: CashflowReportRow[];
   afsBudgetTranches: AfsBudgetTrancheRow[];
   afsBudgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
+  cashflowInputs: CashflowInputRecord[];
+  afsBlocks: CashflowAfsBlock[];
   driverRules: PlBudgetDriverRule[];
   sourceSheets: BankSourceSheet[];
   loading: boolean;
@@ -4042,6 +4063,12 @@ function BankReportingPanel({
     budgetTrancheRevenues: afsBudgetTrancheRevenues,
     driverRules,
   });
+  const bankInvestmentAgenda = buildBankInvestmentAgenda({
+    inputs: cashflowInputs,
+    afsBlocks,
+    periods: reportMonths,
+    cutoff: actualThroughPeriod,
+  });
 
   async function exportBankExcel() {
     setExportingBankExcel(true);
@@ -4073,7 +4100,7 @@ function BankReportingPanel({
     try {
       const stamp = new Date().toISOString().slice(0, 10);
       await exportBankReportPdf({
-        views: ["scenario", "profit-loss", "cashflow"],
+        views: ["scenario", "profit-loss", "cashflow", "investment-agenda"],
         fileName: `Daily Flowers bankrapportage ${reportYear}-${nextYear} ${stamp}.pdf`,
       });
       toast.success("Bankrapportage als PDF geëxporteerd");
@@ -4178,6 +4205,11 @@ function BankReportingPanel({
         actualThroughMonth={actualThroughMonth}
         generatedLabel={generatedLabel}
         rows={bankCashflowRowsWithNeed}
+        loading={loading}
+      />
+      <BankInvestmentAgendaSheet
+        data={bankInvestmentAgenda}
+        generatedLabel={generatedLabel}
         loading={loading}
       />
     </div>
@@ -4453,6 +4485,70 @@ function buildAfsScenario2027({
         outlook2028Revenue > 0 ? (outlook2028Contribution / outlook2028Revenue) * 100 : 0,
       unitEconomicsRows: outlook2028Rows,
     },
+  };
+}
+
+function buildBankInvestmentAgenda({
+  inputs,
+  afsBlocks,
+  periods,
+  cutoff,
+}: {
+  inputs: CashflowInputRecord[];
+  afsBlocks: CashflowAfsBlock[];
+  periods: string[];
+  cutoff: string;
+}): BankInvestmentAgendaData {
+  const inputsByPeriod = new Map(
+    inputs
+      .filter((input) => input.line_key === AFS_MACHINE_INPUT_KEY && periods.includes(input.period))
+      .map((input) => [input.period, input]),
+  );
+  const cashflowValues = buildAfsInvestmentValues(inputs, afsBlocks, periods);
+  const rows = periods.flatMap((period) => {
+    const input = inputsByPeriod.get(period);
+    if (!input) return [];
+    const isActual = period <= cutoff;
+    const machineCount = Number(
+      isActual ? (input.actual_machine_count ?? 0) : (input.budget_machine_count ?? 0),
+    );
+    const blockId = isActual ? input.actual_afs_block_id : input.budget_afs_block_id;
+    const block = afsBlocks.find((candidate) => candidate.id === blockId);
+    const amountPerMachine = roundMoney(afsInvestmentAmountPerMachine(block));
+    const totalInvestment = roundMoney(machineCount * amountPerMachine);
+    if (machineCount <= 0 && Math.abs(totalInvestment) < 0.005) return [];
+    return [
+      {
+        period,
+        basis: isActual ? ("Actual" as const) : ("Budget" as const),
+        blockLabel: block ? `Blok ${block.block_number}` : "Geen blok gekoppeld",
+        machineCount,
+        amountPerMachine,
+        totalInvestment,
+      },
+    ];
+  });
+  const totalMachines = rows.reduce((sum, row) => sum + row.machineCount, 0);
+  const totalInvestment = roundMoney(rows.reduce((sum, row) => sum + row.totalInvestment, 0));
+  const cashflowForecastInvestment = roundMoney(
+    Math.abs(
+      periods.reduce(
+        (sum, period) =>
+          sum +
+          (period <= cutoff
+            ? Number(cashflowValues.actual[period] ?? 0)
+            : Number(cashflowValues.budget[period] ?? 0)),
+        0,
+      ),
+    ),
+  );
+
+  return {
+    rows,
+    totalMachines,
+    totalInvestment,
+    cashflowForecastInvestment,
+    difference: roundMoney(totalInvestment - cashflowForecastInvestment),
   };
 }
 
@@ -4861,6 +4957,108 @@ function BankStatementSheet({
   );
 }
 
+function BankInvestmentAgendaSheet({
+  data,
+  generatedLabel,
+  loading,
+}: {
+  data: BankInvestmentAgendaData;
+  generatedLabel: string;
+  loading: boolean;
+}) {
+  return (
+    <Card className="bank-report-sheet overflow-hidden" data-bank-report-view="investment-agenda">
+      <div className="bank-report-accent h-1" />
+      <CardHeader className="border-b">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="bank-report-wordmark mb-3 text-xs font-semibold uppercase tracking-[0.22em]">
+              Daily Flowers
+            </div>
+            <CardTitle className="bank-report-title text-2xl">
+              Investeringsagenda — {data.totalMachines} AFS
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Fasering op basis van de actuele cashflow-inputs en de gekozen investeringsblokken.
+            </CardDescription>
+          </div>
+          <Button
+            className="bank-report-no-print"
+            size="sm"
+            variant="outline"
+            onClick={() => printBankReport("investment-agenda")}
+            disabled={loading}
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            Print deze view
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="p-5">
+        <div className="overflow-x-auto">
+          <table className="bank-report-table w-full min-w-[880px] text-xs">
+            <thead>
+              <tr>
+                <th className="px-3 py-2 text-left">Investeringsmoment</th>
+                <th className="px-3 py-2 text-left">Basis</th>
+                <th className="px-3 py-2 text-left">Investeringsblok</th>
+                <th className="px-3 py-2 text-right">Aantal AFS</th>
+                <th className="px-3 py-2 text-right">Investering per AFS</th>
+                <th className="bg-emerald-800 px-3 py-2 text-right">Cash-out investering</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row) => (
+                <tr key={row.period} className="border-t">
+                  <td className="px-3 py-2 font-semibold">{monthHeaderLabel(row.period, true)}</td>
+                  <td className="px-3 py-2">{row.basis}</td>
+                  <td className="px-3 py-2">{row.blockLabel}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{row.machineCount}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {formatEUR(row.amountPerMachine)}
+                  </td>
+                  <td className="bg-emerald-50/50 px-3 py-2 text-right tabular-nums">
+                    {formatEUR(row.totalInvestment)}
+                  </td>
+                </tr>
+              ))}
+              {data.rows.length === 0 ? (
+                <tr className="border-t">
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                    Geen AFS-investeringen ingepland binnen deze rapportageperiode.
+                  </td>
+                </tr>
+              ) : null}
+              <tr className="border-t bg-emerald-50 font-semibold">
+                <td colSpan={3} className="px-3 py-2">
+                  Totaal investeringsagenda
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">{data.totalMachines}</td>
+                <td className="px-3 py-2 text-right">—</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {formatEUR(data.totalInvestment)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="bank-report-reconciliation mt-5 px-4 py-3 text-sm">
+          <div className="font-semibold">Aansluiting op de cashflowprognose</div>
+          <p className="mt-1 text-muted-foreground">
+            Deze investeringsagenda wordt één-op-één verwerkt in de cashflowregel “Investering
+            AFS&apos;en”. Agenda {formatEUR(data.totalInvestment)} · cashflowprognose{" "}
+            {formatEUR(data.cashflowForecastInvestment)} · verschil {formatEUR(data.difference)}.
+          </p>
+        </div>
+      </CardContent>
+      <div className="bank-report-footer flex justify-between border-t px-6 py-3 text-[10px] text-muted-foreground">
+        <span>Daily Flowers · Vertrouwelijk</span>
+        <span>Gegenereerd op {generatedLabel}</span>
+      </div>
+    </Card>
+  );
+}
+
 function BankValue({
   value,
   strong = false,
@@ -5128,7 +5326,7 @@ function bankReportValues(
   };
 }
 
-function printBankReport(view: "profit-loss" | "cashflow" | "scenario") {
+function printBankReport(view: "profit-loss" | "cashflow" | "scenario" | "investment-agenda") {
   document.body.dataset.bankPrintView = view;
   const cleanup = () => {
     delete document.body.dataset.bankPrintView;

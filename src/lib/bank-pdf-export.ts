@@ -1,4 +1,4 @@
-export type BankReportView = "profit-loss" | "cashflow" | "scenario";
+export type BankReportView = "profit-loss" | "cashflow" | "scenario" | "investment-agenda";
 
 const PAGE_WIDTH_MM = 297;
 const PAGE_HEIGHT_MM = 210;
@@ -146,5 +146,6 @@ function preparePdfClone(clone: HTMLElement, width: number) {
 function viewLabel(view: BankReportView) {
   if (view === "profit-loss") return "Resultaten en prognose";
   if (view === "cashflow") return "Cashflow en financieringsbehoefte";
+  if (view === "investment-agenda") return "Investeringsagenda AFS";
   return "AFS-scenario's";
 }
