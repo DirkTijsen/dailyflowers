@@ -48,10 +48,12 @@ import {
 } from "@/lib/pl";
 import {
   AFS_INVESTMENT_COMPONENTS,
+  AFS_BUDGET_PAYMENT_MONTH_OFFSET,
   AFS_MACHINE_INPUT_KEY,
   CASHFLOW_INPUT_DEFINITIONS,
   afsInvestmentAmountPerMachine,
   afsInvestmentPackageTotal,
+  afsBudgetPaymentPeriod,
   buildAfsInvestmentValues,
   buildCashflowReport,
   cashflowInputValues,
@@ -69,6 +71,7 @@ import {
   exportFinancialWorkbook,
   type BankAfsScenarioData,
   type BankExportData,
+  type BankInvestmentAgendaData,
   type BankSourceSheet,
   type FinancialExportData,
   type FinancialInputRow,
@@ -3643,21 +3646,6 @@ type BankCashNeedSummary = {
   peakAdditionalPeriod: string | null;
 };
 
-type BankInvestmentAgendaData = {
-  rows: Array<{
-    period: string;
-    basis: "Actual" | "Budget";
-    blockLabel: string;
-    machineCount: number;
-    amountPerMachine: number;
-    totalInvestment: number;
-  }>;
-  totalMachines: number;
-  totalInvestment: number;
-  cashflowForecastInvestment: number;
-  difference: number;
-};
-
 function buildBankSourceSheets({
   months,
   glRows,
@@ -3832,7 +3820,7 @@ function buildBankSourceSheets({
     {
       name: "AFS tranches",
       title: "Nieuwe AFS-budgettranches",
-      description: "Investeringsmoment, startmaand en aantallen van de nieuwe machines.",
+      description: "Leverings-/startmaand en aantallen van de nieuwe machines.",
       headers: ["ID", "Budgetjaar", "Tranche", "Aantal machines", "Naam", "Startperiode"],
       rows: budgetTranches.map((row) => [
         row.id,
@@ -3867,6 +3855,7 @@ function buildBankSourceSheets({
       headers: [
         "ID",
         "Periode",
+        "Budget betaalperiode (-3 mnd)",
         "Regelsleutel",
         "Actual bedrag",
         "Budget bedrag",
@@ -3880,6 +3869,7 @@ function buildBankSourceSheets({
         .map((row) => [
           row.id,
           row.period,
+          row.line_key === AFS_MACHINE_INPUT_KEY ? afsBudgetPaymentPeriod(row.period) : "",
           row.line_key,
           Number(row.actual_amount ?? 0),
           Number(row.budget_amount ?? 0),
@@ -3888,7 +3878,7 @@ function buildBankSourceSheets({
           row.actual_afs_block_id,
           row.budget_afs_block_id,
         ]),
-      numericColumns: [3, 4, 5, 6],
+      numericColumns: [4, 5, 6, 7],
     },
     {
       name: "AFS investeringsblokken",
@@ -4083,6 +4073,7 @@ function BankReportingPanel({
         cashflowRows: bankCashflowRowsWithNeed,
         sourceSheets,
         afsScenario2027,
+        investmentAgenda: bankInvestmentAgenda,
       };
       await exportBankWorkbook(exportData);
       toast.success("Bankrapportage als Excel geëxporteerd");
@@ -4516,47 +4507,70 @@ function buildBankInvestmentAgenda({
   periods: string[];
   cutoff: string;
 }): BankInvestmentAgendaData {
-  const inputsByPeriod = new Map(
-    inputs
-      .filter((input) => input.line_key === AFS_MACHINE_INPUT_KEY && periods.includes(input.period))
-      .map((input) => [input.period, input]),
-  );
-  const cashflowValues = buildAfsInvestmentValues(inputs, afsBlocks, periods);
-  const rows = periods.flatMap((period) => {
-    const input = inputsByPeriod.get(period);
-    if (!input) return [];
-    const isActual = period <= cutoff;
-    const machineCount = Number(
-      isActual ? (input.actual_machine_count ?? 0) : (input.budget_machine_count ?? 0),
-    );
-    const blockId = isActual ? input.actual_afs_block_id : input.budget_afs_block_id;
-    const block = afsBlocks.find((candidate) => candidate.id === blockId);
-    const amountPerMachine = roundMoney(afsInvestmentAmountPerMachine(block));
-    const totalInvestment = roundMoney(machineCount * amountPerMachine);
-    if (machineCount <= 0 && Math.abs(totalInvestment) < 0.005) return [];
-    return [
-      {
-        period,
-        basis: isActual ? ("Actual" as const) : ("Budget" as const),
-        blockLabel: block ? `Blok ${block.block_number}` : "Geen blok gekoppeld",
-        machineCount,
-        amountPerMachine,
-        totalInvestment,
-      },
-    ];
+  const cashflowValues = buildAfsInvestmentValues(inputs, afsBlocks, periods, {
+    budgetMonthOffset: AFS_BUDGET_PAYMENT_MONTH_OFFSET,
   });
+  const rows = inputs
+    .flatMap((input) => {
+      if (input.line_key !== AFS_MACHINE_INPUT_KEY) return [];
+      const deliveryPeriod = input.period;
+      const isActual = deliveryPeriod <= cutoff;
+      const paymentPeriod = isActual ? deliveryPeriod : afsBudgetPaymentPeriod(deliveryPeriod);
+      if (!periods.includes(deliveryPeriod) && !periods.includes(paymentPeriod)) return [];
+      const machineCount = Number(
+        isActual ? (input.actual_machine_count ?? 0) : (input.budget_machine_count ?? 0),
+      );
+      const blockId = isActual ? input.actual_afs_block_id : input.budget_afs_block_id;
+      const block = afsBlocks.find((candidate) => candidate.id === blockId);
+      const amountPerMachine = roundMoney(afsInvestmentAmountPerMachine(block));
+      const totalInvestment = roundMoney(machineCount * amountPerMachine);
+      if (machineCount <= 0 && Math.abs(totalInvestment) < 0.005) return [];
+      return [
+        {
+          deliveryPeriod,
+          paymentPeriod,
+          basis: isActual ? ("Actual" as const) : ("Budget" as const),
+          blockLabel: block ? `Blok ${block.block_number}` : "Geen blok gekoppeld",
+          machineCount,
+          amountPerMachine,
+          totalInvestment,
+        },
+      ];
+    })
+    .sort(
+      (a, b) =>
+        comparePeriods(a.paymentPeriod, b.paymentPeriod) ||
+        comparePeriods(a.deliveryPeriod, b.deliveryPeriod),
+    );
   const totalMachines = rows.reduce((sum, row) => sum + row.machineCount, 0);
   const totalInvestment = roundMoney(rows.reduce((sum, row) => sum + row.totalInvestment, 0));
-  const cashflowForecastInvestment = roundMoney(
-    Math.abs(
-      periods.reduce(
-        (sum, period) =>
-          sum +
-          (period <= cutoff
-            ? Number(cashflowValues.actual[period] ?? 0)
-            : Number(cashflowValues.budget[period] ?? 0)),
-        0,
+  const agendaByPaymentPeriod = Object.fromEntries(periods.map((period) => [period, 0])) as Record<
+    string,
+    number
+  >;
+  for (const row of rows) {
+    if (periods.includes(row.paymentPeriod)) {
+      agendaByPaymentPeriod[row.paymentPeriod] += row.totalInvestment;
+    }
+  }
+  const cashflowForecastByPeriod = Object.fromEntries(
+    periods.map((period) => [
+      period,
+      Math.abs(
+        period <= cutoff
+          ? Number(cashflowValues.actual[period] ?? 0)
+          : Number(cashflowValues.budget[period] ?? 0),
       ),
+    ]),
+  ) as Record<string, number>;
+  const cashflowForecastInvestment = roundMoney(
+    periods.reduce((sum, period) => sum + cashflowForecastByPeriod[period], 0),
+  );
+  const timingDifference = roundMoney(
+    periods.reduce(
+      (sum, period) =>
+        sum + Math.abs(agendaByPaymentPeriod[period] - cashflowForecastByPeriod[period]),
+      0,
     ),
   );
 
@@ -4566,6 +4580,7 @@ function buildBankInvestmentAgenda({
     totalInvestment,
     cashflowForecastInvestment,
     difference: roundMoney(totalInvestment - cashflowForecastInvestment),
+    timingDifference,
   };
 }
 
@@ -4997,7 +5012,8 @@ function BankInvestmentAgendaSheet({
               Investeringsagenda — {data.totalMachines} AFS
             </CardTitle>
             <CardDescription className="mt-1">
-              Fasering op basis van de actuele cashflow-inputs en de gekozen investeringsblokken.
+              Leveringsfasering met budgetbetaling drie maanden vóór levering, conform de
+              cashflowprognose.
             </CardDescription>
           </div>
           <Button
@@ -5014,10 +5030,11 @@ function BankInvestmentAgendaSheet({
       </CardHeader>
       <CardContent className="p-5">
         <div className="overflow-x-auto">
-          <table className="bank-report-table w-full min-w-[880px] text-xs">
+          <table className="bank-report-table w-full min-w-[1040px] text-xs">
             <thead>
               <tr>
-                <th className="px-3 py-2 text-left">Investeringsmoment</th>
+                <th className="px-3 py-2 text-left">Leveringsmaand</th>
+                <th className="bg-emerald-800 px-3 py-2 text-left">Betaalmaand cashflow</th>
                 <th className="px-3 py-2 text-left">Basis</th>
                 <th className="px-3 py-2 text-left">Investeringsblok</th>
                 <th className="px-3 py-2 text-right">Aantal AFS</th>
@@ -5027,8 +5044,16 @@ function BankInvestmentAgendaSheet({
             </thead>
             <tbody>
               {data.rows.map((row) => (
-                <tr key={row.period} className="border-t">
-                  <td className="px-3 py-2 font-semibold">{monthHeaderLabel(row.period, true)}</td>
+                <tr
+                  key={`${row.deliveryPeriod}:${row.paymentPeriod}:${row.basis}`}
+                  className="border-t"
+                >
+                  <td className="px-3 py-2 font-semibold">
+                    {monthHeaderLabel(row.deliveryPeriod, true)}
+                  </td>
+                  <td className="bg-emerald-50/50 px-3 py-2 font-semibold">
+                    {monthHeaderLabel(row.paymentPeriod, true)}
+                  </td>
                   <td className="px-3 py-2">{row.basis}</td>
                   <td className="px-3 py-2">{row.blockLabel}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{row.machineCount}</td>
@@ -5042,13 +5067,13 @@ function BankInvestmentAgendaSheet({
               ))}
               {data.rows.length === 0 ? (
                 <tr className="border-t">
-                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
                     Geen AFS-investeringen ingepland binnen deze rapportageperiode.
                   </td>
                 </tr>
               ) : null}
               <tr className="border-t bg-emerald-50 font-semibold">
-                <td colSpan={3} className="px-3 py-2">
+                <td colSpan={4} className="px-3 py-2">
                   Totaal investeringsagenda
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums">{data.totalMachines}</td>
@@ -5063,9 +5088,10 @@ function BankInvestmentAgendaSheet({
         <div className="bank-report-reconciliation mt-5 px-4 py-3 text-sm">
           <div className="font-semibold">Aansluiting op de cashflowprognose</div>
           <p className="mt-1 text-muted-foreground">
-            Deze investeringsagenda wordt één-op-één verwerkt in de cashflowregel “Investering
-            AFS&apos;en”. Agenda {formatEUR(data.totalInvestment)} · cashflowprognose{" "}
-            {formatEUR(data.cashflowForecastInvestment)} · verschil {formatEUR(data.difference)}.
+            Elke budgetlevering wordt drie maanden eerder als cash-out verwerkt in de cashflowregel
+            “Investering AFS&apos;en”. Agenda {formatEUR(data.totalInvestment)} · cashflowprognose{" "}
+            {formatEUR(data.cashflowForecastInvestment)} · verschil totaal{" "}
+            {formatEUR(data.difference)} · verschil timing {formatEUR(data.timingDifference)}.
           </p>
         </div>
       </CardContent>

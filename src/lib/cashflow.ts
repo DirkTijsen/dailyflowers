@@ -57,6 +57,7 @@ export type CashflowReportRow = {
 };
 
 export const AFS_MACHINE_INPUT_KEY = "investment_afs_machines";
+export const AFS_BUDGET_PAYMENT_MONTH_OFFSET = -3;
 export const CASH_OPENING_BALANCE_KEY = "cash_opening_balance";
 
 export const AFS_INVESTMENT_COMPONENTS: AfsInvestmentComponent[] = [
@@ -177,7 +178,7 @@ export function buildCashflowReport({
   });
 
   const afsTotal = buildAfsInvestmentValues(inputs, afsBlocks, months, {
-    budgetMonthOffset: -3,
+    budgetMonthOffset: AFS_BUDGET_PAYMENT_MONTH_OFFSET,
   });
   const office = byKey.get("investment_office_property")!;
   const otherAssets = byKey.get("investment_other_fixed_assets")!;
@@ -331,6 +332,10 @@ function shiftPeriod(period: string, monthOffset: number) {
   const shiftedYear = Math.floor(shiftedMonthIndex / 12);
   const shiftedMonth = (shiftedMonthIndex % 12) + 1;
   return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}`;
+}
+
+export function afsBudgetPaymentPeriod(deliveryPeriod: string) {
+  return shiftPeriod(deliveryPeriod, AFS_BUDGET_PAYMENT_MONTH_OFFSET);
 }
 
 export function afsInvestmentPackageTotal(block: CashflowAfsBlock) {

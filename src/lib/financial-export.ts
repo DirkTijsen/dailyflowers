@@ -75,6 +75,7 @@ export type BankExportData = {
   cashflowRows: BankExportRow[];
   sourceSheets: BankSourceSheet[];
   afsScenario2027?: BankAfsScenarioData;
+  investmentAgenda?: BankInvestmentAgendaData;
 };
 
 export type BankSourceSheet = {
@@ -114,6 +115,23 @@ export type BankAfsScenarioData = {
       perMachine: number;
     }>;
   };
+};
+
+export type BankInvestmentAgendaData = {
+  rows: Array<{
+    deliveryPeriod: string;
+    paymentPeriod: string;
+    basis: "Actual" | "Budget";
+    blockLabel: string;
+    machineCount: number;
+    amountPerMachine: number;
+    totalInvestment: number;
+  }>;
+  totalMachines: number;
+  totalInvestment: number;
+  cashflowForecastInvestment: number;
+  difference: number;
+  timingDifference: number;
 };
 
 const METRIC_LABELS: Record<FinancialMetricColumn, string> = {
@@ -263,6 +281,13 @@ export async function exportBankWorkbook(data: BankExportData) {
       `AFS cases ${data.afsScenario2027.year}`,
     );
   }
+  if (data.investmentAgenda) {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      buildBankInvestmentAgendaSheet(XLSX, data.investmentAgenda),
+      "Investeringsagenda",
+    );
+  }
   XLSX.utils.book_append_sheet(workbook, buildBankSettingsSheet(XLSX, data), "Model instellingen");
   XLSX.utils.book_append_sheet(
     workbook,
@@ -328,12 +353,22 @@ async function styleBankWorkbook(rawWorkbook: ArrayBuffer, data: BankExportData)
       zip.file(path, applyBankScenarioXmlStyles(xml, data.afsScenario2027));
     }
   }
-  const settingsSheetNumber = data.afsScenario2027 ? 6 : 5;
+  const investmentAgendaSheetNumber = 5 + (data.afsScenario2027 ? 1 : 0);
+  const settingsSheetNumber = investmentAgendaSheetNumber + (data.investmentAgenda ? 1 : 0);
   const supportSheets: Array<{
     sheetNumber: number;
     kind: "settings" | "model" | "source" | "checks";
     numericColumns?: number[];
   }> = [
+    ...(data.investmentAgenda
+      ? [
+          {
+            sheetNumber: investmentAgendaSheetNumber,
+            kind: "source" as const,
+            numericColumns: [4, 5, 6],
+          },
+        ]
+      : []),
     { sheetNumber: settingsSheetNumber, kind: "settings" },
     { sheetNumber: settingsSheetNumber + 1, kind: "model" },
     { sheetNumber: settingsSheetNumber + 2, kind: "model" },
@@ -948,6 +983,62 @@ function buildBankAfsScenarioSheet(XLSX: typeof import("xlsx"), data: BankAfsSce
   sheet["!cols"] = [{ wch: 42 }, { wch: 24 }, { wch: 24 }, { wch: 20 }];
   sheet["!rows"] = [{ hpt: 30 }, { hpt: 20 }, { hpt: 18 }, { hpt: 8 }, { hpt: 30 }];
   setSheetFreeze(sheet, 5, 1);
+  setBankPrintLayout(sheet);
+  return sheet;
+}
+
+function buildBankInvestmentAgendaSheet(
+  XLSX: typeof import("xlsx"),
+  data: BankInvestmentAgendaData,
+) {
+  const matrix: Array<Array<string | number | null>> = [
+    [`Daily Flowers — Investeringsagenda ${data.totalMachines} AFS`],
+    [
+      "Leveringsfasering en bijbehorende cash-out. Budgetbetalingen vallen drie maanden vóór de leveringsmaand.",
+    ],
+    [],
+    [
+      "Leveringsmaand",
+      "Betaalmaand cashflow",
+      "Basis",
+      "Investeringsblok",
+      "Aantal AFS",
+      "Investering per AFS",
+      "Cash-out investering",
+    ],
+    ...data.rows.map((row) => [
+      row.deliveryPeriod,
+      row.paymentPeriod,
+      row.basis,
+      row.blockLabel,
+      row.machineCount,
+      row.amountPerMachine,
+      row.totalInvestment,
+    ]),
+    [],
+    ["Totaal investeringsagenda", null, null, null, data.totalMachines, null, data.totalInvestment],
+    ["Aansluiting cashflowprognose", null, null, null, null, null, data.cashflowForecastInvestment],
+    ["Verschil totaal", null, null, null, null, null, data.difference],
+    ["Verschil timing", null, null, null, null, null, data.timingDifference],
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(matrix);
+  sheet["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } },
+  ];
+  sheet["!cols"] = [
+    { wch: 18 },
+    { wch: 21 },
+    { wch: 13 },
+    { wch: 22 },
+    { wch: 14 },
+    { wch: 22 },
+    { wch: 22 },
+  ];
+  sheet["!autofilter"] = {
+    ref: `A4:G${Math.max(4, 4 + data.rows.length)}`,
+  };
+  setSheetFreeze(sheet, 4, 2);
   setBankPrintLayout(sheet);
   return sheet;
 }
