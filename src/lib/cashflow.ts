@@ -176,7 +176,9 @@ export function buildCashflowReport({
     values: byKey.get(definition.key) ?? blankCashflowValues(months),
   });
 
-  const afsTotal = buildAfsInvestmentValues(inputs, afsBlocks, months);
+  const afsTotal = buildAfsInvestmentValues(inputs, afsBlocks, months, {
+    budgetMonthOffset: -3,
+  });
   const office = byKey.get("investment_office_property")!;
   const otherAssets = byKey.get("investment_other_fixed_assets")!;
   const investmentTotal = sumCashflowValues([afsTotal, office, otherAssets], months);
@@ -303,18 +305,32 @@ export function buildAfsInvestmentValues(
   inputs: CashflowInputRecord[],
   blocks: CashflowAfsBlock[],
   months: string[],
+  { budgetMonthOffset = 0 }: { budgetMonthOffset?: number } = {},
 ): CashflowValues {
   const values = blankCashflowValues(months);
   for (const input of inputs) {
-    if (input.line_key !== AFS_MACHINE_INPUT_KEY || !months.includes(input.period)) continue;
+    if (input.line_key !== AFS_MACHINE_INPUT_KEY) continue;
     const actualBlock = blocks.find((block) => block.id === input.actual_afs_block_id);
     const budgetBlock = blocks.find((block) => block.id === input.budget_afs_block_id);
-    values.actual[input.period] =
-      -Number(input.actual_machine_count ?? 0) * afsInvestmentAmountPerMachine(actualBlock);
-    values.budget[input.period] =
-      -Number(input.budget_machine_count ?? 0) * afsInvestmentAmountPerMachine(budgetBlock);
+    if (months.includes(input.period)) {
+      values.actual[input.period] =
+        -Number(input.actual_machine_count ?? 0) * afsInvestmentAmountPerMachine(actualBlock);
+    }
+    const budgetPaymentPeriod = shiftPeriod(input.period, budgetMonthOffset);
+    if (months.includes(budgetPaymentPeriod)) {
+      values.budget[budgetPaymentPeriod] =
+        -Number(input.budget_machine_count ?? 0) * afsInvestmentAmountPerMachine(budgetBlock);
+    }
   }
   return values;
+}
+
+function shiftPeriod(period: string, monthOffset: number) {
+  const [year, month] = period.split("-").map(Number);
+  const shiftedMonthIndex = year * 12 + (month - 1) + monthOffset;
+  const shiftedYear = Math.floor(shiftedMonthIndex / 12);
+  const shiftedMonth = (shiftedMonthIndex % 12) + 1;
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}`;
 }
 
 export function afsInvestmentPackageTotal(block: CashflowAfsBlock) {
