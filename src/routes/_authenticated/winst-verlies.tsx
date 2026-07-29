@@ -221,7 +221,22 @@ const AFS_RENT_COST_OF_GOODS_LINE_KEY = "budget-afs-huurkosten-kostprijs";
 const AFS_RENT_MONTHLY_RETAINED_AMOUNT = 17_250;
 const AFS_DELIVERY_PERSONNEL_MONTHLY_TRANSFER = 7_125;
 const AFS_BUDGET_MACHINE_RENT_LINE_KEY = "budget-afs-huurkosten-budgetmachines";
-const AFS_BUDGET_MACHINE_RENT_LINE_LABEL = "AFS - Huurkosten budgettranches (gemiddeld)";
+const AFS_BUDGET_MACHINE_RENT_LINE_LABEL = "AFS - Huurkosten nieuwe budgetmachines";
+const AFS_BUDGET_MACHINE_RENT_DRIVER: CostDriverDefinition = {
+  driver_key: "afs_budgetmachines_huurpercentage",
+  driver_label: "AFS - Huurkosten nieuwe budgetmachines",
+  calculation_type: "percentage_of_revenue",
+  section: "cost_of_goods",
+  line_key: AFS_BUDGET_MACHINE_RENT_LINE_KEY,
+  line_label: AFS_BUDGET_MACHINE_RENT_LINE_LABEL,
+  source_label: "Vast huurpercentage van de omzet van nieuwe AFS-budgetmachines",
+  source_sheet: "AFS budgettranches",
+  source_workbook: AFS_RENT_SOURCE_WORKBOOK,
+  input_label: "% van omzet nieuwe AFS-budgetmachines",
+  sort_order: 296,
+  defaultAmount: 15,
+  defaultBasisAmount: null,
+};
 const EXCLUDED_PL_BUDGET_LINE_KEYS = new Set([
   "budget-afs-inkoop",
   "budget-afs-vaste-machinekosten",
@@ -479,7 +494,10 @@ const PL_PARAMETER_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
   },
 ];
 const BUDGET_DRIVER_DEFINITIONS = [...COST_DRIVER_DEFINITIONS, ...PL_PARAMETER_DRIVER_DEFINITIONS];
-const BUDGET_DRIVER_KEYS = BUDGET_DRIVER_DEFINITIONS.map((driver) => driver.driver_key);
+const BUDGET_DRIVER_KEYS = [
+  ...BUDGET_DRIVER_DEFINITIONS.map((driver) => driver.driver_key),
+  AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key,
+];
 
 type DetailBase = {
   source: "gl" | "sales";
@@ -1168,6 +1186,33 @@ function ProfitLossPage() {
         numberFormat: "currency",
       });
     }
+
+    const afsBudgetRentValues = afsBudgetMachineRentValues({
+      driverRules: costDriverRulesQ.data ?? [],
+      budgetTranches: afsBudgetTranchesQ.data ?? [],
+      budgetTrancheRevenues: afsBudgetTrancheRevenuesQ.data ?? [],
+      months,
+    });
+    budgetInputRows.push({
+      group: "Omzet nieuwe AFS-tranches",
+      category: "Huurkosten",
+      label: "Vast huurpercentage nieuwe AFS'en",
+      note: AFS_BUDGET_MACHINE_RENT_DRIVER.source_label,
+      values: Object.fromEntries(
+        months.map((period) => [period, afsBudgetRentValues[period].percentage / 100]),
+      ),
+      numberFormat: "percentage",
+    });
+    budgetInputRows.push({
+      group: "Kostprijs omzet",
+      category: sectionLabel(AFS_BUDGET_MACHINE_RENT_DRIVER.section),
+      label: AFS_BUDGET_MACHINE_RENT_LINE_LABEL,
+      note: "Totale omzet nieuwe AFS'en × vast huurpercentage",
+      values: Object.fromEntries(
+        months.map((period) => [period, afsBudgetRentValues[period].amount]),
+      ),
+      numberFormat: "currency",
+    });
 
     for (const driver of driverRows) {
       const percentageInput =
@@ -2337,6 +2382,20 @@ function BudgetInputsPanel({
     () => buildAfsBudgetTrancheInputRows(afsBudgetTranches, afsBudgetTrancheRevenues, months),
     [afsBudgetTrancheRevenues, afsBudgetTranches, months],
   );
+  const afsBudgetRentPeriod = months[0] ?? "";
+  const afsBudgetRentRule = activeRuleForPeriod(
+    driverRules
+      .filter((rule) => rule.driver_key === AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key)
+      .sort((a, b) => comparePeriods(a.from_period, b.from_period)),
+    afsBudgetRentPeriod,
+  );
+  const afsBudgetRentPercentage = Number(
+    afsBudgetRentRule?.amount ?? AFS_BUDGET_MACHINE_RENT_DRIVER.defaultAmount,
+  );
+  const afsBudgetRentCellKey = costDriverCellKey(
+    AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key,
+    afsBudgetRentPeriod,
+  );
   const plRows = useMemo(() => buildPlBudgetInputRows(budgetLines, months), [budgetLines, months]);
   const tableMinWidth = Math.max(960, 360 + months.length * 132 + 140);
 
@@ -2430,12 +2489,55 @@ function BudgetInputsPanel({
       {afsBudgetTrancheRows.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Omzet nieuwe AFS-tranches</CardTitle>
-            <CardDescription>
-              Iedere investeringsmaand uit de cashflow vormt één tranche. Vul per maand de omzet per
-              machine in. De totale trancheomzet wordt automatisch berekend als aantal machines ×
-              omzet per machine.
-            </CardDescription>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1.5">
+                <CardTitle className="text-base">Omzet nieuwe AFS-tranches</CardTitle>
+                <CardDescription>
+                  Iedere investeringsmaand uit de cashflow vormt één tranche. Vul per maand de omzet
+                  per machine in. De totale trancheomzet wordt automatisch berekend als aantal
+                  machines × omzet per machine.
+                </CardDescription>
+              </div>
+              <div className="w-full rounded-lg border bg-muted/30 p-3 lg:w-72 lg:shrink-0">
+                <label className="space-y-1.5">
+                  <span className="block text-sm font-medium">
+                    Gemiddelde huur nieuwe AFS&apos;en
+                  </span>
+                  <div className="relative">
+                    <Input
+                      value={
+                        drafts[afsBudgetRentCellKey] ??
+                        formatDriverInput(AFS_BUDGET_MACHINE_RENT_DRIVER, afsBudgetRentPercentage)
+                      }
+                      inputMode="decimal"
+                      disabled={savingCell === afsBudgetRentCellKey}
+                      className="h-9 pr-8 text-right tabular-nums"
+                      onChange={(event) => onDraftChange(afsBudgetRentCellKey, event.target.value)}
+                      onBlur={(event) =>
+                        onSaveCostDriver(
+                          AFS_BUDGET_MACHINE_RENT_DRIVER,
+                          afsBudgetRentPeriod,
+                          event.currentTarget.value,
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") event.currentTarget.blur();
+                      }}
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground">
+                      %
+                    </span>
+                  </div>
+                </label>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Vast percentage van de totale omzet van alle nieuwe budgetmachines
+                  {afsBudgetRentPeriod
+                    ? `, vanaf ${monthHeaderLabel(afsBudgetRentPeriod, true)}`
+                    : ""}
+                  .
+                </p>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
@@ -4685,7 +4787,7 @@ function buildEffectiveBudgetLines({
     months,
   });
   const afsBudgetTrancheRentLines = buildAfsBudgetTrancheRentalBudgetLines({
-    agreements: afsRentalAgreements,
+    driverRules,
     budgetTranches: afsBudgetTranches,
     budgetTrancheRevenues: afsBudgetTrancheRevenues,
     months,
@@ -4770,52 +4872,27 @@ function buildAfsRentalBudgetLines({
 }
 
 function buildAfsBudgetTrancheRentalBudgetLines({
-  agreements,
+  driverRules,
   budgetTranches,
   budgetTrancheRevenues,
   months,
 }: {
-  agreements: AfsRentalAgreementRow[];
+  driverRules: PlBudgetDriverRule[];
   budgetTranches: AfsBudgetTrancheRow[];
   budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
   months: string[];
 }): PlBudgetLine[] {
-  if (agreements.length === 0 || budgetTranches.length === 0 || months.length === 0) return [];
+  if (budgetTranches.length === 0 || months.length === 0) return [];
 
-  const trancheById = new Map(budgetTranches.map((tranche) => [tranche.id, tranche]));
-  const revenueByTranchePeriod = new Map(
-    budgetTrancheRevenues.map((revenue) => {
-      const tranche = trancheById.get(revenue.cashflow_input_id);
-      const amountPerMachine = Number(revenue.amount_per_machine ?? 0);
-      return [
-        afsMachinePeriodKey(revenue.cashflow_input_id, revenue.period),
-        amountPerMachine > 0 && tranche
-          ? amountPerMachine * Number(tranche.machine_count ?? 0)
-          : Number(revenue.amount ?? 0),
-      ];
-    }),
-  );
+  const values = afsBudgetMachineRentValues({
+    driverRules,
+    budgetTranches,
+    budgetTrancheRevenues,
+    months,
+  });
 
   return months.map((period) => {
-    const averageAgreements = activeAfsRentalAgreementsForPeriod(agreements, period);
-    const activeBudgetTranches = budgetTranches.filter(
-      (tranche) => tranche.start_period <= period && tranche.machine_count > 0,
-    );
-    const amount =
-      averageAgreements.length === 0
-        ? 0
-        : activeBudgetTranches.reduce((sum, tranche) => {
-            const trancheTurnover =
-              revenueByTranchePeriod.get(afsMachinePeriodKey(tranche.id, period)) ?? 0;
-            const turnoverPerMachine = trancheTurnover / tranche.machine_count;
-            const averageRentPerMachine =
-              averageAgreements.reduce(
-                (agreementSum, agreement) =>
-                  agreementSum + calculateAfsRentalCost(agreement, turnoverPerMachine),
-                0,
-              ) / averageAgreements.length;
-            return sum + averageRentPerMachine * tranche.machine_count;
-          }, 0);
+    const value = values[period];
 
     return {
       id: `afs-budget-machine-rent:${period}`,
@@ -4825,13 +4902,58 @@ function buildAfsBudgetTrancheRentalBudgetLines({
       line_key: AFS_BUDGET_MACHINE_RENT_LINE_KEY,
       line_label: AFS_BUDGET_MACHINE_RENT_LINE_LABEL,
       kind: "cost" as const,
-      amount: roundMoney(amount),
+      amount: value.amount,
       source_workbook: AFS_RENT_SOURCE_WORKBOOK,
       source_sheet: "AFS budgettranches",
-      source_label: "Gemiddelde bestaande huurafspraak per machine in de nieuwe tranches",
+      source_label: `${formatPercentage(value.percentage)} van ${formatEUR(value.revenue)} omzet nieuwe AFS'en`,
       sort_order: 296,
     };
   });
+}
+
+function afsBudgetMachineRentValues({
+  driverRules,
+  budgetTranches,
+  budgetTrancheRevenues,
+  months,
+}: {
+  driverRules: PlBudgetDriverRule[];
+  budgetTranches: AfsBudgetTrancheRow[];
+  budgetTrancheRevenues: AfsBudgetTrancheRevenueRow[];
+  months: string[];
+}) {
+  const trancheById = new Map(budgetTranches.map((tranche) => [tranche.id, tranche]));
+  const revenueByPeriod = blankValues(months);
+  const includedPeriods = new Set(months);
+  for (const revenue of budgetTrancheRevenues) {
+    const tranche = trancheById.get(revenue.cashflow_input_id);
+    if (!tranche || !includedPeriods.has(revenue.period) || tranche.start_period > revenue.period)
+      continue;
+    const amountPerMachine = Number(revenue.amount_per_machine ?? 0);
+    revenueByPeriod[revenue.period] +=
+      amountPerMachine > 0
+        ? amountPerMachine * Number(tranche.machine_count ?? 0)
+        : Number(revenue.amount ?? 0);
+  }
+
+  const rules = driverRules
+    .filter((rule) => rule.driver_key === AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key)
+    .sort((a, b) => comparePeriods(a.from_period, b.from_period));
+  return Object.fromEntries(
+    months.map((period) => {
+      const rule = activeRuleForPeriod(rules, period);
+      const percentage = Number(rule?.amount ?? AFS_BUDGET_MACHINE_RENT_DRIVER.defaultAmount);
+      const revenue = roundMoney(revenueByPeriod[period] ?? 0);
+      return [
+        period,
+        {
+          percentage,
+          revenue,
+          amount: roundMoney(revenue * (percentage / 100)),
+        },
+      ];
+    }),
+  ) as Record<string, { percentage: number; revenue: number; amount: number }>;
 }
 
 function activeAfsRentalAgreementsForPeriod(agreements: AfsRentalAgreementRow[], period: string) {
