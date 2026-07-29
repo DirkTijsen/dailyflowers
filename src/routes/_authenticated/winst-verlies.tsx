@@ -384,7 +384,7 @@ const AFS_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
     input_label: "% van AFS omzet",
     revenue_channel: "bold_afs",
     sort_order: 210,
-    defaultAmount: 45,
+    defaultAmount: 33,
     defaultBasisAmount: null,
   },
   {
@@ -398,7 +398,7 @@ const AFS_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
     source_sheet: "AFS kostprijs",
     input_label: "Bedrag per AFS per maand",
     sort_order: 211,
-    defaultAmount: 0,
+    defaultAmount: 40,
     defaultBasisAmount: null,
   },
   {
@@ -412,7 +412,7 @@ const AFS_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
     source_sheet: "AFS kostprijs",
     input_label: "Bedrag per AFS per maand",
     sort_order: 212,
-    defaultAmount: 0,
+    defaultAmount: 16.67,
     defaultBasisAmount: null,
   },
   {
@@ -426,7 +426,7 @@ const AFS_COST_DRIVER_DEFINITIONS: CostDriverDefinition[] = [
     source_sheet: "AFS kostprijs",
     input_label: "Bedrag per AFS per maand",
     sort_order: 213,
-    defaultAmount: 0,
+    defaultAmount: 250,
     defaultBasisAmount: null,
   },
 ];
@@ -4268,9 +4268,10 @@ function buildAfsScenario2027({
   };
 
   let revenueTotal = 0;
+  let purchaseTotal = 0;
   let cleaningTotal = 0;
   let repairTotal = 0;
-  let fillingTotal = 0;
+  let logisticsTotal = 0;
   let rentTotal = 0;
   for (const period of periods) {
     const revenue = Number(revenueByPeriod[period] ?? 0);
@@ -4278,20 +4279,22 @@ function buildAfsScenario2027({
       .filter((tranche) => tranche.start_period <= period)
       .reduce((sum, tranche) => sum + Number(tranche.machine_count ?? 0), 0);
     revenueTotal += revenue;
+    purchaseTotal += revenue * (driverAmount("afs_inkoop", period) / 100);
     cleaningTotal += activeMachineCount * driverAmount("afs_schoonmaak", period);
     repairTotal += activeMachineCount * driverAmount("afs_onderhoud", period);
-    fillingTotal +=
-      revenue * (driverAmount("afs_inkoop", period) / 100) +
-      activeMachineCount * driverAmount("afs_logistiek", period);
+    logisticsTotal += activeMachineCount * driverAmount("afs_logistiek", period);
     rentTotal += revenue * (driverAmount(AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key, period) / 100);
   }
 
   revenueTotal = roundMoney(revenueTotal);
+  purchaseTotal = roundMoney(purchaseTotal);
   cleaningTotal = roundMoney(cleaningTotal);
   repairTotal = roundMoney(repairTotal);
-  fillingTotal = roundMoney(fillingTotal);
+  logisticsTotal = roundMoney(logisticsTotal);
   rentTotal = roundMoney(rentTotal);
-  const incrementalCosts = roundMoney(cleaningTotal + repairTotal + fillingTotal + rentTotal);
+  const incrementalCosts = roundMoney(
+    purchaseTotal + cleaningTotal + repairTotal + logisticsTotal + rentTotal,
+  );
   const contribution = roundMoney(revenueTotal - incrementalCosts);
   const budgetTotal = (key: string) => {
     const row = profitLossRows.find((candidate) => candidate.key === key);
@@ -4371,22 +4374,28 @@ function buildAfsScenario2027({
       perMachine: perMachine(revenueTotal),
     },
     {
+      key: "purchase",
+      label: "Inkoop bloemen (33% van omzet)",
+      total: purchaseTotal,
+      perMachine: perMachine(purchaseTotal),
+    },
+    {
       key: "cleaning",
-      label: "Schoonmaakkosten",
+      label: "Schoonmaak (€ 40 per maand)",
       total: cleaningTotal,
       perMachine: perMachine(cleaningTotal),
     },
     {
       key: "repairs",
-      label: "Reparatie en onderhoud",
+      label: "Onderhoud (€ 16,67 per maand)",
       total: repairTotal,
       perMachine: perMachine(repairTotal),
     },
     {
-      key: "filling",
-      label: "Vullingskosten (incl. bloemeninkoop en logistiek)",
-      total: fillingTotal,
-      perMachine: perMachine(fillingTotal),
+      key: "logistics",
+      label: "Logistiek / vulling (€ 250 per maand)",
+      total: logisticsTotal,
+      perMachine: perMachine(logisticsTotal),
     },
     {
       key: "rent",
@@ -4405,31 +4414,33 @@ function buildAfsScenario2027({
   const outlook2028MachineCount = 200;
   const outlook2028MonthlyRevenuePerMachine = 2_000;
   let outlook2028Revenue = 0;
+  let outlook2028Purchase = 0;
   let outlook2028Cleaning = 0;
   let outlook2028Repair = 0;
-  let outlook2028Filling = 0;
+  let outlook2028Logistics = 0;
   let outlook2028Rent = 0;
   for (const period of yearPeriods("2028")) {
     const revenue = outlook2028MachineCount * outlook2028MonthlyRevenuePerMachine;
     outlook2028Revenue += revenue;
+    outlook2028Purchase += revenue * (driverAmount("afs_inkoop", period, true) / 100);
     outlook2028Cleaning += outlook2028MachineCount * driverAmount("afs_schoonmaak", period, true);
     outlook2028Repair += outlook2028MachineCount * driverAmount("afs_onderhoud", period, true);
-    outlook2028Filling +=
-      revenue * (driverAmount("afs_inkoop", period, true) / 100) +
-      outlook2028MachineCount * driverAmount("afs_logistiek", period, true);
+    outlook2028Logistics += outlook2028MachineCount * driverAmount("afs_logistiek", period, true);
     outlook2028Rent +=
       revenue * (driverAmount(AFS_BUDGET_MACHINE_RENT_DRIVER.driver_key, period, true) / 100);
   }
   outlook2028Revenue = roundMoney(outlook2028Revenue);
+  outlook2028Purchase = roundMoney(outlook2028Purchase);
   outlook2028Cleaning = roundMoney(outlook2028Cleaning);
   outlook2028Repair = roundMoney(outlook2028Repair);
-  outlook2028Filling = roundMoney(outlook2028Filling);
+  outlook2028Logistics = roundMoney(outlook2028Logistics);
   outlook2028Rent = roundMoney(outlook2028Rent);
   const outlook2028Contribution = roundMoney(
     outlook2028Revenue -
+      outlook2028Purchase -
       outlook2028Cleaning -
       outlook2028Repair -
-      outlook2028Filling -
+      outlook2028Logistics -
       outlook2028Rent,
   );
   const outlook2028PerMachine = (value: number) => roundMoney(value / outlook2028MachineCount);
@@ -4441,22 +4452,28 @@ function buildAfsScenario2027({
       perMachine: outlook2028PerMachine(outlook2028Revenue),
     },
     {
+      key: "purchase",
+      label: "Inkoop bloemen (33% van omzet)",
+      total: outlook2028Purchase,
+      perMachine: outlook2028PerMachine(outlook2028Purchase),
+    },
+    {
       key: "cleaning",
-      label: "Schoonmaakkosten",
+      label: "Schoonmaak (€ 40 per maand)",
       total: outlook2028Cleaning,
       perMachine: outlook2028PerMachine(outlook2028Cleaning),
     },
     {
       key: "repairs",
-      label: "Reparatie en onderhoud",
+      label: "Onderhoud (€ 16,67 per maand)",
       total: outlook2028Repair,
       perMachine: outlook2028PerMachine(outlook2028Repair),
     },
     {
-      key: "filling",
-      label: "Vullingskosten (incl. bloemeninkoop en logistiek)",
-      total: outlook2028Filling,
-      perMachine: outlook2028PerMachine(outlook2028Filling),
+      key: "logistics",
+      label: "Logistiek / vulling (€ 250 per maand)",
+      total: outlook2028Logistics,
+      perMachine: outlook2028PerMachine(outlook2028Logistics),
     },
     {
       key: "rent",
@@ -4709,13 +4726,14 @@ function BankAfsScenarioSheet({
           </div>
         </div>
         <p className="text-[10px] text-muted-foreground xl:col-span-2">
-          De case gebruikt de ingevoerde tranche-omzet en fasering. Vullingskosten bestaan uit
-          bloemeninkoop plus de logistieke/vullingsdriver. Schoonmaak, reparatie en huur volgen de
-          actieve budgetdrivers per maand. De gemiddelde bedragen zijn gedeeld door alle geplande
-          nieuwe machines, ook wanneer een tranche later in 2027 start. In de case zonder nieuwe
-          machines vervallen de trancheomzet, directe machinekosten en AFS-investeringen; overige
-          bedrijfs- en financieringsaannames blijven gelijk. Voor 2028 worden de laatst beschikbare
-          kostendrivers doorgetrokken over twaalf maanden.
+          De case gebruikt de ingevoerde tranche-omzet en fasering. Bloemeninkoop is afzonderlijk
+          berekend als percentage van de omzet; logistiek/vulling, schoonmaak en onderhoud zijn
+          afzonderlijke vaste maandbedragen per actieve machine. Huur volgt de actieve budgetdriver
+          per maand. De gemiddelde bedragen zijn gedeeld door alle geplande nieuwe machines, ook
+          wanneer een tranche later in 2027 start. In de case zonder nieuwe machines vervallen de
+          trancheomzet, directe machinekosten en AFS-investeringen; overige bedrijfs- en
+          financieringsaannames blijven gelijk. Voor 2028 worden de laatst beschikbare kostendrivers
+          doorgetrokken over twaalf maanden.
         </p>
       </CardContent>
       <div className="bank-report-footer flex justify-between border-t px-6 py-3 text-[10px] text-muted-foreground">
@@ -6430,11 +6448,16 @@ function formatDriverInput(driver: CostDriverDefinition, value: number) {
 }
 
 function activeRuleForPeriod(rules: PlBudgetDriverRule[], period: string) {
-  return rules.find(
-    (rule) =>
+  for (let index = rules.length - 1; index >= 0; index -= 1) {
+    const rule = rules[index];
+    if (
       comparePeriods(rule.from_period, period) <= 0 &&
-      (!rule.to_period || comparePeriods(rule.to_period, period) >= 0),
-  );
+      (!rule.to_period || comparePeriods(rule.to_period, period) >= 0)
+    ) {
+      return rule;
+    }
+  }
+  return undefined;
 }
 
 function sharedAfsMachineCountOverrides(driverRules: PlBudgetDriverRule[], months: string[]) {
