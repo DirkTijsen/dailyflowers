@@ -124,13 +124,13 @@ const METRIC_LABELS: Record<FinancialMetricColumn, string> = {
 
 const COLORS = {
   charcoal: "1F1F1F",
-  cream: "F8F1E9",
-  pink: "D99B99",
-  pinkLight: "F5E8E4",
-  red: "F53229",
+  cream: "F9F1E8",
+  pink: "C98D8B",
+  pinkLight: "EADCD6",
+  red: "EF3126",
   white: "FFFFFF",
   gray: "6B6B6B",
-  line: "E8D8D0",
+  line: "EADCD6",
 };
 
 const BANK_WORKBOOK_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -151,14 +151,14 @@ const BANK_WORKBOOK_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="y
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FF1F1F1F"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FFF8F1E9"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FFF5E8E4"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FF047857"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFF9F1E8"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFEADCD6"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFEF3126"/><bgColor indexed="64"/></patternFill></fill>
   </fills>
   <borders count="3">
     <border><left/><right/><top/><bottom/><diagonal/></border>
-    <border><left/><right/><top style="thin"><color rgb="FFD99B99"/></top><bottom/><diagonal/></border>
-    <border><left/><right/><top style="medium"><color rgb="FFD99B99"/></top><bottom/><diagonal/></border>
+    <border><left/><right/><top style="thin"><color rgb="FFC98D8B"/></top><bottom/><diagonal/></border>
+    <border><left/><right/><top style="medium"><color rgb="FFC98D8B"/></top><bottom/><diagonal/></border>
   </borders>
   <cellStyleXfs count="1">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
@@ -1363,7 +1363,7 @@ function applyBankSheetStyles(
 function bankForecastHeaderStyle(): import("xlsx").CellStyle {
   return {
     ...headerStyle(),
-    fill: { fgColor: { rgb: "047857" } },
+    fill: { fgColor: { rgb: COLORS.red } },
   };
 }
 

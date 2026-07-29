@@ -4028,7 +4028,7 @@ function BankReportingPanel({
     budget: row.values.budget,
     aggregation: row.aggregation,
   }));
-  const { rows: bankCashNeedRows, summary: bankCashNeedSummary } = buildBankCashNeedRows(
+  const { rows: bankCashNeedRows } = buildBankCashNeedRows(
     bankCashflowStatementRows,
     reportMonths,
     actualThroughPeriod,
@@ -4178,7 +4178,6 @@ function BankReportingPanel({
         actualThroughMonth={actualThroughMonth}
         generatedLabel={generatedLabel}
         rows={bankCashflowRowsWithNeed}
-        cashNeedSummary={bankCashNeedSummary}
         loading={loading}
       />
     </div>
@@ -4466,24 +4465,18 @@ function BankAfsScenarioSheet({
   loading: boolean;
   generatedLabel: string;
 }) {
-  const contribution = data.unitEconomicsRows.find((row) => row.key === "contribution");
-  const revenue = data.unitEconomicsRows.find((row) => row.key === "revenue");
-  const outlook2028Revenue = data.outlook2028.unitEconomicsRows.find(
-    (row) => row.key === "revenue",
-  );
-  const outlook2028Contribution = data.outlook2028.unitEconomicsRows.find(
-    (row) => row.key === "contribution",
-  );
   return (
     <Card className="bank-report-sheet overflow-hidden" data-bank-report-view="scenario">
-      <div className="bank-report-accent h-2 bg-emerald-700" />
+      <div className="bank-report-accent h-1" />
       <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
-              Daily Flowers · Bankrapportage
+            <div className="bank-report-wordmark mb-3 text-xs font-semibold uppercase tracking-[0.22em]">
+              Daily Flowers
             </div>
-            <CardTitle className="text-xl">AFS-cases 2027 & verwachting 2028</CardTitle>
+            <CardTitle className="bank-report-title text-2xl">
+              AFS-cases 2027 & verwachting 2028
+            </CardTitle>
             <CardDescription className="mt-1">
               W&V- en cashflowvergelijking van het volledige budget met een case zonder de nieuwe
               machines.
@@ -4499,29 +4492,6 @@ function BankAfsScenarioSheet({
             <Printer className="mr-2 h-4 w-4" />
             Print deze view
           </Button>
-        </div>
-        <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
-          <div className="rounded border px-3 py-2">
-            <div className="text-muted-foreground">Nieuwe machines</div>
-            <div className="text-base font-semibold tabular-nums">{data.machineCount}</div>
-            <div className="text-muted-foreground">Volgens de tranches van 2027</div>
-          </div>
-          <div className="rounded border px-3 py-2">
-            <div className="text-muted-foreground">Gemiddelde jaaromzet per machine</div>
-            <div className="text-base font-semibold tabular-nums">
-              {formatEUR(revenue?.perMachine ?? 0)}
-            </div>
-            <div className="text-muted-foreground">Inclusief ingroei gedurende 2027</div>
-          </div>
-          <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
-            <div className="text-emerald-800">Margebijdrage per machine</div>
-            <div className="text-base font-semibold tabular-nums text-emerald-950">
-              {formatEUR(contribution?.perMachine ?? 0)}
-            </div>
-            <div className="text-emerald-800">
-              {formatPercentage(data.marginPercentage)} van de omzet
-            </div>
-          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-6 p-5 xl:grid-cols-2">
@@ -4594,7 +4564,7 @@ function BankAfsScenarioSheet({
             </tbody>
           </table>
         </div>
-        <div className="rounded-lg border bg-slate-50/60 p-4">
+        <div className="bank-report-feature-panel rounded-lg border p-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 className="text-base font-semibold">Verwachting nieuwe AFS&apos;en 2028</h3>
@@ -4605,39 +4575,7 @@ function BankAfsScenarioSheet({
             </div>
             <Badge variant="outline">Run-rate 2028</Badge>
           </div>
-          <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-            <div className="rounded border bg-white px-3 py-2">
-              <div className="text-muted-foreground">Omzet per maand · 200 machines</div>
-              <div className="text-base font-semibold tabular-nums">
-                {formatEUR(
-                  data.outlook2028.machineCount * data.outlook2028.monthlyRevenuePerMachine,
-                )}
-              </div>
-              <div className="text-muted-foreground">
-                {formatEUR(data.outlook2028.monthlyRevenuePerMachine)} per 1 machine
-              </div>
-            </div>
-            <div className="rounded border bg-white px-3 py-2">
-              <div className="text-muted-foreground">Jaaromzet 2028</div>
-              <div className="text-base font-semibold tabular-nums">
-                {formatEUR(outlook2028Revenue?.total ?? 0)}
-              </div>
-              <div className="text-muted-foreground">
-                {formatEUR(outlook2028Revenue?.perMachine ?? 0)} per 1 machine
-              </div>
-            </div>
-            <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
-              <div className="text-emerald-800">Margebijdrage 2028</div>
-              <div className="text-base font-semibold tabular-nums text-emerald-950">
-                {formatEUR(outlook2028Contribution?.total ?? 0)}
-              </div>
-              <div className="text-emerald-800">
-                {formatEUR(outlook2028Contribution?.perMachine ?? 0)} per 1 machine ·{" "}
-                {formatPercentage(data.outlook2028.marginPercentage)}
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-5 overflow-x-auto">
             <table className="bank-report-table w-full min-w-[680px] text-xs">
               <thead>
                 <tr className="bg-slate-900 text-white">
@@ -4701,7 +4639,6 @@ function BankStatementSheet({
   actualThroughMonth,
   generatedLabel,
   rows,
-  cashNeedSummary,
   loading,
 }: {
   view: "profit-loss" | "cashflow";
@@ -4712,7 +4649,6 @@ function BankStatementSheet({
   actualThroughMonth: string;
   generatedLabel: string;
   rows: BankStatementRow[];
-  cashNeedSummary?: BankCashNeedSummary;
   loading: boolean;
 }) {
   const [displayMode, setDisplayMode] = useState<"summary" | "monthly">(
@@ -4730,14 +4666,14 @@ function BankStatementSheet({
 
   return (
     <Card className="bank-report-sheet overflow-hidden" data-bank-report-view={view}>
-      <div className="bank-report-accent h-2 bg-emerald-700" />
+      <div className="bank-report-accent h-1" />
       <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
-              Daily Flowers · Bankrapportage
+            <div className="bank-report-wordmark mb-3 text-xs font-semibold uppercase tracking-[0.22em]">
+              Daily Flowers
             </div>
-            <CardTitle className="text-xl">{title}</CardTitle>
+            <CardTitle className="bank-report-title text-2xl">{title}</CardTitle>
             <CardDescription className="mt-1">{description}</CardDescription>
           </div>
           <div className="bank-report-no-print flex flex-wrap justify-end gap-2">
@@ -4773,68 +4709,6 @@ function BankStatementSheet({
             </Button>
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded border px-3 py-2">
-            <div className="text-muted-foreground">Peildatum</div>
-            <div className="font-semibold">
-              Actuals t/m {throughMonthLabel} {reportYear}
-            </div>
-          </div>
-          <div className="rounded border px-3 py-2">
-            <div className="text-muted-foreground">Prognosebasis</div>
-            <div className="font-semibold">Actual + resterend budget</div>
-          </div>
-          <div className="rounded border px-3 py-2">
-            <div className="text-muted-foreground">Opvolgend jaar</div>
-            <div className="font-semibold">{nextYear} volledig budget</div>
-          </div>
-        </div>
-        {view === "cashflow" && cashNeedSummary ? (
-          <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
-              <div className="text-amber-800">Piek financieringsbehoefte</div>
-              <div className="text-base font-semibold text-amber-950">
-                {formatEUR(cashNeedSummary.peakFundingNeed)}
-              </div>
-              <div className="text-amber-800">
-                {cashNeedSummary.peakFundingPeriod
-                  ? monthHeaderLabel(cashNeedSummary.peakFundingPeriod, true)
-                  : "Geen tekort in de prognose"}
-              </div>
-            </div>
-            <div className="rounded border px-3 py-2">
-              <div className="text-muted-foreground">Geplande financieringsinstroom</div>
-              <div className="text-base font-semibold">
-                {formatEUR(cashNeedSummary.plannedFunding)}
-              </div>
-              <div className="text-muted-foreground">Leningen en aandeelhoudersstortingen</div>
-            </div>
-            <div
-              className={cn(
-                "rounded border px-3 py-2",
-                cashNeedSummary.peakAdditionalNeed > 0.005
-                  ? "border-red-200 bg-red-50"
-                  : "border-emerald-200 bg-emerald-50",
-              )}
-            >
-              <div className="text-muted-foreground">Aanvullende cashbehoefte</div>
-              <div className="text-base font-semibold">
-                {formatEUR(cashNeedSummary.peakAdditionalNeed)}
-              </div>
-              <div className="text-muted-foreground">
-                {cashNeedSummary.peakAdditionalPeriod
-                  ? monthHeaderLabel(cashNeedSummary.peakAdditionalPeriod, true)
-                  : "Afgedekt binnen de huidige planning"}
-              </div>
-            </div>
-          </div>
-        ) : null}
-        {view === "cashflow" ? (
-          <p className="mt-2 text-[10px] text-muted-foreground">
-            De cumulatieve behoefte start met de ingevoerde openingsbalans cash van januari{" "}
-            {reportYear}. Zonder invoer wordt € 0 als beginstand gebruikt.
-          </p>
-        ) : null}
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">

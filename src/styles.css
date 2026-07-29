@@ -204,9 +204,102 @@
   }
 
   body[data-bank-print-view] .bank-report-accent {
-    background: #047857 !important;
+    background: #ef3126 !important;
     print-color-adjust: exact;
   }
+}
+
+.bank-report-print-root,
+.bank-report-sheet {
+  --bank-brand-charcoal: #1f1f1f;
+  --bank-brand-cream: #f9f1e8;
+  --bank-brand-pink: #c98d8b;
+  --bank-brand-line: #eadcd6;
+  --bank-brand-red: #ef3126;
+}
+
+.bank-report-print-root > .bank-report-no-print {
+  border-color: var(--bank-brand-line);
+  background: var(--bank-brand-cream);
+}
+
+.bank-report-sheet {
+  border-color: var(--bank-brand-line);
+  background: #fff;
+  color: var(--bank-brand-charcoal);
+  font-family: Calibri, Arial, sans-serif;
+}
+
+.bank-report-sheet .bank-report-accent {
+  background: var(--bank-brand-red) !important;
+}
+
+.bank-report-sheet .bank-report-wordmark {
+  color: var(--bank-brand-charcoal);
+}
+
+.bank-report-sheet .bank-report-wordmark::after {
+  display: inline-block;
+  width: 24px;
+  height: 2px;
+  margin-left: 10px;
+  background: var(--bank-brand-red);
+  content: "";
+  vertical-align: middle;
+}
+
+.bank-report-sheet .bank-report-title,
+.bank-report-sheet h3 {
+  color: var(--bank-brand-charcoal);
+  font-family: Cambria, Georgia, serif;
+}
+
+.bank-report-sheet [data-slot="card-description"],
+.bank-report-sheet .text-muted-foreground,
+.bank-report-sheet .bank-report-footer {
+  color: #6b6b6b;
+}
+
+.bank-report-sheet [data-slot="card-header"],
+.bank-report-sheet .bank-report-footer,
+.bank-report-sheet .border-t,
+.bank-report-sheet .border-b,
+.bank-report-sheet .border {
+  border-color: var(--bank-brand-line);
+}
+
+.bank-report-sheet .bank-report-feature-panel {
+  border-color: var(--bank-brand-line);
+  background: var(--bank-brand-cream);
+}
+
+.bank-report-sheet .bank-report-table thead tr {
+  background: var(--bank-brand-charcoal) !important;
+  color: white;
+}
+
+.bank-report-sheet .bank-report-table thead [class*="bg-emerald"] {
+  background: var(--bank-brand-red) !important;
+  color: white;
+}
+
+.bank-report-sheet .bank-report-table tbody [class*="bg-emerald-50"],
+.bank-report-sheet .bank-report-table tbody tr.bg-slate-100 {
+  background: var(--bank-brand-cream) !important;
+}
+
+.bank-report-sheet .bank-report-table tbody tr {
+  border-color: var(--bank-brand-line);
+}
+
+.bank-report-sheet .bank-report-table .text-emerald-700 {
+  color: var(--bank-brand-charcoal);
+}
+
+.bank-report-sheet [data-slot="badge"] {
+  border-color: var(--bank-brand-pink);
+  background: white;
+  color: var(--bank-brand-charcoal);
 }
 
 .bank-report-pdf-host {
@@ -216,11 +309,12 @@
   left: -100000px;
   overflow: visible;
   background: white;
-  color: #0f172a;
+  color: #1f1f1f;
 }
 
 .bank-report-pdf-capture {
   border: 0 !important;
   background: white !important;
+  color: #1f1f1f !important;
   box-shadow: none !important;
 }
