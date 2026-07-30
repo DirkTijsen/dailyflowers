@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { ChevronDown, Download } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState, useMemo } from "react";
-import { formatEUR, channelLabels, currentMonth, monthLabel } from "@/lib/format";
-import { Download } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { channelLabels, currentMonth, formatEUR, monthLabel } from "@/lib/format";
 
 export const Route = createFileRoute("/_authenticated/btw-export")({
   head: () => ({ meta: [{ title: "Btw-export — Daily Flowers" }] }),
@@ -14,85 +15,209 @@ export const Route = createFileRoute("/_authenticated/btw-export")({
 });
 
 function monthsList(n = 24): string[] {
-  const arr: string[] = [];
-  const d = new Date();
-  for (let i = 0; i < n; i++) {
-    arr.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-    d.setMonth(d.getMonth() - 1);
+  const months: string[] = [];
+  const date = new Date();
+  for (let index = 0; index < n; index++) {
+    months.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`);
+    date.setMonth(date.getMonth() - 1);
   }
-  return arr;
+  return months;
 }
 
-type VatRow = { period: string; channel: string; vat_rate: number; tx_count: number; gross_total: number; net_total: number; vat_total: number };
-type ChRow = { period: string; channel: string; tx_count: number; gross_total: number; net_total: number; vat_total: number };
+type VatRow = {
+  period: string;
+  channel: string;
+  vat_rate: number;
+  tx_count: number;
+  gross_total: number;
+  net_total: number;
+  vat_total: number;
+};
+
+type ChannelRow = {
+  period: string;
+  channel: string;
+  tx_count: number;
+  gross_total: number;
+  net_total: number;
+  vat_total: number;
+};
+
+type VatTotals = {
+  gross: number;
+  net: number;
+  vat: number;
+  count: number;
+};
+
+const CHANNELS = ["shopify_webshop", "shopify_winkel", "bold_afs"] as const;
+const EMPTY_TOTALS: VatTotals = { gross: 0, net: 0, vat: 0, count: 0 };
 
 function VatExportPage() {
-  const [period, setPeriod] = useState(currentMonth());
+  const availablePeriods = useMemo(() => monthsList(), []);
+  const [periods, setPeriods] = useState<string[]>([currentMonth()]);
+  const sortedPeriods = useMemo(() => [...periods].sort(), [periods]);
 
   const vatQ = useQuery({
-    queryKey: ["vw_monthly_vat", period],
+    queryKey: ["vw_monthly_vat", sortedPeriods],
     queryFn: async () => {
-      const { data, error } = await supabase.from("vw_monthly_vat" as never).select("*").eq("period", period).order("channel").order("vat_rate");
+      const { data, error } = await supabase
+        .from("vw_monthly_vat" as never)
+        .select("*")
+        .in("period", sortedPeriods)
+        .order("period")
+        .order("channel")
+        .order("vat_rate");
       if (error) throw error;
       return data as VatRow[];
     },
   });
 
-  const chQ = useQuery({
-    queryKey: ["vw_monthly_channel", period],
+  const channelQ = useQuery({
+    queryKey: ["vw_monthly_channel", sortedPeriods],
     queryFn: async () => {
-      const { data, error } = await supabase.from("vw_monthly_channel" as never).select("*").eq("period", period);
+      const { data, error } = await supabase
+        .from("vw_monthly_channel" as never)
+        .select("*")
+        .in("period", sortedPeriods);
       if (error) throw error;
-      return data as ChRow[];
+      return data as ChannelRow[];
     },
   });
 
   const errorsQ = useQuery({
-    queryKey: ["tx-error-count", period],
+    queryKey: ["tx-error-count", sortedPeriods],
     queryFn: async () => {
-      const [y, m] = period.split("-").map(Number);
-      const start = new Date(y, m - 1, 1).toISOString();
-      const end = new Date(y, m, 1).toISOString();
-      const { count, error } = await supabase
-        .from("transactions").select("id", { count: "exact", head: true })
-        .eq("parse_status", "parse_error").gte("paid_at", start).lt("paid_at", end);
-      if (error) throw error;
-      return count ?? 0;
+      const counts = await Promise.all(
+        sortedPeriods.map(async (period) => {
+          const [year, month] = period.split("-").map(Number);
+          const start = new Date(year, month - 1, 1).toISOString();
+          const end = new Date(year, month, 1).toISOString();
+          const { count, error } = await supabase
+            .from("transactions")
+            .select("id", { count: "exact", head: true })
+            .eq("parse_status", "parse_error")
+            .gte("paid_at", start)
+            .lt("paid_at", end);
+          if (error) throw error;
+          return [period, count ?? 0] as const;
+        }),
+      );
+      return Object.fromEntries(counts) as Record<string, number>;
     },
   });
 
-  const totalsPerChannel = useMemo(() => {
-    const map = new Map<string, { gross: number; net: number; vat: number; count: number }>();
-    vatQ.data?.forEach((r) => {
-      const e = map.get(r.channel) ?? { gross: 0, net: 0, vat: 0, count: 0 };
-      e.gross += Number(r.gross_total); e.net += Number(r.net_total); e.vat += Number(r.vat_total); e.count += r.tx_count;
-      map.set(r.channel, e);
-    });
-    return map;
+  const vatByPeriodChannelRate = useMemo(() => {
+    const result = new Map<string, VatTotals>();
+    for (const row of vatQ.data ?? []) {
+      result.set(`${row.period}|${row.channel}|${row.vat_rate}`, {
+        gross: Number(row.gross_total),
+        net: Number(row.net_total),
+        vat: Number(row.vat_total),
+        count: Number(row.tx_count),
+      });
+    }
+    return result;
   }, [vatQ.data]);
+
+  const channelRateRows = useMemo(() => {
+    const result = new Map<string, { channel: string; vatRate: number }>();
+    for (const row of vatQ.data ?? []) {
+      result.set(`${row.channel}|${row.vat_rate}`, {
+        channel: row.channel,
+        vatRate: Number(row.vat_rate),
+      });
+    }
+    return [...result.values()].sort(
+      (a, b) =>
+        (channelLabels[a.channel] ?? a.channel).localeCompare(
+          channelLabels[b.channel] ?? b.channel,
+          "nl",
+        ) || a.vatRate - b.vatRate,
+    );
+  }, [vatQ.data]);
+
+  const totalsPerPeriodChannel = useMemo(() => {
+    const result = new Map<string, VatTotals>();
+    for (const row of vatQ.data ?? []) {
+      const key = `${row.period}|${row.channel}`;
+      const totals = result.get(key) ?? { ...EMPTY_TOTALS };
+      totals.gross += Number(row.gross_total);
+      totals.net += Number(row.net_total);
+      totals.vat += Number(row.vat_total);
+      totals.count += Number(row.tx_count);
+      result.set(key, totals);
+    }
+    return result;
+  }, [vatQ.data]);
+
+  const channelByPeriod = useMemo(
+    () => new Map((channelQ.data ?? []).map((row) => [`${row.period}|${row.channel}`, row])),
+    [channelQ.data],
+  );
+
+  const errorTotal = Object.values(errorsQ.data ?? {}).reduce((sum, count) => sum + count, 0);
+
+  function togglePeriod(period: string) {
+    setPeriods((current) => {
+      if (!current.includes(period)) return [...current, period].sort();
+      if (current.length === 1) return current;
+      return current.filter((item) => item !== period);
+    });
+  }
 
   function exportCsv() {
     const rows: string[] = [];
-    rows.push(["Periode", "Kanaal", "Btw-tarief", "Aantal", "Netto", "Btw", "Bruto"].join(";"));
-    vatQ.data?.forEach((r) => {
-      rows.push([
-        r.period, channelLabels[r.channel] ?? r.channel, `${r.vat_rate}%`,
-        r.tx_count, fmt(r.net_total), fmt(r.vat_total), fmt(r.gross_total),
-      ].join(";"));
-    });
-    rows.push("");
-    rows.push(["Periode", "Kanaal", "TOTAAL", "Aantal", "Netto", "Btw", "Bruto"].join(";"));
-    for (const [channel, t] of totalsPerChannel) {
-      rows.push([period, channelLabels[channel] ?? channel, "—", t.count, fmt(t.net), fmt(t.vat), fmt(t.gross)].join(";"));
+    const monthHeaders = sortedPeriods.map(monthLabel);
+    rows.push(["Kanaal", "Btw-tarief", "Waarde", ...monthHeaders].join(";"));
+
+    for (const row of channelRateRows) {
+      const values = sortedPeriods.map(
+        (period) =>
+          vatByPeriodChannelRate.get(`${period}|${row.channel}|${row.vatRate}`) ?? EMPTY_TOTALS,
+      );
+      const prefix = [channelLabels[row.channel] ?? row.channel, `${row.vatRate}%`];
+      rows.push([...prefix, "Aantal", ...values.map((value) => value.count)].join(";"));
+      rows.push(
+        [...prefix, "Netto", ...values.map((value) => formatCsvNumber(value.net))].join(";"),
+      );
+      rows.push([...prefix, "Btw", ...values.map((value) => formatCsvNumber(value.vat))].join(";"));
+      rows.push(
+        [...prefix, "Bruto", ...values.map((value) => formatCsvNumber(value.gross))].join(";"),
+      );
     }
-    const blob = new Blob(["\uFEFF" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
+
+    rows.push("");
+    rows.push(["Kanaaltotalen", "", "Waarde", ...monthHeaders].join(";"));
+    for (const channel of CHANNELS) {
+      const values = sortedPeriods.map(
+        (period) => totalsPerPeriodChannel.get(`${period}|${channel}`) ?? EMPTY_TOTALS,
+      );
+      const prefix = [channelLabels[channel], "—"];
+      rows.push([...prefix, "Aantal", ...values.map((value) => value.count)].join(";"));
+      rows.push(
+        [...prefix, "Netto", ...values.map((value) => formatCsvNumber(value.net))].join(";"),
+      );
+      rows.push([...prefix, "Btw", ...values.map((value) => formatCsvNumber(value.vat))].join(";"));
+      rows.push(
+        [...prefix, "Bruto", ...values.map((value) => formatCsvNumber(value.gross))].join(";"),
+      );
+    }
+
+    const blob = new Blob(["\uFEFF" + rows.join("\n")], {
+      type: "text/csv;charset=utf-8",
+    });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `btw-export-${period}.csv`; a.click();
+    const anchor = document.createElement("a");
+    const periodPart =
+      sortedPeriods.length === 1
+        ? sortedPeriods[0]
+        : `${sortedPeriods[0]}-tm-${sortedPeriods.at(-1)}`;
+    anchor.href = url;
+    anchor.download = `btw-export-${periodPart}.csv`;
+    anchor.click();
     URL.revokeObjectURL(url);
   }
-
-  function fmt(n: number | string) { return Number(n).toFixed(2).replace(".", ","); }
 
   return (
     <div className="space-y-4">
@@ -100,27 +225,72 @@ function VatExportPage() {
         <div>
           <h1 className="text-2xl font-semibold">Btw-export</h1>
           <p className="text-sm text-muted-foreground">
-            Maandoverzicht per kanaal en btw-tarief — uitsluitend afgeronde betalingen, exclusief parse-fouten. Over te nemen in Exact Online.
+            Maandoverzicht per kanaal en btw-tarief — uitsluitend afgeronde betalingen, exclusief
+            parse-fouten. Over te nemen in Exact Online.
           </p>
         </div>
-        <div className="flex gap-2 items-end">
+        <div className="flex items-end gap-2">
           <div>
-            <label className="text-xs text-muted-foreground">Periode</label>
-            <Select value={period} onValueChange={setPeriod}>
-              <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
-              <SelectContent>{monthsList().map((p) => <SelectItem key={p} value={p}>{monthLabel(p)}</SelectItem>)}</SelectContent>
-            </Select>
+            <label className="block text-xs text-muted-foreground">Periodes</label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="outline" className="w-[240px] justify-between">
+                  {sortedPeriods.length === 1
+                    ? monthLabel(sortedPeriods[0])
+                    : `${sortedPeriods.length} maanden geselecteerd`}
+                  <ChevronDown className="ml-2 h-4 w-4 opacity-60" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-[300px] p-0">
+                <div className="flex items-center justify-between border-b p-3">
+                  <span className="text-sm font-medium">Selecteer maanden</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2"
+                    onClick={() => setPeriods([...availablePeriods].sort())}
+                  >
+                    Alle 24
+                  </Button>
+                </div>
+                <div className="max-h-80 overflow-y-auto p-2">
+                  {availablePeriods.map((period) => (
+                    <label
+                      key={period}
+                      className="flex min-h-10 cursor-pointer items-center gap-3 rounded px-2 py-1.5 hover:bg-muted/60"
+                    >
+                      <Checkbox
+                        checked={periods.includes(period)}
+                        onCheckedChange={() => togglePeriod(period)}
+                      />
+                      <span className="text-sm">{monthLabel(period)}</span>
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
-          <Button onClick={exportCsv}><Download className="h-4 w-4 mr-2" />CSV exporteren</Button>
+          <Button onClick={exportCsv} disabled={vatQ.isLoading || vatQ.isError}>
+            <Download className="mr-2 h-4 w-4" />
+            CSV exporteren
+          </Button>
         </div>
       </div>
 
-      {errorsQ.data && errorsQ.data > 0 && (
+      {errorTotal > 0 && (
         <Card className="border-destructive/50 bg-destructive/5">
           <CardContent className="pt-6">
             <p className="text-sm">
-              <strong>{errorsQ.data}</strong> verkooptransactie(s) in deze maand hebben een parse-fout en zijn uitgesloten van deze export.
-              Controleer de onderliggende Mollie-transactie of importregel voordat je exporteert.
+              <strong>{errorTotal}</strong> verkooptransactie(s) in de geselecteerde maanden hebben
+              een parse-fout en zijn uitgesloten van deze export. Controleer de onderliggende
+              Mollie-transactie of importregel voordat je exporteert.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {sortedPeriods
+                .filter((period) => (errorsQ.data?.[period] ?? 0) > 0)
+                .map((period) => `${monthLabel(period)}: ${errorsQ.data?.[period] ?? 0}`)
+                .join(" · ")}
             </p>
           </CardContent>
         </Card>
@@ -128,31 +298,55 @@ function VatExportPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{monthLabel(period)} — per kanaal en btw-tarief</CardTitle>
-          <CardDescription>Som van netto, btw en bruto per combinatie.</CardDescription>
+          <CardTitle className="text-base">Per kanaal en btw-tarief</CardTitle>
+          <CardDescription>
+            Elke maand blijft een aparte kolom. Per cel zie je aantal, netto, btw en bruto.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
+        <CardContent className="overflow-x-auto p-0">
+          <table className="min-w-full text-sm">
             <thead className="bg-muted/50">
               <tr className="text-left">
-                <th className="px-3 py-2 font-medium">Kanaal</th>
-                <th className="px-3 py-2 font-medium">Btw-tarief</th>
-                <th className="px-3 py-2 font-medium text-right">Aantal</th>
-                <th className="px-3 py-2 font-medium text-right">Netto</th>
-                <th className="px-3 py-2 font-medium text-right">Btw</th>
-                <th className="px-3 py-2 font-medium text-right">Bruto</th>
+                <th className="sticky left-0 min-w-44 bg-muted px-3 py-2 font-medium">Kanaal</th>
+                <th className="min-w-24 px-3 py-2 font-medium">Btw-tarief</th>
+                {sortedPeriods.map((period) => (
+                  <th key={period} className="min-w-44 px-3 py-2 text-right font-medium">
+                    {monthLabel(period)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {vatQ.data?.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">Geen afgeronde verkooptransacties in deze maand.</td></tr>}
-              {vatQ.data?.map((r, i) => (
-                <tr key={i} className="border-t">
-                  <td className="px-3 py-2">{channelLabels[r.channel] ?? r.channel}</td>
-                  <td className="px-3 py-2 tabular-nums">{r.vat_rate}%</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.tx_count}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatEUR(r.net_total)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatEUR(r.vat_total)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatEUR(r.gross_total)}</td>
+              {channelRateRows.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={2 + sortedPeriods.length}
+                    className="px-3 py-6 text-center text-muted-foreground"
+                  >
+                    Geen afgeronde verkooptransacties in de geselecteerde maanden.
+                  </td>
+                </tr>
+              )}
+              {channelRateRows.map((row) => (
+                <tr key={`${row.channel}|${row.vatRate}`} className="border-t align-top">
+                  <td className="sticky left-0 bg-background px-3 py-2">
+                    {channelLabels[row.channel] ?? row.channel}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums">{row.vatRate}%</td>
+                  {sortedPeriods.map((period) => {
+                    const value =
+                      vatByPeriodChannelRate.get(`${period}|${row.channel}|${row.vatRate}`) ??
+                      EMPTY_TOTALS;
+                    return (
+                      <td key={period} className="px-3 py-2 text-right tabular-nums">
+                        <div className="font-medium">{formatEUR(value.net)} netto</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatEUR(value.vat)} btw · {formatEUR(value.gross)} bruto ·{" "}
+                          {value.count}x
+                        </div>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -163,37 +357,61 @@ function VatExportPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Kanaaltotalen — controle</CardTitle>
-          <CardDescription>De som van de tarief-regels per kanaal moet overeenkomen met het kanaaltotaal.</CardDescription>
+          <CardDescription>
+            Per maand: som van de tarief-regels / kanaaltotaal en het verschil.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
+        <CardContent className="overflow-x-auto p-0">
+          <table className="min-w-full text-sm">
             <thead className="bg-muted/50">
               <tr className="text-left">
-                <th className="px-3 py-2 font-medium">Kanaal</th>
-                <th className="px-3 py-2 font-medium text-right">Som tarieven (netto)</th>
-                <th className="px-3 py-2 font-medium text-right">Kanaaltotaal (netto)</th>
-                <th className="px-3 py-2 font-medium text-right">Verschil</th>
+                <th className="sticky left-0 min-w-44 bg-muted px-3 py-2 font-medium">Kanaal</th>
+                {sortedPeriods.map((period) => (
+                  <th key={period} className="min-w-48 px-3 py-2 text-right font-medium">
+                    {monthLabel(period)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {(["shopify_webshop", "shopify_winkel", "bold_afs"] as const).map((ch) => {
-                const t = totalsPerChannel.get(ch) ?? { net: 0, gross: 0, vat: 0, count: 0 };
-                const c = chQ.data?.find((x) => x.channel === ch);
-                const channelNet = Number(c?.net_total ?? 0);
-                const diff = +(t.net - channelNet).toFixed(2);
-                return (
-                  <tr key={ch} className="border-t">
-                    <td className="px-3 py-2">{channelLabels[ch]}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(t.net)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatEUR(channelNet)}</td>
-                    <td className={`px-3 py-2 text-right tabular-nums ${Math.abs(diff) > 0.01 ? "text-destructive font-medium" : "text-muted-foreground"}`}>{formatEUR(diff)}</td>
-                  </tr>
-                );
-              })}
+              {CHANNELS.map((channel) => (
+                <tr key={channel} className="border-t">
+                  <td className="sticky left-0 bg-background px-3 py-2">
+                    {channelLabels[channel]}
+                  </td>
+                  {sortedPeriods.map((period) => {
+                    const tariffNet = totalsPerPeriodChannel.get(`${period}|${channel}`)?.net ?? 0;
+                    const channelNet = Number(
+                      channelByPeriod.get(`${period}|${channel}`)?.net_total ?? 0,
+                    );
+                    const difference = +(tariffNet - channelNet).toFixed(2);
+                    return (
+                      <td key={period} className="px-3 py-2 text-right tabular-nums">
+                        <div>
+                          {formatEUR(tariffNet)} / {formatEUR(channelNet)}
+                        </div>
+                        <div
+                          className={`text-xs ${
+                            Math.abs(difference) > 0.01
+                              ? "font-medium text-destructive"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Verschil {formatEUR(difference)}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
             </tbody>
           </table>
         </CardContent>
       </Card>
     </div>
   );
+}
+
+function formatCsvNumber(value: number | string) {
+  return Number(value).toFixed(2).replace(".", ",");
 }
