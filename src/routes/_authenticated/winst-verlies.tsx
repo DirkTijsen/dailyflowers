@@ -50,7 +50,9 @@ import {
   AFS_INVESTMENT_COMPONENTS,
   AFS_BUDGET_PAYMENT_MONTH_OFFSET,
   AFS_MACHINE_INPUT_KEY,
+  AFS_REVENUE_COMMISSION_INPUT_KEY,
   CASHFLOW_INPUT_DEFINITIONS,
+  afsRevenueCommissionValues,
   afsInvestmentAmountPerMachine,
   afsInvestmentPackageTotal,
   afsBudgetPaymentPeriod,
@@ -1133,9 +1135,10 @@ function ProfitLossPage() {
         months,
         inputs: cashflowInputsQ.data ?? [],
         operatingResult,
+        afsRevenue: plRowCashflowValues(rows, "revenue-bold_afs", months),
         afsBlocks: cashflowAfsBlocksQ.data ?? [],
       }),
-    [cashflowAfsBlocksQ.data, cashflowInputsQ.data, months, operatingResult],
+    [cashflowAfsBlocksQ.data, cashflowInputsQ.data, months, operatingResult, rows],
   );
   const { rows: bankProfitLossRows, operatingResult: bankOperatingResult } = useMemo(
     () =>
@@ -1189,9 +1192,16 @@ function ProfitLossPage() {
         months: bankMonths,
         inputs: cashflowInputsQ.data ?? [],
         operatingResult: bankOperatingResult,
+        afsRevenue: plRowCashflowValues(bankProfitLossRows, "revenue-bold_afs", bankMonths),
         afsBlocks: cashflowAfsBlocksQ.data ?? [],
       }),
-    [bankMonths, bankOperatingResult, cashflowAfsBlocksQ.data, cashflowInputsQ.data],
+    [
+      bankMonths,
+      bankOperatingResult,
+      bankProfitLossRows,
+      cashflowAfsBlocksQ.data,
+      cashflowInputsQ.data,
+    ],
   );
   const bankSourceSheets = useMemo(
     () =>
@@ -1623,8 +1633,19 @@ function ProfitLossPage() {
       metric === "actual" ? (existing?.actual_amount ?? 0) : (existing?.budget_amount ?? 0),
     );
     const allowNegative = definition.group === "liquidity";
-    if (!Number.isFinite(amount) || (!allowNegative && amount < 0)) {
-      toast.error(allowNegative ? "Vul een geldig bedrag in" : "Vul een positief bedrag in");
+    const isPercentage = definition.inputKind === "percentage_of_afs_revenue";
+    if (
+      !Number.isFinite(amount) ||
+      (!allowNegative && amount < 0) ||
+      (isPercentage && amount > 100)
+    ) {
+      toast.error(
+        isPercentage
+          ? "Vul een percentage tussen 0 en 100 in"
+          : allowNegative
+            ? "Vul een geldig bedrag in"
+            : "Vul een positief bedrag in",
+      );
       setCashflowDrafts((current) => ({
         ...current,
         [cellKey]: formatAmountInput(existingAmount),
@@ -2521,6 +2542,7 @@ function ProfitLossPage() {
           <CashflowInputsPanel
             months={months}
             inputs={cashflowInputsQ.data ?? []}
+            afsRevenue={plRowCashflowValues(rows, "revenue-bold_afs", months)}
             afsBlocks={cashflowAfsBlocksQ.data ?? []}
             drafts={cashflowDrafts}
             savingCell={savingCashflowCell}
@@ -3197,6 +3219,7 @@ function RevenueBudgetInputsCard({
 function CashflowInputsPanel({
   months,
   inputs,
+  afsRevenue,
   afsBlocks,
   drafts,
   savingCell,
@@ -3209,6 +3232,7 @@ function CashflowInputsPanel({
 }: {
   months: string[];
   inputs: CashflowInputRecord[];
+  afsRevenue: CashflowValues;
   afsBlocks: CashflowAfsBlock[];
   drafts: Record<string, string>;
   savingCell: string | null;
@@ -3371,6 +3395,7 @@ function CashflowInputsPanel({
                         definition={definition}
                         months={months}
                         inputs={inputs}
+                        afsRevenue={afsRevenue}
                         drafts={drafts}
                         savingCell={savingCell}
                         onDraftChange={onDraftChange}
@@ -3537,6 +3562,7 @@ function CashflowInputRow({
   definition,
   months,
   inputs,
+  afsRevenue,
   drafts,
   savingCell,
   onDraftChange,
@@ -3545,6 +3571,7 @@ function CashflowInputRow({
   definition: CashflowInputDefinition;
   months: string[];
   inputs: CashflowInputRecord[];
+  afsRevenue: CashflowValues;
   drafts: Record<string, string>;
   savingCell: string | null;
   onDraftChange: (cellKey: string, value: string) => void;
@@ -3556,6 +3583,10 @@ function CashflowInputRow({
   ) => void;
 }) {
   const values = cashflowInputValues(inputs, definition.key, months);
+  const calculatedCommission =
+    definition.key === AFS_REVENUE_COMMISSION_INPUT_KEY
+      ? afsRevenueCommissionValues(inputs, afsRevenue, months)
+      : null;
   return (
     <tr className="group border-t hover:bg-muted/30">
       <td className={BUDGET_STICKY_BODY_FIRST} />
@@ -3567,6 +3598,11 @@ function CashflowInputRow({
         )}
       >
         {definition.label}
+        {calculatedCommission ? (
+          <div className="text-xs font-normal text-muted-foreground">
+            Percentage van de Bold/AFS-omzet; berekend bedrag staat onder de invoer
+          </div>
+        ) : null}
       </td>
       {months.map((period) => {
         const input = inputs.find(
@@ -3589,6 +3625,11 @@ function CashflowInputRow({
                     onDraftChange={onDraftChange}
                     onSave={(rawValue) => onSave(definition, period, metric, rawValue)}
                   />
+                  {calculatedCommission ? (
+                    <div className="mt-1 whitespace-nowrap text-right text-[11px] text-muted-foreground">
+                      {formatEUR(calculatedCommission[metric][period])}
+                    </div>
+                  ) : null}
                 </td>
               );
             })}
@@ -3596,10 +3637,10 @@ function CashflowInputRow({
         );
       })}
       <td className="border-l px-3 py-2 text-right font-semibold tabular-nums">
-        {formatEUR(sumValues(values.actual, months))}
+        {formatEUR(sumValues(calculatedCommission?.actual ?? values.actual, months))}
       </td>
       <td className="px-3 py-2 text-right font-semibold tabular-nums">
-        {formatEUR(sumValues(values.budget, months))}
+        {formatEUR(sumValues(calculatedCommission?.budget ?? values.budget, months))}
       </td>
     </tr>
   );
@@ -7666,6 +7707,14 @@ function makeRow(
 
 function blankValues(months: string[]) {
   return Object.fromEntries(months.map((period) => [period, 0]));
+}
+
+function plRowCashflowValues(rows: PlRow[], rowKey: string, months: string[]): CashflowValues {
+  const row = rows.find((candidate) => candidate.key === rowKey);
+  return {
+    actual: Object.fromEntries(months.map((period) => [period, row?.values[period] ?? 0])),
+    budget: Object.fromEntries(months.map((period) => [period, row?.budgetValues?.[period] ?? 0])),
+  };
 }
 
 function budgetLinesByKey(budgetLines: PlBudgetLine[], months: string[]) {

@@ -39,6 +39,7 @@ export type CashflowInputDefinition = {
   group: "liquidity" | "investments" | "debt" | "equity";
   direction: 1 | -1;
   level: 1 | 2;
+  inputKind?: "amount" | "percentage_of_afs_revenue";
 };
 
 export type CashflowValues = {
@@ -57,6 +58,7 @@ export type CashflowReportRow = {
 };
 
 export const AFS_MACHINE_INPUT_KEY = "investment_afs_machines";
+export const AFS_REVENUE_COMMISSION_INPUT_KEY = "debt_afs_revenue_commission";
 export const AFS_BUDGET_PAYMENT_MONTH_OFFSET = -3;
 export const CASH_OPENING_BALANCE_KEY = "cash_opening_balance";
 
@@ -111,6 +113,14 @@ export const CASHFLOW_INPUT_DEFINITIONS: CashflowInputDefinition[] = [
     level: 1,
   },
   {
+    key: AFS_REVENUE_COMMISSION_INPUT_KEY,
+    label: "AFS omzet commissie (%)",
+    group: "debt",
+    direction: -1,
+    level: 1,
+    inputKind: "percentage_of_afs_revenue",
+  },
+  {
     key: "debt_interest_paid",
     label: "Betaalde rente",
     group: "debt",
@@ -144,11 +154,13 @@ export function buildCashflowReport({
   months,
   inputs,
   operatingResult,
+  afsRevenue,
   afsBlocks,
 }: {
   months: string[];
   inputs: CashflowInputRecord[];
   operatingResult: CashflowValues;
+  afsRevenue: CashflowValues;
   afsBlocks: CashflowAfsBlock[];
 }): CashflowReportRow[] {
   const byKey = new Map<string, CashflowValues>();
@@ -159,8 +171,19 @@ export function buildCashflowReport({
     const definition = CASHFLOW_INPUT_DEFINITIONS.find((item) => item.key === input.line_key);
     const values = byKey.get(input.line_key);
     if (!definition || !values || !months.includes(input.period)) continue;
-    values.actual[input.period] = definition.direction * Number(input.actual_amount ?? 0);
-    values.budget[input.period] = definition.direction * Number(input.budget_amount ?? 0);
+    if (definition.inputKind === "percentage_of_afs_revenue") {
+      values.actual[input.period] =
+        definition.direction *
+        (afsRevenue.actual[input.period] ?? 0) *
+        (Number(input.actual_amount ?? 0) / 100);
+      values.budget[input.period] =
+        definition.direction *
+        (afsRevenue.budget[input.period] ?? 0) *
+        (Number(input.budget_amount ?? 0) / 100);
+    } else {
+      values.actual[input.period] = definition.direction * Number(input.actual_amount ?? 0);
+      values.budget[input.period] = definition.direction * Number(input.budget_amount ?? 0);
+    }
   }
 
   const inputRow = (definition: CashflowInputDefinition): CashflowReportRow => ({
@@ -361,6 +384,22 @@ export function cashflowInputValues(
     if (input.line_key !== lineKey || !months.includes(input.period)) continue;
     values.actual[input.period] = Number(input.actual_amount ?? 0);
     values.budget[input.period] = Number(input.budget_amount ?? 0);
+  }
+  return values;
+}
+
+export function afsRevenueCommissionValues(
+  inputs: CashflowInputRecord[],
+  afsRevenue: CashflowValues,
+  months: string[],
+): CashflowValues {
+  const percentages = cashflowInputValues(inputs, AFS_REVENUE_COMMISSION_INPUT_KEY, months);
+  const values = blankCashflowValues(months);
+  for (const period of months) {
+    values.actual[period] =
+      (afsRevenue.actual[period] ?? 0) * ((percentages.actual[period] ?? 0) / 100);
+    values.budget[period] =
+      (afsRevenue.budget[period] ?? 0) * ((percentages.budget[period] ?? 0) / 100);
   }
   return values;
 }
