@@ -194,6 +194,8 @@ async function main() {
     await applyMigration(app, "20260729150000_align_afs_cost_drivers.sql");
     await applyMigration(app, "20260729170000_add_budget_scenarios.sql");
     await applyMigration(app, "20260617215000_deduplicate_shopify_exact_payout_candidates.sql");
+    await applyMigration(app, "20260731130000_exclude_third_party_kika_sales_from_revenue.sql");
+    await applyMigration(app, "20260731140000_backfill_historical_shopify_vat_views.sql");
 
     await app.query(localAuthSql);
     await seedAdminUser(app);

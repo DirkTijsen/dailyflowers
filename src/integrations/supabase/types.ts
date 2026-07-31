@@ -420,6 +420,7 @@ export type Database = {
           discount_amount: number | null;
           external_id: string;
           id: string;
+          include_in_revenue: boolean;
           invoice_number: string | null;
           invoice_url: string | null;
           machine_id: string | null;
@@ -444,6 +445,7 @@ export type Database = {
           discount_amount?: number | null;
           external_id: string;
           id?: string;
+          include_in_revenue?: boolean;
           invoice_number?: string | null;
           invoice_url?: string | null;
           machine_id?: string | null;
@@ -468,6 +470,7 @@ export type Database = {
           discount_amount?: number | null;
           external_id?: string;
           id?: string;
+          include_in_revenue?: boolean;
           invoice_number?: string | null;
           invoice_url?: string | null;
           machine_id?: string | null;

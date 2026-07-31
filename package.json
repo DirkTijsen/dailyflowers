@@ -12,6 +12,7 @@
     "local:api": "node local-supabase/server.mjs",
     "local:db": "node local-supabase/setup.mjs",
     "local:reset": "node local-supabase/setup.mjs --reset",
+    "test:shopify-vat-history": "node --env-file=.env local-supabase/test-shopify-vat-history.mjs",
     "import:shopify-payments": "node local-supabase/import-shopify-payments-csv.mjs",
     "import:shopify-cash-sessions": "node local-supabase/import-shopify-cash-sessions-csv.mjs",
     "import:wefact-invoices": "node local-supabase/import-wefact-invoices.mjs",
