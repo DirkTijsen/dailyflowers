@@ -8,26 +8,17 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { channelLabels, currentMonth, formatEUR, monthLabel } from "@/lib/format";
+import { normalizeVatRate, recentPeriods, vatBreakdownKey } from "@/lib/vat-export";
 
 export const Route = createFileRoute("/_authenticated/btw-export")({
   head: () => ({ meta: [{ title: "Btw-export — Daily Flowers" }] }),
   component: VatExportPage,
 });
 
-function monthsList(n = 24): string[] {
-  const months: string[] = [];
-  const date = new Date();
-  for (let index = 0; index < n; index++) {
-    months.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`);
-    date.setMonth(date.getMonth() - 1);
-  }
-  return months;
-}
-
 type VatRow = {
   period: string;
   channel: string;
-  vat_rate: number;
+  vat_rate: number | string;
   tx_count: number;
   gross_total: number;
   net_total: number;
@@ -54,7 +45,7 @@ const CHANNELS = ["shopify_webshop", "shopify_winkel", "bold_afs"] as const;
 const EMPTY_TOTALS: VatTotals = { gross: 0, net: 0, vat: 0, count: 0 };
 
 function VatExportPage() {
-  const availablePeriods = useMemo(() => monthsList(), []);
+  const availablePeriods = useMemo(() => recentPeriods(), []);
   const [periods, setPeriods] = useState<string[]>([currentMonth()]);
   const sortedPeriods = useMemo(() => [...periods].sort(), [periods]);
 
@@ -110,7 +101,7 @@ function VatExportPage() {
   const vatByPeriodChannelRate = useMemo(() => {
     const result = new Map<string, VatTotals>();
     for (const row of vatQ.data ?? []) {
-      result.set(`${row.period}|${row.channel}|${row.vat_rate}`, {
+      result.set(vatBreakdownKey(row.period, row.channel, row.vat_rate), {
         gross: Number(row.gross_total),
         net: Number(row.net_total),
         vat: Number(row.vat_total),
@@ -123,7 +114,7 @@ function VatExportPage() {
   const channelRateRows = useMemo(() => {
     const result = new Map<string, { channel: string; vatRate: number }>();
     for (const row of vatQ.data ?? []) {
-      result.set(`${row.channel}|${row.vat_rate}`, {
+      result.set(`${row.channel}|${normalizeVatRate(row.vat_rate)}`, {
         channel: row.channel,
         vatRate: Number(row.vat_rate),
       });
@@ -174,7 +165,8 @@ function VatExportPage() {
     for (const row of channelRateRows) {
       const values = sortedPeriods.map(
         (period) =>
-          vatByPeriodChannelRate.get(`${period}|${row.channel}|${row.vatRate}`) ?? EMPTY_TOTALS,
+          vatByPeriodChannelRate.get(vatBreakdownKey(period, row.channel, row.vatRate)) ??
+          EMPTY_TOTALS,
       );
       const prefix = [channelLabels[row.channel] ?? row.channel, `${row.vatRate}%`];
       rows.push([...prefix, "Aantal", ...values.map((value) => value.count)].join(";"));
@@ -335,8 +327,9 @@ function VatExportPage() {
                   <td className="px-3 py-2 tabular-nums">{row.vatRate}%</td>
                   {sortedPeriods.map((period) => {
                     const value =
-                      vatByPeriodChannelRate.get(`${period}|${row.channel}|${row.vatRate}`) ??
-                      EMPTY_TOTALS;
+                      vatByPeriodChannelRate.get(
+                        vatBreakdownKey(period, row.channel, row.vatRate),
+                      ) ?? EMPTY_TOTALS;
                     return (
                       <td key={period} className="px-3 py-2 text-right tabular-nums">
                         <div className="font-medium">{formatEUR(value.net)} netto</div>
