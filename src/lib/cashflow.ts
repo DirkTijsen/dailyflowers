@@ -57,6 +57,8 @@ export type CashflowReportRow = {
   aggregation?: "sum" | "opening" | "ending" | "max";
 };
 
+export type CashflowProjectionValues = Record<string, Record<string, number>>;
+
 export const AFS_MACHINE_INPUT_KEY = "investment_afs_machines";
 export const AFS_REVENUE_COMMISSION_INPUT_KEY = "debt_afs_revenue_commission";
 export const AFS_BUDGET_PAYMENT_MONTH_OFFSET = -3;
@@ -325,6 +327,62 @@ export function buildCashflowReport({
   ];
 }
 
+export function buildCashflowProjectionValues(
+  rows: CashflowReportRow[],
+  months: string[],
+  cutoff: string,
+): CashflowProjectionValues {
+  const projection = Object.fromEntries(
+    rows.map((row) => [
+      row.key,
+      Object.fromEntries(
+        months.map((period) => [
+          period,
+          Number(
+            period <= cutoff ? (row.values.actual[period] ?? 0) : (row.values.budget[period] ?? 0),
+          ),
+        ]),
+      ),
+    ]),
+  );
+  const openingRow = rows.find((row) => row.key === "opening-cash-balance");
+  const closingRow = rows.find((row) => row.key === "closing-cash-balance");
+  const netCashflow = projection["net-cashflow"];
+  if (!openingRow || !closingRow || !netCashflow || months.length === 0) return projection;
+
+  const openingProjection = blankPeriodValues(months);
+  const closingProjection = blankPeriodValues(months);
+  let runningCash = 0;
+
+  for (const [index, period] of months.entries()) {
+    const metric: CashflowInputMetric = period <= cutoff ? "actual" : "budget";
+    if (index === 0) {
+      runningCash = Number(openingRow.values[metric][period] ?? 0);
+    } else {
+      const previousPeriod = months[index - 1];
+      const previousMetric: CashflowInputMetric = previousPeriod <= cutoff ? "actual" : "budget";
+
+      // Preserve an intentional opening-balance reset within Actual or Budget, but never
+      // reset at the Actual-to-Budget boundary: the forecast must carry forward the last actual close.
+      if (metric === previousMetric) {
+        const sourceOpening = Number(openingRow.values[metric][period] ?? 0);
+        const sourcePreviousClosing = Number(closingRow.values[metric][previousPeriod] ?? 0);
+        if (Math.abs(sourceOpening - sourcePreviousClosing) >= 0.005) {
+          runningCash = sourceOpening;
+        }
+      }
+    }
+
+    openingProjection[period] = runningCash;
+    runningCash += Number(netCashflow[period] ?? 0);
+    closingProjection[period] = runningCash;
+  }
+
+  projection[openingRow.key] = openingProjection;
+  projection[closingRow.key] = closingProjection;
+  return projection;
+}
+
 export function buildAfsInvestmentValues(
   inputs: CashflowInputRecord[],
   blocks: CashflowAfsBlock[],
@@ -420,4 +478,8 @@ export function blankCashflowValues(months: string[]): CashflowValues {
     actual: Object.fromEntries(months.map((period) => [period, 0])),
     budget: Object.fromEntries(months.map((period) => [period, 0])),
   };
+}
+
+function blankPeriodValues(months: string[]) {
+  return Object.fromEntries(months.map((period) => [period, 0]));
 }

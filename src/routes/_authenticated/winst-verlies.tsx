@@ -57,6 +57,7 @@ import {
   afsInvestmentPackageTotal,
   afsBudgetPaymentPeriod,
   buildAfsInvestmentValues,
+  buildCashflowProjectionValues,
   buildCashflowReport,
   cashflowInputValues,
   type CashflowAfsBlock,
@@ -4230,6 +4231,11 @@ function BankReportingPanel({
       budget:
         row.budgetValues ?? blankValues([...yearPeriods(reportYear), ...yearPeriods(nextYear)]),
     }));
+  const bankCashflowProjection = buildCashflowProjectionValues(
+    cashflowRows,
+    reportMonths,
+    actualThroughPeriod,
+  );
   const bankCashflowStatementRows: BankStatementRow[] = cashflowRows.map((row) => ({
     key: row.key,
     label: row.label,
@@ -4238,6 +4244,7 @@ function BankReportingPanel({
     kind: row.kind,
     actual: row.values.actual,
     budget: row.values.budget,
+    projection: bankCashflowProjection[row.key],
     aggregation: row.aggregation,
   }));
   const { rows: bankCashNeedRows } = buildBankCashNeedRows(

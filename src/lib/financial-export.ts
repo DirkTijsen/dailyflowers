@@ -1370,6 +1370,29 @@ function derivedCashflowProjectionFormula(
   };
   const sumRows = (keys: string[]) => `SUM(${keys.map((rowKey) => cell(rowKey)).join(",")})`;
 
+  if (key === "opening-cash-balance") {
+    const sourceBlock =
+      period <= `${data.reportYear}-${data.actualThroughMonth}` ? "actual" : "budget";
+    const sourceOpening = cell(key, modelColumnName(data, sourceBlock, period));
+    const previousPeriod = data.months[periodIndex - 1];
+    if (!previousPeriod) return `=${sourceOpening}`;
+
+    const previousSourceBlock =
+      previousPeriod <= `${data.reportYear}-${data.actualThroughMonth}` ? "actual" : "budget";
+    const previousProjectionColumn = modelColumnName(data, "projection", previousPeriod);
+    const previousProjectionClosing = cell("closing-cash-balance", previousProjectionColumn);
+    if (sourceBlock !== previousSourceBlock) return `=${previousProjectionClosing}`;
+
+    const previousSourceClosing = cell(
+      "closing-cash-balance",
+      modelColumnName(data, previousSourceBlock, previousPeriod),
+    );
+    return `=IF(ABS(${sourceOpening}-${previousSourceClosing})>=0.005,${sourceOpening},${previousProjectionClosing})`;
+  }
+  if (key === "closing-cash-balance") {
+    return `=${cell("opening-cash-balance")}+${cell("net-cashflow")}`;
+  }
+
   if (key === "cash-need-heading") return "=0";
   if (key === "cash-before-funding") {
     return `=${sumRows([
