@@ -5096,7 +5096,6 @@ function BankStatementSheet({
                   <th className="px-3 py-2 text-right">Budget {remainingLabel}</th>
                   <th className="bg-emerald-800 px-3 py-2 text-right">Prognose {reportYear}</th>
                   <th className="px-3 py-2 text-right">Budget {reportYear}</th>
-                  <th className="px-3 py-2 text-right">Verschil</th>
                   <th className="bg-emerald-800 px-3 py-2 text-right">Budget {nextYear}</th>
                 </tr>
               </thead>
@@ -5207,7 +5206,7 @@ function BankStatementSheet({
                     {row.kind === "heading" ? (
                       <td
                         colSpan={
-                          isCashflow ? reportPeriods.length + 1 : displayMode === "monthly" ? 26 : 7
+                          isCashflow ? reportPeriods.length + 1 : displayMode === "monthly" ? 26 : 6
                         }
                       />
                     ) : cashflowYear ? (
@@ -5262,7 +5261,6 @@ function BankStatementSheet({
                         <BankValue value={values.budgetRemainder} strong={strong} />
                         <BankValue value={values.forecast} strong className="bg-emerald-50/70" />
                         <BankValue value={values.yearBudget} strong={strong} />
-                        <BankValue value={values.variance} strong={strong} variance />
                         <BankValue
                           value={values.nextYearBudget}
                           strong
