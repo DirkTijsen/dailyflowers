@@ -59,6 +59,15 @@ export type CashflowReportRow = {
 
 export type CashflowProjectionValues = Record<string, Record<string, number>>;
 
+export type CashNeedScenarioValues = {
+  monthlyBeforeFunding: Record<string, number>;
+  plannedFunding: Record<string, number>;
+  cumulativeBeforeFunding: Record<string, number>;
+  fundingNeed: Record<string, number>;
+  cumulativeAfterFunding: Record<string, number>;
+  additionalNeed: Record<string, number>;
+};
+
 export const AFS_MACHINE_INPUT_KEY = "investment_afs_machines";
 export const AFS_REVENUE_COMMISSION_INPUT_KEY = "debt_afs_revenue_commission";
 export const AFS_BUDGET_PAYMENT_MONTH_OFFSET = -3;
@@ -381,6 +390,59 @@ export function buildCashflowProjectionValues(
   projection[openingRow.key] = openingProjection;
   projection[closingRow.key] = closingProjection;
   return projection;
+}
+
+export function buildCashNeedScenarioValues({
+  periods,
+  openingCash,
+  closingCash,
+  netCashflow,
+  plannedFunding,
+}: {
+  periods: string[];
+  openingCash: Record<string, number>;
+  closingCash: Record<string, number>;
+  netCashflow: Record<string, number>;
+  plannedFunding: Record<string, number>;
+}): CashNeedScenarioValues {
+  const monthlyBeforeFunding = blankPeriodValues(periods);
+  const cumulativeBeforeFunding = blankPeriodValues(periods);
+  const fundingNeed = blankPeriodValues(periods);
+  const cumulativeAfterFunding = blankPeriodValues(periods);
+  const additionalNeed = blankPeriodValues(periods);
+  let runningBeforeFunding = 0;
+
+  for (const [index, period] of periods.entries()) {
+    const opening = Number(openingCash[period] ?? 0);
+    if (index === 0) {
+      runningBeforeFunding = opening;
+    } else {
+      const previousPeriod = periods[index - 1];
+      const previousClosing = Number(closingCash[previousPeriod] ?? 0);
+      if (Math.abs(opening - previousClosing) >= 0.005) {
+        runningBeforeFunding = opening;
+      }
+    }
+
+    const funding = Number(plannedFunding[period] ?? 0);
+    const beforeFunding = Number(netCashflow[period] ?? 0) - funding;
+    const closing = Number(closingCash[period] ?? 0);
+    runningBeforeFunding += beforeFunding;
+    monthlyBeforeFunding[period] = beforeFunding;
+    cumulativeBeforeFunding[period] = runningBeforeFunding;
+    fundingNeed[period] = Math.max(0, -runningBeforeFunding);
+    cumulativeAfterFunding[period] = closing;
+    additionalNeed[period] = Math.max(0, -closing);
+  }
+
+  return {
+    monthlyBeforeFunding,
+    plannedFunding,
+    cumulativeBeforeFunding,
+    fundingNeed,
+    cumulativeAfterFunding,
+    additionalNeed,
+  };
 }
 
 export function buildAfsInvestmentValues(

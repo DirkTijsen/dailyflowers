@@ -1395,14 +1395,7 @@ function derivedCashflowProjectionFormula(
 
   if (key === "cash-need-heading") return "=0";
   if (key === "cash-before-funding") {
-    return `=${sumRows([
-      "operating-result",
-      "investment-total",
-      "debt_loans_repaid",
-      "debt_interest_paid",
-      "debt_interest_received",
-      "equity_dividend_paid",
-    ])}`;
+    return `=${cell("net-cashflow")}-${cell("planned-funding")}`;
   }
   if (key === "planned-funding") {
     return `=${sumRows(["debt_loans_received", "equity_shareholder_contributions"])}`;

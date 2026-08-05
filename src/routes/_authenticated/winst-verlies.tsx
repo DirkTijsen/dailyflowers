@@ -57,6 +57,7 @@ import {
   afsInvestmentPackageTotal,
   afsBudgetPaymentPeriod,
   buildAfsInvestmentValues,
+  buildCashNeedScenarioValues,
   buildCashflowProjectionValues,
   buildCashflowReport,
   cashflowInputValues,
@@ -5434,68 +5435,40 @@ function buildBankCashNeedRows(
   cutoff: string,
 ): { rows: BankStatementRow[]; summary: BankCashNeedSummary } {
   const rowByKey = new Map(rows.map((row) => [row.key, row]));
-  const preFundingKeys = [
-    "operating-result",
-    "investment-total",
-    "debt_loans_repaid",
-    "debt_interest_paid",
-    "debt_interest_received",
-    "equity_dividend_paid",
-  ];
   const fundingKeys = ["debt_loans_received", "equity_shareholder_contributions"];
 
   const scenario = (metric: "actual" | "budget" | "projection") => {
-    const monthlyBeforeFunding = blankValues(periods);
     const plannedFunding = blankValues(periods);
-    const cumulativeBeforeFunding = blankValues(periods);
-    const fundingNeed = blankValues(periods);
-    const cumulativeAfterFunding = blankValues(periods);
-    const additionalNeed = blankValues(periods);
-    const openingBalanceRow = rowByKey.get("opening-cash-balance");
-    const openingBalance =
-      periods.length === 0 || !openingBalanceRow
-        ? 0
-        : metric === "projection"
-          ? Number(
-              (periods[0] <= cutoff
-                ? openingBalanceRow.actual[periods[0]]
-                : openingBalanceRow.budget[periods[0]]) ?? 0,
-            )
-          : Number(openingBalanceRow[metric][periods[0]] ?? 0);
-    let runningBeforeFunding = openingBalance;
-    let runningAfterFunding = openingBalance;
+    const valuesFor = (key: string) => {
+      const row = rowByKey.get(key);
+      if (!row) return blankValues(periods);
+      if (metric === "projection") {
+        return (
+          row.projection ??
+          Object.fromEntries(
+            periods.map((period) => [
+              period,
+              period <= cutoff ? Number(row.actual[period] ?? 0) : Number(row.budget[period] ?? 0),
+            ]),
+          )
+        );
+      }
+      return row[metric];
+    };
 
     for (const period of periods) {
-      const valueFor = (key: string) => {
-        const row = rowByKey.get(key);
-        if (!row) return 0;
-        if (metric === "projection") {
-          return period <= cutoff
-            ? Number(row.actual[period] ?? 0)
-            : Number(row.budget[period] ?? 0);
-        }
-        return Number(row[metric][period] ?? 0);
-      };
-      const beforeFunding = preFundingKeys.reduce((sum, key) => sum + valueFor(key), 0);
-      const funding = fundingKeys.reduce((sum, key) => sum + valueFor(key), 0);
-      const netCashflow = valueFor("net-cashflow");
-      runningBeforeFunding += beforeFunding;
-      runningAfterFunding += netCashflow;
-      monthlyBeforeFunding[period] = beforeFunding;
-      plannedFunding[period] = funding;
-      cumulativeBeforeFunding[period] = runningBeforeFunding;
-      fundingNeed[period] = Math.max(0, -runningBeforeFunding);
-      cumulativeAfterFunding[period] = runningAfterFunding;
-      additionalNeed[period] = Math.max(0, -runningAfterFunding);
+      plannedFunding[period] = fundingKeys.reduce(
+        (sum, key) => sum + Number(valuesFor(key)[period] ?? 0),
+        0,
+      );
     }
-    return {
-      monthlyBeforeFunding,
+    return buildCashNeedScenarioValues({
+      periods,
+      openingCash: valuesFor("opening-cash-balance"),
+      closingCash: valuesFor("closing-cash-balance"),
+      netCashflow: valuesFor("net-cashflow"),
       plannedFunding,
-      cumulativeBeforeFunding,
-      fundingNeed,
-      cumulativeAfterFunding,
-      additionalNeed,
-    };
+    });
   };
 
   const actual = scenario("actual");

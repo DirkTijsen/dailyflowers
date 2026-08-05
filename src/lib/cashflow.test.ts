@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildCashNeedScenarioValues,
   buildCashflowProjectionValues,
   type CashflowReportRow,
   type CashflowValues,
@@ -73,4 +74,39 @@ test("bank projection preserves an intentional reset within the same metric", ()
   assert.equal(projection["closing-cash-balance"]["2026-07"], 90);
   assert.equal(projection["opening-cash-balance"]["2026-08"], 200);
   assert.equal(projection["closing-cash-balance"]["2026-08"], 205);
+});
+
+test("cash need rows reconcile to net cashflow including the AFS revenue commission", () => {
+  const scenario = buildCashNeedScenarioValues({
+    periods: ["2026-01"],
+    openingCash: { "2026-01": 70_644 },
+    closingCash: { "2026-01": 7_651.15 },
+    netCashflow: { "2026-01": -62_992.85 },
+    plannedFunding: { "2026-01": 0 },
+  });
+
+  assert.equal(scenario.monthlyBeforeFunding["2026-01"], -62_992.85);
+  assert.ok(Math.abs(scenario.cumulativeBeforeFunding["2026-01"] - 7_651.15) < 0.005);
+  assert.equal(scenario.fundingNeed["2026-01"], 0);
+  assert.equal(scenario.cumulativeAfterFunding["2026-01"], 7_651.15);
+  assert.equal(scenario.additionalNeed["2026-01"], 0);
+});
+
+test("cash need rows separate planned funding and honor an opening-balance reset", () => {
+  const scenario = buildCashNeedScenarioValues({
+    periods: ["2026-01", "2026-02", "2026-03"],
+    openingCash: { "2026-01": 10, "2026-02": 70, "2026-03": 200 },
+    closingCash: { "2026-01": 70, "2026-02": 50, "2026-03": 180 },
+    netCashflow: { "2026-01": 60, "2026-02": -20, "2026-03": -20 },
+    plannedFunding: { "2026-01": 100, "2026-02": 0, "2026-03": 0 },
+  });
+
+  assert.equal(scenario.monthlyBeforeFunding["2026-01"], -40);
+  assert.equal(scenario.cumulativeBeforeFunding["2026-01"], -30);
+  assert.equal(scenario.fundingNeed["2026-01"], 30);
+  assert.equal(scenario.cumulativeAfterFunding["2026-01"], 70);
+  assert.equal(scenario.cumulativeBeforeFunding["2026-02"], -50);
+  assert.equal(scenario.fundingNeed["2026-02"], 50);
+  assert.equal(scenario.cumulativeBeforeFunding["2026-03"], 180);
+  assert.equal(scenario.cumulativeAfterFunding["2026-03"], 180);
 });
